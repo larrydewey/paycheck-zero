@@ -1,0 +1,9 @@
+[package]
+name = "paycheckzero-web"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "PaycheckZero web server: Axum + Datastar, JWT auth, REST API, SSE, CSV export."
+
+[dependencies]
+paycheckzero-core = { path = "../core" }

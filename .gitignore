@@ -1,0 +1,15 @@
+# Rust
+/target/
+Cargo.lock
+
+# Python (non-conformant leftover, kept for reference only)
+.venv/
+.pytest_cache/
+
+# Editor
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store

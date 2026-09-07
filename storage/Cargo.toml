@@ -1,0 +1,13 @@
+[package]
+name = "paycheckzero-storage"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "PaycheckZero storage adapters (SQLite primary). Loads/saves the domain Month aggregate."
+
+[dependencies]
+paycheckzero-core = { path = "../core" }
+chrono = { workspace = true }
+serde_json = { workspace = true }
+rusqlite = { workspace = true }
+thiserror = { workspace = true }
