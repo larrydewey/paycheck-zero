@@ -571,7 +571,7 @@ impl Store {
         }
 
         for r in sqlx::query(&self.sql(
-            "SELECT id, date, amount, payee, notes, expense_line_id, paycheck_id FROM transactions WHERE month_id = ? ORDER BY position, id",
+            "SELECT id, date, amount, payee, notes, expense_line_id, paycheck_id, split_group FROM transactions WHERE month_id = ? ORDER BY position, id",
         ))
         .bind(mid)
         .fetch_all(&mut *conn)
@@ -585,6 +585,7 @@ impl Store {
                 notes: r.try_get(4)?,
                 expense_line_id: opt_id(r.try_get(5)?),
                 paycheck_id: opt_id(r.try_get(6)?),
+                split_group: opt_id(r.try_get(7)?),
             });
         }
 
@@ -771,11 +772,11 @@ impl Store {
         }
         for (pos, t, new) in changed(&before.transactions, &after.transactions, |t| &t.id) {
             if new {
-                self.exec(conn, "INSERT INTO transactions (id, month_id, date, amount, payee, notes, expense_line_id, paycheck_id, position, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                    vec![Bind::s(&t.id), Bind::S(mid.clone()), Bind::S(date_str(t.date)), Bind::I(t.amount.get()), Bind::OS(t.payee.clone()), Bind::OS(t.notes.clone()), Bind::OS(opt_str(&t.expense_line_id)), Bind::OS(opt_str(&t.paycheck_id)), Bind::I(pos), Bind::S(ts.clone()), Bind::S(ts.clone())]).await?;
+                self.exec(conn, "INSERT INTO transactions (id, month_id, date, amount, payee, notes, expense_line_id, paycheck_id, split_group, position, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    vec![Bind::s(&t.id), Bind::S(mid.clone()), Bind::S(date_str(t.date)), Bind::I(t.amount.get()), Bind::OS(t.payee.clone()), Bind::OS(t.notes.clone()), Bind::OS(opt_str(&t.expense_line_id)), Bind::OS(opt_str(&t.paycheck_id)), Bind::OS(opt_str(&t.split_group)), Bind::I(pos), Bind::S(ts.clone()), Bind::S(ts.clone())]).await?;
             } else {
-                self.exec(conn, "UPDATE transactions SET date = ?, amount = ?, payee = ?, notes = ?, expense_line_id = ?, paycheck_id = ?, position = ?, updated_at = ? WHERE id = ?",
-                    vec![Bind::S(date_str(t.date)), Bind::I(t.amount.get()), Bind::OS(t.payee.clone()), Bind::OS(t.notes.clone()), Bind::OS(opt_str(&t.expense_line_id)), Bind::OS(opt_str(&t.paycheck_id)), Bind::I(pos), Bind::S(ts.clone()), Bind::s(&t.id)]).await?;
+                self.exec(conn, "UPDATE transactions SET date = ?, amount = ?, payee = ?, notes = ?, expense_line_id = ?, paycheck_id = ?, split_group = ?, position = ?, updated_at = ? WHERE id = ?",
+                    vec![Bind::S(date_str(t.date)), Bind::I(t.amount.get()), Bind::OS(t.payee.clone()), Bind::OS(t.notes.clone()), Bind::OS(opt_str(&t.expense_line_id)), Bind::OS(opt_str(&t.paycheck_id)), Bind::OS(opt_str(&t.split_group)), Bind::I(pos), Bind::S(ts.clone()), Bind::s(&t.id)]).await?;
             }
         }
 

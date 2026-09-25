@@ -33,6 +33,15 @@ pub const INCOME_NAME_MAX: usize = 100;
 /// Maximum category / expense line name length.
 pub const NAME_MAX: usize = 100;
 
+/// One part of a split payment.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SplitPart {
+    /// Signed cents, like a transaction amount.
+    pub amount: Cents,
+    pub expense_line_id: Option<Id>,
+    pub paycheck_id: Option<Id>,
+}
+
 /// Side effects of a cascading change that the user must be told about
 /// (invariants 6 and 7).
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -1155,6 +1164,87 @@ impl Month {
         let old = self.transaction(id).ok_or_else(|| DomainError::not_found("transaction", id))?.paycheck_id.clone();
         self.with_reconcile(&[old], |m| {
             m.transactions.retain(|x| &x.id != id);
+            Ok(())
+        })
+    }
+
+    /// Parts of a split payment, in their stored order.
+    #[must_use]
+    pub fn split_parts(&self, group: &Id) -> Vec<&Transaction> {
+        self.transactions.iter().filter(|t| t.split_group.as_ref() == Some(group)).collect()
+    }
+
+    /// Creates (or replaces, when `group` is given) a split payment: one
+    /// payment divided into parts, each with its own amount, line and
+    /// paycheck. Needs at least two parts, all expenses or all income.
+    pub fn save_split(
+        &mut self,
+        group: Option<&Id>,
+        date: NaiveDate,
+        payee: Option<String>,
+        notes: Option<String>,
+        parts: Vec<SplitPart>,
+    ) -> Result<Id, DomainError> {
+        if parts.len() < 2 {
+            return Err(DomainError::SplitTooFew);
+        }
+        if parts.iter().any(|p| p.amount.is_zero()) {
+            return Err(DomainError::ZeroTransaction);
+        }
+        if !(parts.iter().all(|p| p.amount.is_negative()) || parts.iter().all(|p| p.amount.is_positive())) {
+            return Err(DomainError::SplitMixedSigns);
+        }
+        let payee = clean_opt(payee);
+        let notes = clean_opt(notes);
+        let group_id = match group {
+            Some(g) => {
+                if self.split_parts(g).is_empty() {
+                    return Err(DomainError::not_found("split transaction", g));
+                }
+                g.clone()
+            }
+            None => Id::generate(),
+        };
+        let new: Vec<Transaction> = parts
+            .into_iter()
+            .map(|p| Transaction {
+                id: Id::generate(),
+                date,
+                amount: p.amount,
+                payee: payee.clone(),
+                notes: notes.clone(),
+                expense_line_id: p.expense_line_id,
+                paycheck_id: p.paycheck_id,
+                split_group: Some(group_id.clone()),
+            })
+            .collect();
+        for t in &new {
+            self.validate_transaction(t)?;
+        }
+        let mut touched: Vec<Option<Id>> = self.split_parts(&group_id).iter().map(|t| t.paycheck_id.clone()).collect();
+        touched.extend(new.iter().map(|t| t.paycheck_id.clone()));
+        touched.sort();
+        touched.dedup();
+        let gid = group_id.clone();
+        self.with_reconcile(&touched, move |m| {
+            // Keep the split where it was in the list.
+            let at = m.transactions.iter().position(|t| t.split_group.as_ref() == Some(&gid)).unwrap_or(m.transactions.len());
+            m.transactions.retain(|t| t.split_group.as_ref() != Some(&gid));
+            let at = at.min(m.transactions.len());
+            for (i, t) in new.into_iter().enumerate() {
+                m.transactions.insert(at + i, t);
+            }
+            Ok(gid)
+        })
+    }
+
+    pub fn delete_split(&mut self, group: &Id) -> Result<(), DomainError> {
+        let touched: Vec<Option<Id>> = self.split_parts(group).iter().map(|t| t.paycheck_id.clone()).collect();
+        if touched.is_empty() {
+            return Err(DomainError::not_found("split transaction", group));
+        }
+        self.with_reconcile(&touched, |m| {
+            m.transactions.retain(|t| t.split_group.as_ref() != Some(group));
             Ok(())
         })
     }

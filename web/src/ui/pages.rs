@@ -390,7 +390,7 @@ fn overspent_lines(m: &Month) -> Vec<(String, Cents)> {
             over.is_positive().then(|| (l.name.clone(), over))
         })
         .collect();
-    v.sort_by(|a, b| b.1.cmp(&a.1));
+    v.sort_by_key(|x| std::cmp::Reverse(x.1));
     v
 }
 
@@ -1288,11 +1288,98 @@ fn tx_fields(m: &Month, prefix: &str, t_: Option<&Transaction>, default_date: Na
     }
 }
 
+enum TxItem<'a> {
+    Single(&'a Transaction),
+    Split(Id),
+}
+
+/// Split editor: date, type, payee, notes, total and 2+ parts (line, paycheck, amount).
+fn split_form(c: &Ctx, m: &Month, view: &View, prefix: &str, url: &str, existing: Option<&[&Transaction]>, default_date: NaiveDate) -> Markup {
+    let id = |f: &str| format!("{prefix}-{f}");
+    let first = existing.and_then(|p| p.first().copied());
+    let is_income = first.is_some_and(|x| x.amount.is_positive());
+    let parts: Vec<(Option<Cents>, Option<Id>, Option<Id>)> = match existing {
+        Some(ps) => ps.iter().map(|x| (Some(x.amount.abs()), x.expense_line_id.clone(), x.paycheck_id.clone())).collect(),
+        None => vec![(None, None, None), (None, None, None)],
+    };
+    let total: Cents = parts.iter().filter_map(|p| p.0).sum();
+    html! {
+        form class="split-form" id=(id("form")) data-split-editor data-online-only data-clear[existing.is_none()]
+            data-on:submit__prevent=(format!("pz.checkSplit(el) && @post('{url}', {{contentType: 'form'}})")) {
+            (view_input(view))
+            @if let Some(f) = first { input type="hidden" name="part_of" value=(f.id); }
+            div class="tx-form" {
+                fieldset class="segmented field" {
+                    legend { (t("tx.kind")) }
+                    label { input type="radio" name="direction" value="expense" checked[!is_income]; span { (t("tx.expense")) } }
+                    label { input type="radio" name="direction" value="income" checked[is_income]; span { (t("tx.income")) } }
+                }
+                div class="field" {
+                    label for=(id("date")) { (t("tx.date")) }
+                    input id=(id("date")) type="date" name="date" required value=(first.map_or(default_date, |x| x.date).to_string())
+                        min=(m.year_month.to_string()) max=(recurrence::last_of_month(m.year_month).to_string());
+                }
+                div class="field" {
+                    label for=(id("total")) { (t("split.total")) }
+                    input id=(id("total")) type="text" inputmode="decimal" class="money" name="total" required placeholder="0.00"
+                        value=[existing.map(|_| crate::money::plain(total))] data-split-total;
+                }
+                div class="field" {
+                    label for=(id("payee")) { (t("tx.payee")) }
+                    input id=(id("payee")) type="text" name="payee" maxlength="200" value=[first.and_then(|x| x.payee.clone())];
+                }
+                div class="field wide" {
+                    label for=(id("notes")) { (t("tx.notes")) }
+                    input id=(id("notes")) type="text" name="notes" maxlength="2000" value=[first.and_then(|x| x.notes.clone())];
+                }
+            }
+            fieldset class="split-parts" {
+                legend { (t("split.parts")) }
+                ol class="parts" data-parts {
+                    @for (i, (amt, line, pc)) in parts.iter().enumerate() {
+                        @let n = (i + 1).to_string();
+                        li class="part" data-part {
+                            select name=(format!("part_line_{i}")) aria-label=(tf("split.part_line", &[("n", &n)])) { (line_options(m, line.as_ref())) }
+                            select name=(format!("part_paycheck_{i}")) aria-label=(tf("split.part_paycheck", &[("n", &n)])) { (paycheck_options(m, pc.as_ref())) }
+                            input type="text" inputmode="decimal" class="money" name=(format!("part_amount_{i}")) required placeholder="0.00"
+                                value=[amt.map(crate::money::plain)] aria-label=(tf("split.part_amount", &[("n", &n)])) data-part-amount;
+                            button type="button" class="icon-btn danger" data-remove-part aria-label=(tf("split.remove_part", &[("n", &n)])) { (icon("trash")) }
+                        }
+                    }
+                }
+                div class="split-foot" {
+                    button type="button" class="link" data-add-part { (t("split.add_part")) }
+                    span class="split-left" data-split-left aria-live="polite" {
+                        (t("split.remaining")) ": " span data-split-left-amt { (c.money(Cents::ZERO)) }
+                    }
+                }
+                span class="field-error" aria-live="polite" {}
+            }
+            div class="form-actions" {
+                @if existing.is_some() { button type="button" class="btn" data-close-dialog { (t("common.cancel")) } }
+                button type="submit" class="btn primary" { (t("split.save")) }
+            }
+        }
+    }
+}
+
 pub fn render_transactions(c: &Ctx, m: &Month, archived: bool) -> Markup {
     let view = View::Transactions { month: m.id.clone() };
     let default_date = if recurrence::in_month(c.today, m.year_month) { c.today } else { m.year_month };
     let mut txs: Vec<&Transaction> = m.transactions.iter().collect();
     txs.sort_by_key(|x| std::cmp::Reverse(x.date));
+    // One row per payment: a split shows once, where its first part sorts.
+    let mut items: Vec<TxItem> = Vec::new();
+    for x in &txs {
+        match &x.split_group {
+            Some(g) => {
+                if !items.iter().any(|i| matches!(i, TxItem::Split(h) if h == g)) {
+                    items.push(TxItem::Split(g.clone()));
+                }
+            }
+            None => items.push(TxItem::Single(x)),
+        }
+    }
     let line_name = |id: &Option<Id>| id.as_ref().and_then(|l| m.expense_line(l)).map(|l| l.name.clone());
     html! {
         h1 { (tf("tx.title", &[("month", &month_label(m.year_month))])) }
@@ -1311,6 +1398,11 @@ pub fn render_transactions(c: &Ctx, m: &Month, archived: bool) -> Markup {
                         button type="submit" class="btn primary" { (t("tx.save")) }
                     }
                 }
+                details class="split-open" {
+                    summary { (t("split.open")) }
+                    p class="muted small" { (t("split.intro")) }
+                    (split_form(c, m, &view, "new-split", &format!("/ui/months/{}/splits", m.id), None, default_date))
+                }
             }
         }
         section aria-labelledby="tx-list-h" {
@@ -1319,7 +1411,44 @@ pub fn render_transactions(c: &Ctx, m: &Month, archived: bool) -> Markup {
                 (empty_state(&t("tx.empty_title"), &t("tx.empty_body"), None))
             } @else {
                 ul class="tx-list card" id="tx-list" {
-                    @for x in &txs {
+                    @for it in &items {
+ @match it {
+ TxItem::Split(g) => {
+                        @let parts = m.split_parts(g);
+                        @let x = parts[0];
+                        @let total: Cents = parts.iter().map(|p| p.amount).sum();
+                        @let payee = x.payee.clone().unwrap_or_else(|| t("tx.no_payee"));
+                        @let dlg = format!("edit-split-{g}");
+                        li class="tx split" data-tx=(x.id) data-split=(g) {
+                            span class="tx-date" { (short_date(x.date)) }
+                            div class="tx-main" {
+                                span class="tx-payee" { (payee) }
+                                span class="tx-meta" {
+                                    strong { (t("split.meta")) } " · "
+                                    @for (i, p) in parts.iter().enumerate() {
+                                        @if i > 0 { " · " }
+                                        (line_name(&p.expense_line_id).unwrap_or_else(|| t("tx.uncategorized"))) " " (c.money(p.amount.abs()))
+                                        @if let Some(pc) = p.paycheck_id.as_ref().and_then(|pc| m.paycheck(pc)) { " (" (short_date(pc.date)) ")" }
+                                    }
+                                }
+                            }
+                            span class=(if total.is_negative() { "tx-amt num" } else { "tx-amt num pos" }) { (c.money(total)) }
+                            @if !archived {
+                                button type="button" class="icon-btn" aria-label=(tf("tx.edit_label", &[("payee", &payee), ("date", &short_date(x.date))]))
+                                    data-on:click=(format!("document.getElementById('{dlg}').showModal()")) { (icon("edit")) }
+                                dialog id=(dlg) aria-labelledby=(format!("{dlg}-h")) {
+                                    h2 id=(format!("{dlg}-h")) class="h3" { (t("split.edit_title")) }
+                                    (split_form(c, m, &view, &format!("split-{g}"), &format!("/ui/splits/{g}"), Some(&parts), default_date))
+                                    form class="dialog-danger" data-on:submit__prevent=(post_form(&format!("/ui/splits/{g}/delete"))) {
+                                        (view_input(&view))
+                                        input type="hidden" name="part_of" value=(x.id);
+                                        button type="submit" class="btn small danger" data-confirm=(t("split.delete_confirm")) { (icon("trash")) " " (t("split.delete")) }
+                                    }
+                                }
+                            }
+                        }
+                    }
+ TxItem::Single(x) => {
                         @let base = serde_json::json!({
                             "date": x.date, "amount": x.amount.get(), "payee": x.payee, "notes": x.notes,
                             "expense_line_id": x.expense_line_id, "paycheck_id": x.paycheck_id,
@@ -1362,6 +1491,8 @@ pub fn render_transactions(c: &Ctx, m: &Month, archived: bool) -> Markup {
                             }
                         }
                     }
+ }
+ }
                 }
             }
         }

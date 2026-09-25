@@ -517,3 +517,16 @@ li.line.over { background: color-mix(in srgb, var(--danger-soft) 55%, transparen
 .over-badge { display: inline-flex; align-items: center; gap: 0.25rem; color: var(--danger); font-size: 0.8rem; font-weight: 700; padding-left: 0.3rem; }
 .cat-over { color: var(--danger); display: inline-flex; margin-left: 0.35rem; }
 .hero-warn { margin: 0 0 0.75rem; background: rgb(0 0 0 / 22%); border-radius: 8px; padding: 0.4rem 0.6rem; font-weight: 600; display: inline-flex; gap: 0.35rem; align-items: center; }
+
+/* Split editor */
+.split-open { margin-top: 0.75rem; border-top: 1px solid var(--divider); padding-top: 0.6rem; }
+.split-open > summary { cursor: pointer; color: var(--primary-dark); font-weight: 600; }
+.split-parts { border: 1px solid var(--line); border-radius: 8px; padding: 0.5rem 0.75rem; }
+.parts { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.4rem; counter-reset: part; }
+.part { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1.2fr) 8rem auto; gap: 0.5rem; align-items: center; }
+.split-foot { display: flex; justify-content: space-between; align-items: center; margin-top: 0.5rem; gap: 0.5rem; flex-wrap: wrap; }
+.split-left { font-weight: 600; font-variant-numeric: tabular-nums; }
+.split-left.bad { color: var(--danger); }
+.tx.split .tx-meta strong { color: var(--primary-dark); }
+dialog .split-form { min-width: min(40rem, calc(100vw - 4rem)); }
+@media (max-width: 640px) { .part { grid-template-columns: 1fr 1fr; } .part input { grid-column: 1; } }

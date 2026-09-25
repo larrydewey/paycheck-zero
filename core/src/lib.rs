@@ -20,6 +20,6 @@ pub use error::DomainError;
 pub use id::Id;
 pub use models::*;
 pub use money::{Cents, Rate};
-pub use month::{Impact, Month, STARTER_CATEGORIES};
+pub use month::{Impact, Month, SplitPart, STARTER_CATEGORIES};
 pub use recurrence::Recurrence;
 pub use views::*;

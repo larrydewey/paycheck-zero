@@ -52,6 +52,7 @@ fn tx(date: NaiveDate, cents: i64, payee: &str, line: Option<&Id>, paycheck: Opt
         notes: None,
         expense_line_id: line.cloned(),
         paycheck_id: paycheck.cloned(),
+        split_group: None,
     }
 }
 

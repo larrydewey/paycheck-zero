@@ -50,6 +50,7 @@ impl TxData {
             notes: clean(self.notes),
             expense_line_id: self.expense_line_id.filter(|i| !i.as_str().is_empty()),
             paycheck_id: self.paycheck_id.filter(|i| !i.as_str().is_empty()),
+            split_group: None,
         }
     }
 

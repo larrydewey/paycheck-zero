@@ -611,6 +611,9 @@ pub struct TxReq {
     pub expense_line_id: Option<Id>,
     #[serde(default)]
     pub paycheck_id: Option<Id>,
+    /// Parts of one split payment share a group id.
+    #[serde(default)]
+    pub split_group: Option<Id>,
 }
 
 impl TxReq {
@@ -624,6 +627,7 @@ impl TxReq {
             notes: self.notes,
             expense_line_id: self.expense_line_id,
             paycheck_id: self.paycheck_id,
+            split_group: self.split_group,
         }
     }
 }

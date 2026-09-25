@@ -701,6 +701,7 @@ fn tx_from_form(f: &HashMap<String, String>, id: Id) -> AppResult<Transaction> {
         notes: text("notes"),
         expense_line_id: opt_id(f, "expense_line_id"),
         paycheck_id: opt_id(f, "paycheck_id"),
+        split_group: None,
     })
 }
 
@@ -758,4 +759,99 @@ pub async fn delete_transaction(State(st): State<Shared>, Extension(user): Exten
     let mid = st.resolve(&user, Owner::Transaction, &id).await;
     let view = view_of(&f, View::Transactions { month: mid.as_ref().cloned().unwrap_or_default() });
     month_action(&st, &user, &headers, view, mid, |m| m.delete_transaction(&id), |_, _| vec![toast(ToastKind::Success, &t("tx.deleted"), None)]).await
+}
+
+// ----------------------------------------------------------------------
+// Split transactions (user request #9)
+// ----------------------------------------------------------------------
+
+struct SplitInput {
+    date: chrono::NaiveDate,
+    payee: Option<String>,
+    notes: Option<String>,
+    parts: Vec<SplitPart>,
+}
+
+fn split_from_form(f: &HashMap<String, String>, currency: &str) -> AppResult<SplitInput> {
+    let date = chrono::NaiveDate::parse_from_str(field(f, "date"), "%Y-%m-%d").map_err(|_| AppError::bad(t("err.date")))?;
+    let income = field(f, "direction") == "income";
+    let mut idx: Vec<usize> = f
+        .keys()
+        .filter_map(|k| k.strip_prefix("part_amount_").and_then(|n| n.parse().ok()))
+        .collect();
+    idx.sort_unstable();
+    let mut parts = Vec::new();
+    for i in idx {
+        let Some(amount) = opt_money_field(f, &format!("part_amount_{i}"))? else { continue };
+        if amount.is_zero() {
+            continue;
+        }
+        parts.push(SplitPart {
+            amount: if income { amount } else { -amount },
+            expense_line_id: opt_id(f, &format!("part_line_{i}")),
+            paycheck_id: opt_id(f, &format!("part_paycheck_{i}")),
+        });
+    }
+    if let Some(total) = opt_money_field(f, "total")? {
+        let sum: Cents = parts.iter().map(|p| p.amount.abs()).sum();
+        if sum != total {
+            return Err(AppError::bad(tf("err.split_total", &[
+                ("parts", &crate::money::format(sum, currency)),
+                ("total", &crate::money::format(total, currency)),
+            ])));
+        }
+    }
+    let text = |k: &str| {
+        let v = field(f, k);
+        (!v.is_empty()).then(|| v.to_string())
+    };
+    Ok(SplitInput { date, payee: text("payee"), notes: text("notes"), parts })
+}
+
+pub async fn add_split(State(st): State<Shared>, Extension(user): Extension<AuthUser>, headers: HeaderMap, Path(id): Path<Id>, Form(f): F) -> Sse {
+    let user = user.0;
+    let view = view_of(&f, View::Transactions { month: id.clone() });
+    let input = match split_from_form(&f, &user.currency) {
+        Ok(i) => i,
+        Err(e) => return failed(&st, &user, &headers, &view, &e).await,
+    };
+    let u = user.clone();
+    month_action(&st, &user, &headers, view, Ok(id), |m| {
+        let b = overs(m);
+        m.save_split(None, input.date, input.payee, input.notes, input.parts).map(|_| b)
+    }, move |b, m| {
+        let mut v = vec![toast(ToastKind::Success, &t("split.saved"), None)];
+        v.extend(overspend_toasts(&u, b, m));
+        v
+    })
+    .await
+}
+
+pub async fn update_split(State(st): State<Shared>, Extension(user): Extension<AuthUser>, headers: HeaderMap, Path(group): Path<Id>, Form(f): F) -> Sse {
+    let user = user.0;
+    let part = Id::new(field(&f, "part_of"));
+    let mid = st.resolve(&user, Owner::Transaction, &part).await;
+    let view = view_of(&f, View::Transactions { month: mid.as_ref().cloned().unwrap_or_default() });
+    let input = match split_from_form(&f, &user.currency) {
+        Ok(i) => i,
+        Err(e) => return failed(&st, &user, &headers, &view, &e).await,
+    };
+    let u = user.clone();
+    month_action(&st, &user, &headers, view, mid, |m| {
+        let b = overs(m);
+        m.save_split(Some(&group), input.date, input.payee, input.notes, input.parts).map(|_| b)
+    }, move |b, m| {
+        let mut v = vec![toast(ToastKind::Success, &t("split.saved"), None)];
+        v.extend(overspend_toasts(&u, b, m));
+        v
+    })
+    .await
+}
+
+pub async fn delete_split(State(st): State<Shared>, Extension(user): Extension<AuthUser>, headers: HeaderMap, Path(group): Path<Id>, Form(f): F) -> Sse {
+    let user = user.0;
+    let part = Id::new(field(&f, "part_of"));
+    let mid = st.resolve(&user, Owner::Transaction, &part).await;
+    let view = view_of(&f, View::Transactions { month: mid.as_ref().cloned().unwrap_or_default() });
+    month_action(&st, &user, &headers, view, mid, |m| m.delete_split(&group), |_, _| vec![toast(ToastKind::Success, &t("split.deleted"), None)]).await
 }

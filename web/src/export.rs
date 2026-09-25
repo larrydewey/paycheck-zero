@@ -30,6 +30,7 @@ pub const HEADER: &[&str] = &[
     "amount",
     "current_balance",
     "minimum_payment",
+    "split_group",
 ];
 
 fn esc(s: &str) -> String {
@@ -58,6 +59,7 @@ struct Row<'a> {
     amount: Option<Cents>,
     current_balance: Option<Cents>,
     minimum_payment: Option<Cents>,
+    split_group: String,
 }
 
 #[must_use]
@@ -150,6 +152,7 @@ pub fn to_csv(m: &Month) -> String {
             payee: tx.payee.clone().unwrap_or_default(),
             notes: tx.notes.clone().unwrap_or_default(),
             amount: Some(tx.amount),
+            split_group: tx.split_group.as_ref().map(ToString::to_string).unwrap_or_default(),
             ..Row::default()
         });
     }
@@ -176,6 +179,7 @@ pub fn to_csv(m: &Month) -> String {
             money(r.amount),
             money(r.current_balance),
             money(r.minimum_payment),
+            r.split_group,
         ];
         out.push_str(&fields.iter().map(|f| esc(f)).collect::<Vec<_>>().join(","));
         out.push_str("\r\n");
@@ -216,7 +220,7 @@ mod tests {
         let a = to_csv(&m);
         assert_eq!(a, to_csv(&m.clone()));
         assert!(a.starts_with("record_type,month,date,"));
-        assert!(a.contains("expense_line,2026-09,,,Giving,\"Tithe, \"\"church\"\"\",,,,,100.00,,0.00,100.00,,,"));
+        assert!(a.contains("expense_line,2026-09,,,Giving,\"Tithe, \"\"church\"\"\",,,,,100.00,,0.00,100.00,,,,"));
         assert!(a.contains("allocation,2026-09,2026-09-04,Pay,Giving,"));
     }
 }

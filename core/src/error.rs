@@ -13,6 +13,10 @@ pub enum DomainError {
     NegativeAmount,
     #[error("transaction amount cannot be zero")]
     ZeroTransaction,
+    #[error("a split needs at least two parts")]
+    SplitTooFew,
+    #[error("split parts must all be expenses or all be income")]
+    SplitMixedSigns,
     #[error("paycheck {paycheck} would be over-allocated by {over} cents")]
     OverAllocated { paycheck: Id, over: Cents },
     #[error("not enough unallocated paycheck money: short by {short} cents")]
@@ -63,6 +67,8 @@ impl DomainError {
             DomainError::NonPositiveAmount => "NON_POSITIVE_AMOUNT",
             DomainError::NegativeAmount => "NEGATIVE_AMOUNT",
             DomainError::ZeroTransaction => "ZERO_TRANSACTION",
+            DomainError::SplitTooFew => "SPLIT_TOO_FEW",
+            DomainError::SplitMixedSigns => "SPLIT_MIXED_SIGNS",
             DomainError::OverAllocated { .. } => "INVARIANT_VIOLATION",
             DomainError::InsufficientUnallocated { .. } => "INVARIANT_VIOLATION",
             DomainError::TransferExceedsAllocation { .. } => "INVARIANT_VIOLATION",

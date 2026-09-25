@@ -38,6 +38,7 @@ fn sample_month(ym: NaiveDate) -> Month {
         notes: Some("n".into()),
         expense_line_id: Some(card),
         paycheck_id: Some(p),
+        split_group: Some(Id::new("g-1")),
     })
     .unwrap();
     m

@@ -205,4 +205,8 @@ pub struct Transaction {
     pub notes: Option<String>,
     pub expense_line_id: Option<Id>,
     pub paycheck_id: Option<Id>,
+    /// Parts of one split payment share a group id (user request #9); each
+    /// part has its own amount, line and paycheck.
+    #[serde(default)]
+    pub split_group: Option<Id>,
 }

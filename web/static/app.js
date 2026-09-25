@@ -207,7 +207,68 @@
     });
   });
 
-  window.pz = { clearDone: clearDone, cents: cents, fmt: fmt, guard: guard, t: t, fillIncome: fillIncome, toast: toast, resetInline: resetInline };
+  // Split editor: add/remove parts, live "left to split", validation.
+  function renumber(list) {
+    Array.prototype.forEach.call(list.querySelectorAll("[data-part]"), function (row, i) {
+      row.querySelectorAll("[name]").forEach(function (el) { el.name = el.name.replace(/_\d+$/, "_" + i); });
+      row.querySelectorAll("[aria-label]").forEach(function (el) { el.setAttribute("aria-label", el.getAttribute("aria-label").replace(/\d+/, String(i + 1))); });
+    });
+  }
+  function splitLeft(form) {
+    var total = cents(form.querySelector("[data-split-total]").value) || 0;
+    var sum = 0;
+    form.querySelectorAll("[data-part-amount]").forEach(function (i) { var v = cents(i.value); if (v && !Number.isNaN(v)) sum += v; });
+    return total - sum;
+  }
+  function updateSplit(form) {
+    var out = form.querySelector("[data-split-left-amt]");
+    if (!out) return;
+    var left = splitLeft(form);
+    out.textContent = fmt(left);
+    form.querySelector("[data-split-left]").classList.toggle("bad", left !== 0);
+  }
+  document.addEventListener("input", function (e) {
+    var f = e.target instanceof Element ? e.target.closest("[data-split-editor]") : null;
+    if (f) updateSplit(f);
+  });
+  document.addEventListener("click", function (e) {
+    var t0 = e.target instanceof Element ? e.target : null;
+    if (!t0) return;
+    var add = t0.closest("[data-add-part]"), rm = t0.closest("[data-remove-part]");
+    var form = (add || rm) && (add || rm).closest("[data-split-editor]");
+    if (!form) return;
+    var list = form.querySelector("[data-parts]");
+    if (add) {
+      var rows = list.querySelectorAll("[data-part]");
+      var copy = rows[rows.length - 1].cloneNode(true);
+      copy.querySelectorAll("input").forEach(function (i) { i.value = ""; i.defaultValue = ""; });
+      copy.querySelectorAll("select").forEach(function (s) { s.selectedIndex = 0; });
+      list.appendChild(copy);
+      renumber(list);
+      copy.querySelector("select").focus();
+    } else if (list.querySelectorAll("[data-part]").length > 2) {
+      rm.closest("[data-part]").remove();
+      renumber(list);
+    }
+    updateSplit(form);
+  });
+  /** Blocks saving a split whose parts don't add up to the total. */
+  function checkSplit(form) {
+    form.querySelectorAll("input[inputmode=decimal]").forEach(normalizeMoney);
+    var err = form.querySelector(".field-error");
+    if (splitLeft(form) !== 0) { if (err) err.textContent = t("split_mismatch"); return false; }
+    if (err) err.textContent = "";
+    return true;
+  }
+  // Forms that can't be queued offline explain why instead of failing.
+  document.addEventListener("submit", function (e) {
+    var f = e.target;
+    if (navigator.onLine || !(f instanceof HTMLFormElement) || !f.hasAttribute("data-online-only")) return;
+    e.preventDefault(); e.stopImmediatePropagation();
+    toast("warning", t("online_only"));
+  }, true);
+
+  window.pz = { clearDone: clearDone, checkSplit: checkSplit, cents: cents, fmt: fmt, guard: guard, t: t, fillIncome: fillIncome, toast: toast, resetInline: resetInline };
 
   // ------------------------------------------------------------------
   // Confirmations: buttons with data-confirm open a styled, accessible dialog.

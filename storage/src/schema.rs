@@ -14,7 +14,13 @@
 //! - `refresh_tokens` and `sync_ops` support auth and offline sync.
 
 /// Ordered migrations: (version, statements).
-pub const MIGRATIONS: &[(i64, &[&str])] = &[(1, V1)];
+pub const MIGRATIONS: &[(i64, &[&str])] = &[(1, V1), (2, V2)];
+
+/// v2: split transactions (parts of one payment share a group id).
+const V2: &[&str] = &[
+    "ALTER TABLE transactions ADD COLUMN split_group VARCHAR(36)",
+    "CREATE INDEX idx_transactions_split ON transactions(split_group)",
+];
 
 const V1: &[&str] = &[
     r#"CREATE TABLE users (
