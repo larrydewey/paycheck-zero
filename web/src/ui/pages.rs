@@ -665,7 +665,7 @@ fn fund_form(c: &Ctx, m: &Month, pid: &Id, view: &View, unallocated: Cents, stru
     html! {
         section class="fund" aria-labelledby="fund-h" data-signals="{_fundline: ''}" {
             h2 id="fund-h" { (t("fund.title")) }
-            form id="fund-form" data-on:submit__prevent=(post_form_guarded(&url)) {
+            form id="fund-form" data-clear data-on:submit__prevent=(post_form_guarded(&url)) {
                 (view_input(view))
                 input type="hidden" name="paycheck_id" value=(pid);
                 div class="fund-grid" {
@@ -927,7 +927,7 @@ pub fn render_overview(c: &Ctx, m: &Month, archived: bool) -> Markup {
                         }
                     }
                     @if structure {
-                        form class="add-line" data-on:submit__prevent=(post_form(&format!("/ui/months/{}/lines", m.id))) {
+                        form class="add-line" id=(format!("add-line-{}", cat.id)) data-clear data-on:submit__prevent=(post_form(&format!("/ui/months/{}/lines", m.id))) {
                             (view_input(&view))
                             input type="hidden" name="category_id" value=(cat.id);
                             span class="add-icon" aria-hidden="true" { (icon("plus")) }
@@ -939,7 +939,7 @@ pub fn render_overview(c: &Ctx, m: &Month, archived: bool) -> Markup {
             }
         }
         @if structure {
-            form class="add-category" data-on:submit__prevent=(post_form(&format!("/ui/months/{}/categories", m.id))) {
+            form class="add-category" id="add-category" data-clear data-on:submit__prevent=(post_form(&format!("/ui/months/{}/categories", m.id))) {
                 (view_input(&view))
                 label for="new-category" { (t("category.add_label")) }
                 input id="new-category" type="text" name="name" required maxlength="100";
@@ -1010,7 +1010,7 @@ pub fn render_income(c: &Ctx, m: &Month, archived: bool, welcome: bool) -> Marku
                     details class="edit-income" {
                         summary { (t("income.edit")) }
                         (income_form(&view, &format!("/ui/income/{}", l.id), "edit", Some(l), m))
-                        form class="inline" data-on:submit__prevent=(post_form(&format!("/ui/income/{}/paychecks", l.id))) {
+                        form class="inline" id=(format!("add-date-form-{}", l.id)) data-clear data-on:submit__prevent=(post_form(&format!("/ui/income/{}/paychecks", l.id))) {
                             (view_input(&view))
                             label for=(format!("add-date-{}", l.id)) { (t("income.add_date")) }
                             input id=(format!("add-date-{}", l.id)) type="date" name="date" required
@@ -1058,7 +1058,7 @@ fn income_form(view: &View, url: &str, prefix: &str, line: Option<&IncomeLine>, 
     let id = |f: &str| format!("{prefix}-{f}");
     let suggest_url = format!("/months/{}/income/suggestions", m.id);
     html! {
-        form class="income-form" id=(id("form")) data-signals=(signals) data-on:submit__prevent=(post_form(url)) {
+        form class="income-form" id=(id("form")) data-clear[is_new] data-signals=(signals) data-on:submit__prevent=(post_form(url)) {
             (view_input(view))
             div class="field" {
                 label for=(id("name")) { (t("income.name")) }
@@ -1186,7 +1186,7 @@ pub fn render_transactions(c: &Ctx, m: &Month, archived: bool) -> Markup {
         @if !archived {
             section class="card" aria-labelledby="add-tx-h" {
                 h2 id="add-tx-h" class="h3" { (t("tx.add")) }
-                form id="add-tx" class="tx-form" data-offline="create_transaction" data-month=(m.id)
+                form id="add-tx" class="tx-form" data-clear data-offline="create_transaction" data-month=(m.id)
                     data-on:submit__prevent=(post_form(&format!("/ui/months/{}/transactions", m.id))) {
                     (view_input(&view))
                     (tx_fields(m, "new-tx", None, default_date))

@@ -77,7 +77,8 @@ fn impact_toasts(user: &UserRecord, m: &Month, impact: &Impact) -> Vec<Markup> {
 
 /// Standard response: re-render the view, then append toasts.
 async fn done(st: &Shared, user: &UserRecord, headers: &HeaderMap, view: &View, toasts: Vec<Markup>) -> Sse {
-    let mut sse = content_sse(st, user, headers, view).await;
+    // Success: empty the "add something" form that was just submitted.
+    let mut sse = content_sse(st, user, headers, view).await.script("pz.clearDone()");
     for t in toasts {
         sse = sse.patch_into("#toasts", "append", t);
     }

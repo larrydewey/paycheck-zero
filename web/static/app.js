@@ -16,17 +16,84 @@
     return s;
   }
 
-  /** Parses "$1,234.56" / "12.5" into integer cents; NaN when malformed, null when empty. */
+  /**
+   * Parses money typed by the user into integer cents: "$1,234.56", "12.5",
+   * or arithmetic like "600 + 80", "1200/2", "(50+25)*2". Uses exact BigInt
+   * fractions and rounds half-to-even once, matching the server. NaN when
+   * malformed or negative, null when empty.
+   */
   function cents(input) {
-    var s = String(input == null ? "" : input).replace(/[\s, ]/g, "");
+    var s = String(input == null ? "" : input).replace(/[\s,\u00a0]/g, "");
     if (s === "") return null;
-    s = s.replace(/^[^0-9.\-]+/, "");
-    var m = /^(\d{0,13})(?:\.(\d{0,2}))?$/.exec(s);
-    if (!m || (m[1] === "" && (m[2] === undefined || m[2] === ""))) return NaN;
-    var whole = m[1] === "" ? 0 : parseInt(m[1], 10);
-    var frac = m[2] === undefined ? 0 : parseInt((m[2] + "00").slice(0, 2), 10);
-    return whole * 100 + frac;
+    if (s.length > 64) return NaN;
+    s = s.replace(/[^0-9+\-*/().xX\u00d7\u00f7]/g, "").replace(/[xX\u00d7]/g, "*").replace(/\u00f7/g, "/");
+    if (s === "") return NaN;
+    try {
+      var v = evaluate(s);
+      if (v === null) return NaN;
+      var num = v[0] * 100n, den = v[1];
+      var q = num / den, r = num % den;
+      if (r < 0n) { r += den; q -= 1n; }
+      if (r * 2n > den || (r * 2n === den && q % 2n !== 0n)) q += 1n;
+      if (q < 0n) return NaN;
+      return Number(q);
+    } catch (_) { return NaN; }
   }
+
+  function evaluate(src) {
+    var i = 0;
+    var gcd = function (a, b) { a = a < 0n ? -a : a; b = b < 0n ? -b : b; while (b) { var t = a % b; a = b; b = t; } return a || 1n; };
+    var norm = function (n, d) { if (d === 0n) throw 0; if (d < 0n) { n = -n; d = -d; } var g = gcd(n, d); return [n / g, d / g]; };
+    function number() {
+      var m = /^(\d{0,13})(?:\.(\d{0,6}))?/.exec(src.slice(i));
+      if (!m || m[0] === "" || m[0] === ".") throw 0;
+      i += m[0].length;
+      var frac = m[2] || "";
+      return norm(BigInt((m[1] || "") + frac || "0"), 10n ** BigInt(frac.length));
+    }
+    function factor() {
+      if (src[i] === "-") { i++; var v = factor(); return [-v[0], v[1]]; }
+      if (src[i] === "(") { i++; var e = expr(); if (src[i] !== ")") throw 0; i++; return e; }
+      return number();
+    }
+    function term() {
+      var v = factor();
+      while (src[i] === "*" || src[i] === "/") {
+        var op = src[i++], r = factor();
+        v = op === "*" ? norm(v[0] * r[0], v[1] * r[1]) : norm(v[0] * r[1], v[1] * r[0]);
+      }
+      return v;
+    }
+    function expr() {
+      var v = term();
+      while (src[i] === "+" || src[i] === "-") {
+        var op = src[i++], r = term();
+        v = op === "+" ? norm(v[0] * r[1] + r[0] * v[1], v[1] * r[1]) : norm(v[0] * r[1] - r[0] * v[1], v[1] * r[1]);
+      }
+      return v;
+    }
+    var out = expr();
+    if (i !== src.length) return null;
+    var plain = !/[+*/()]/.test(src) && src.slice(1).indexOf("-") < 0;
+    if (plain && /\.\d{3,}/.test(src)) return null;
+    return out;
+  }
+
+  /** "600+80" → "680.00" in the field, so users see what will be saved. */
+  function normalizeMoney(input) {
+    if (!/[+\-*/()xX\u00d7\u00f7]/.test(input.value.replace(/^\s*-/, ""))) return;
+    var c = cents(input.value);
+    if (c === null || Number.isNaN(c)) return;
+    input.value = (Math.floor(c / 100)) + "." + String(c % 100).padStart(2, "0");
+  }
+  document.addEventListener("blur", function (e) {
+    var el = e.target;
+    if (el instanceof HTMLInputElement && el.inputMode === "decimal") normalizeMoney(el);
+  }, true);
+  document.addEventListener("submit", function (e) {
+    var f = e.target;
+    if (f instanceof HTMLFormElement) f.querySelectorAll("input[inputmode=decimal]").forEach(normalizeMoney);
+  }, true);
 
   function currency() { return document.documentElement.dataset.currency || "USD"; }
 
@@ -92,7 +159,37 @@
     });
   }
 
-  window.pz = { cents: cents, fmt: fmt, guard: guard, t: t, fillIncome: fillIncome, toast: toast, resetInline: resetInline };
+  /** After a successful create, empty the submitting form (marked data-clear). */
+  var pendingClear = {};
+  document.addEventListener("datastar-fetch", function (e) {
+    var el = e.detail && e.detail.el;
+    var f = el && el.closest ? el.closest("form[data-clear]") : null;
+    if (f && f.id && e.detail.type === "started") pendingClear[f.id] = true;
+    if (f && f.id && e.detail.type === "finished") setTimeout(function () { delete pendingClear[f.id]; }, 0);
+  });
+  function clearDone() {
+    Object.keys(pendingClear).map(function (id) { return byId(id); }).filter(Boolean).forEach(function (f) {
+      f.reset();
+      f.querySelectorAll("select, input").forEach(function (el) {
+        el.dispatchEvent(new Event("input", { bubbles: true }));
+        el.dispatchEvent(new Event("change", { bubbles: true }));
+      });
+      var err = f.querySelector(".field-error"); if (err) err.textContent = "";
+    });
+  }
+
+  // Inline edits also save when the pointer leaves the row with a changed value.
+  document.addEventListener("mouseout", function (e) {
+    var from = e.target instanceof Element ? e.target.closest("li.line, .cat-tools, .debt-form") : null;
+    if (!from || (e.relatedTarget instanceof Node && from.contains(e.relatedTarget))) return;
+    from.querySelectorAll("form").forEach(function (f) {
+      if (f.hasAttribute("data-clear") || f.classList.contains("is-busy")) return;
+      var dirty = Array.prototype.some.call(f.querySelectorAll("input[type=text]"), function (i) { return i.value !== i.defaultValue; });
+      if (dirty && f.checkValidity()) f.requestSubmit();
+    });
+  });
+
+  window.pz = { clearDone: clearDone, cents: cents, fmt: fmt, guard: guard, t: t, fillIncome: fillIncome, toast: toast, resetInline: resetInline };
 
   // ------------------------------------------------------------------
   // Confirmations: buttons with data-confirm open a styled, accessible dialog.

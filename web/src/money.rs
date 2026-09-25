@@ -78,8 +78,10 @@ pub fn plain(cents: Cents) -> String {
 }
 
 /// Parses user-typed money such as `12.5`, `$1,234.56`, `1234` into cents.
-/// Returns `None` for empty input and `Some(Err)` for malformed input.
-/// Only non-negative amounts are accepted; sign is expressed by context.
+/// Simple arithmetic is allowed: `600 + 80`, `1200/2`, `(50+25)*2`, `$9.99*3`.
+/// Evaluation uses exact fractions and rounds half-to-even to the cent once,
+/// at the end. Returns `None` for empty input and `Some(Err)` for malformed
+/// input. Results must not be negative; sign is expressed by context.
 #[must_use]
 pub fn parse(input: &str) -> Option<Result<Cents, ()>> {
     let s: String = input
@@ -90,33 +92,138 @@ pub fn parse(input: &str) -> Option<Result<Cents, ()>> {
     if s.is_empty() {
         return None;
     }
-    let s = s.trim_start_matches(|c: char| !c.is_ascii_digit() && c != '.' && c != '-');
-    Some(parse_digits(s))
+    if s.len() > 64 {
+        return Some(Err(()));
+    }
+    // Drop currency symbols/codes, which may appear before any number.
+    let cleaned: String = s.chars().filter(|c| c.is_ascii_digit() || "+-*/().xX×÷".contains(*c)).collect();
+    if cleaned.is_empty() {
+        return Some(Err(()));
+    }
+    let expr: String = cleaned.chars().map(|c| match c { 'x' | 'X' | '×' => '*', '÷' => '/', o => o }).collect();
+    Some(eval(&expr))
 }
 
-fn parse_digits(s: &str) -> Result<Cents, ()> {
-    if s.starts_with('-') {
+/// An exact fraction `n / d` with `d > 0`.
+#[derive(Clone, Copy)]
+struct Frac(i128, i128);
+
+fn gcd(a: i128, b: i128) -> i128 {
+    let (mut a, mut b) = (a.abs(), b.abs());
+    while b != 0 {
+        (a, b) = (b, a % b);
+    }
+    a.max(1)
+}
+
+impl Frac {
+    fn norm(n: i128, d: i128) -> Result<Frac, ()> {
+        if d == 0 {
+            return Err(());
+        }
+        let g = gcd(n, d);
+        let (n, d) = if d < 0 { (-n / g, -d / g) } else { (n / g, d / g) };
+        if n.abs() > 10_i128.pow(30) || d > 10_i128.pow(30) {
+            return Err(());
+        }
+        Ok(Frac(n, d))
+    }
+    fn add(self, o: Frac) -> Result<Frac, ()> {
+        Frac::norm(self.0 * o.1 + o.0 * self.1, self.1 * o.1)
+    }
+    fn sub(self, o: Frac) -> Result<Frac, ()> {
+        Frac::norm(self.0 * o.1 - o.0 * self.1, self.1 * o.1)
+    }
+    fn mul(self, o: Frac) -> Result<Frac, ()> {
+        Frac::norm(self.0 * o.0, self.1 * o.1)
+    }
+    fn div(self, o: Frac) -> Result<Frac, ()> {
+        Frac::norm(self.0 * o.1, self.1 * o.0)
+    }
+}
+
+struct Parser<'a> {
+    s: &'a [u8],
+    i: usize,
+}
+
+impl Parser<'_> {
+    fn peek(&self) -> Option<u8> {
+        self.s.get(self.i).copied()
+    }
+    fn expr(&mut self) -> Result<Frac, ()> {
+        let mut v = self.term()?;
+        while let Some(op) = self.peek().filter(|c| *c == b'+' || *c == b'-') {
+            self.i += 1;
+            let r = self.term()?;
+            v = if op == b'+' { v.add(r)? } else { v.sub(r)? };
+        }
+        Ok(v)
+    }
+    fn term(&mut self) -> Result<Frac, ()> {
+        let mut v = self.factor()?;
+        while let Some(op) = self.peek().filter(|c| *c == b'*' || *c == b'/') {
+            self.i += 1;
+            let r = self.factor()?;
+            v = if op == b'*' { v.mul(r)? } else { v.div(r)? };
+        }
+        Ok(v)
+    }
+    fn factor(&mut self) -> Result<Frac, ()> {
+        match self.peek() {
+            Some(b'-') => {
+                self.i += 1;
+                let v = self.factor()?;
+                Frac::norm(-v.0, v.1)
+            }
+            Some(b'(') => {
+                self.i += 1;
+                let v = self.expr()?;
+                if self.peek() != Some(b')') {
+                    return Err(());
+                }
+                self.i += 1;
+                Ok(v)
+            }
+            _ => self.number(),
+        }
+    }
+    fn number(&mut self) -> Result<Frac, ()> {
+        let start = self.i;
+        while self.peek().is_some_and(|c| c.is_ascii_digit() || c == b'.') {
+            self.i += 1;
+        }
+        let tok = std::str::from_utf8(&self.s[start..self.i]).map_err(|_| ())?;
+        let (whole, frac) = tok.split_once('.').unwrap_or((tok, ""));
+        if (whole.is_empty() && frac.is_empty()) || frac.contains('.') || whole.len() > 13 || frac.len() > 6 {
+            return Err(());
+        }
+        let digits = format!("{whole}{frac}");
+        let n: i128 = if digits.is_empty() { 0 } else { digits.parse().map_err(|_| ())? };
+        Frac::norm(n, 10_i128.pow(u32::try_from(frac.len()).map_err(|_| ())?))
+    }
+}
+
+fn eval(expr: &str) -> Result<Cents, ()> {
+    let mut p = Parser { s: expr.as_bytes(), i: 0 };
+    let v = p.expr()?;
+    if p.i != expr.len() {
         return Err(());
     }
-    let (whole, frac) = match s.split_once('.') {
-        Some((w, f)) => (w, f),
-        None => (s, ""),
-    };
-    if (whole.is_empty() && frac.is_empty())
-        || frac.len() > 2
-        || !whole.chars().all(|c| c.is_ascii_digit())
-        || !frac.chars().all(|c| c.is_ascii_digit())
-        || whole.len() > 13
-    {
+    // A plain number with more than 2 decimals is a typo, not a calculation.
+    let plain = !expr.contains(['+', '*', '/', '(', ')']) && !expr[1..].contains('-');
+    if plain && expr.split_once('.').is_some_and(|(_, f)| f.len() > 2) {
         return Err(());
     }
-    let w: i64 = if whole.is_empty() { 0 } else { whole.parse().map_err(|_| ())? };
-    let f: i64 = match frac.len() {
-        0 => 0,
-        1 => frac.parse::<i64>().map_err(|_| ())? * 10,
-        _ => frac.parse().map_err(|_| ())?,
-    };
-    Ok(Cents::new(w * 100 + f))
+    // cents = v * 100, rounded half-to-even.
+    let (num, den) = (v.0 * 100, v.1);
+    let q = num.div_euclid(den);
+    let r = num.rem_euclid(den);
+    let rounded = if r * 2 > den || (r * 2 == den && q % 2 != 0) { q + 1 } else { q };
+    if rounded < 0 {
+        return Err(());
+    }
+    i64::try_from(rounded).map(Cents::new).map_err(|_| ())
 }
 
 #[cfg(test)]
@@ -146,5 +253,21 @@ mod tests {
         assert_eq!(parse("abc"), Some(Err(())));
         assert_eq!(parse("-5"), Some(Err(())));
         assert_eq!(parse("1.2.3"), Some(Err(())));
+    }
+
+    #[test]
+    fn evaluates_arithmetic_exactly() {
+        assert_eq!(parse("600 + 80"), Some(Ok(Cents::new(68_000))));
+        assert_eq!(parse("1200/2"), Some(Ok(Cents::new(60_000))));
+        assert_eq!(parse("(50+25)*2"), Some(Ok(Cents::new(15_000))));
+        assert_eq!(parse("$9.99 x 3"), Some(Ok(Cents::new(2_997))));
+        assert_eq!(parse("100 - 12.50"), Some(Ok(Cents::new(8_750))));
+        assert_eq!(parse("100/3"), Some(Ok(Cents::new(3_333))));
+        assert_eq!(parse("0.1+0.2"), Some(Ok(Cents::new(30))));
+        assert_eq!(parse("2000*10/100"), Some(Ok(Cents::new(20_000))));
+        assert_eq!(parse("10/0"), Some(Err(())));
+        assert_eq!(parse("5-10"), Some(Err(())), "negative result");
+        assert_eq!(parse("5+"), Some(Err(())));
+        assert_eq!(parse("(5"), Some(Err(())));
     }
 }
