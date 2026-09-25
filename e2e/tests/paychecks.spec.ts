@@ -157,6 +157,15 @@ test.describe("paycheck view (primary)", () => {
     await expect(page.locator("#unassigned-nudge")).toContainText("To fund something else, lower another line first.");
   });
 
+  test("one click gives 10% of the paycheck to Tithe", async ({ page }) => {
+    await page.getByRole("button", { name: "Give 10% ($200.00)" }).click();
+    await expect(pz.toast(page)).toContainText("$200.00 assigned to Tithe.");
+    await expect(pz.line(page, "Tithe")).toBeVisible();
+    await expect(pz.category(page, "Giving").locator("summary [data-col=this]")).toContainText("$200.00");
+    await expect(page.getByText("10% given ($200.00)")).toBeVisible();
+    await expect(pz.sts(page)).toHaveText("$102.80");
+  });
+
   test("navigating between paychecks", async ({ page }) => {
     await page.locator(".paycheck-strip .chip", { hasText: "Sep 18" }).click();
     await waitForContent(page);

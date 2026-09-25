@@ -967,6 +967,49 @@ impl Month {
         Ok(())
     }
 
+    /// The tithe amount for a paycheck: `percent` of its planned amount,
+    /// rounded half-to-even to the cent.
+    #[must_use]
+    pub fn tithe_amount(&self, paycheck: &Id, percent: u32) -> Cents {
+        self.paycheck(paycheck)
+            .and_then(|p| crate::money::Rate::parse(&format!("0.{percent:02}")).map(|r| r.convert(p.planned_amount)))
+            .unwrap_or(Cents::ZERO)
+    }
+
+    /// The line one-click giving funds: "Tithe" in the Giving category
+    /// (either is created when missing).
+    pub fn tithe_line(&mut self) -> Result<Id, DomainError> {
+        let giving = match self.categories.iter().find(|c| c.name.eq_ignore_ascii_case("Giving")) {
+            Some(c) => c.id.clone(),
+            None => self.add_category("Giving", CategoryKind::Standard)?,
+        };
+        match self.lines_of(&giving).iter().find(|l| l.name.eq_ignore_ascii_case("Tithe")) {
+            Some(l) => Ok(l.id.clone()),
+            None => self.add_expense_line(&giving, "Tithe"),
+        }
+    }
+
+    /// One-click giving: sets this paycheck's Tithe allocation to `percent`
+    /// of the paycheck (creating Giving → Tithe if needed).
+    pub fn give_percent(&mut self, paycheck: &Id, percent: u32) -> Result<Id, DomainError> {
+        self.require_allocations_editable()?;
+        if percent == 0 || percent > 99 {
+            return Err(DomainError::NonPositiveAmount);
+        }
+        let amount = self.tithe_amount(paycheck, percent);
+        if !amount.is_positive() {
+            return Err(DomainError::NonPositiveAmount);
+        }
+        let line = match self.categories.iter().find(|c| c.name.eq_ignore_ascii_case("Giving")).and_then(|c| {
+            self.lines_of(&c.id).iter().find(|l| l.name.eq_ignore_ascii_case("Tithe")).map(|l| l.id.clone())
+        }) {
+            Some(l) => l,
+            None => self.tithe_line()?,
+        };
+        self.set_allocation(paycheck, &line, amount)?;
+        Ok(line)
+    }
+
     // ------------------------------------------------------------------
     // Locking and variance re-assignment (spec §2.1, §2.9)
     // ------------------------------------------------------------------

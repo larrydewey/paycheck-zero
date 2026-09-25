@@ -579,3 +579,26 @@ fn drag_and_drop_placement() {
     f.m.place_category(&f.housing, 99).unwrap();
     assert_eq!(f.m.categories_sorted().last().unwrap().id, f.housing);
 }
+
+#[test]
+fn one_click_ten_percent_giving() {
+    let mut f = fixture();
+    let line = f.m.give_percent(&f.p1, 10).unwrap();
+    let tithe = f.m.expense_line(&line).unwrap();
+    assert_eq!(tithe.name, "Tithe");
+    assert_eq!(f.m.category(&tithe.category_id).unwrap().name, "Giving");
+    assert_eq!(f.m.allocation_for(&f.p1, &line).unwrap().amount, c(10_000));
+    // Idempotent and reuses the line.
+    assert_eq!(f.m.give_percent(&f.p2, 10).unwrap(), line);
+    assert_eq!(f.m.line_planned(&line), c(20_000));
+    // Rounds half-to-even: 10% of $123.45 = $12.345 -> $12.34.
+    f.m.set_paycheck_planned(&f.p1, c(12_345)).unwrap();
+    f.m.give_percent(&f.p1, 10).unwrap();
+    assert_eq!(f.m.allocation_for(&f.p1, &line).unwrap().amount, c(1_234));
+    // Not enough room.
+    f.m.set_allocation(&f.p1, &f.rent, c(12_345 - 1_234)).unwrap();
+    f.m.set_allocation(&f.p1, &line, c(0)).unwrap();
+    f.m.set_allocation(&f.p1, &f.rent, c(12_345)).unwrap();
+    assert!(matches!(f.m.give_percent(&f.p1, 10), Err(DomainError::OverAllocated { .. })));
+    f.m.check_invariants().unwrap();
+}

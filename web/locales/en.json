@@ -141,6 +141,9 @@
   "fund.available": "{amount} available on this paycheck.",
   "fund.submit": "Assign",
   "fund.use_all": "Use all {amount}",
+  "give.button": "Give 10% ({amount})",
+  "give.done": "10% given ({amount})",
+  "give.toast": "{amount} assigned to Tithe.",
   "fund.done": "Assigned to {name}.",
 
   "col.name": "Name",

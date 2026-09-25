@@ -493,3 +493,6 @@ dialog .tx-form { margin-top: 0.5rem; }
 .income-form > .field:first-of-type { grid-column: 1 / -1; }
 .income-form > button { align-self: end; }
 @media (max-width: 640px) { .income-form { grid-template-columns: 1fr; } }
+
+.quick-actions { display: flex; gap: 0.5rem; flex-wrap: wrap; margin: 0 0 0.75rem; }
+.pill.ok { background: var(--ok-soft); color: var(--ok); display: inline-flex; align-items: center; gap: 0.3rem; }

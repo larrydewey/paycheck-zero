@@ -65,6 +65,7 @@ pub fn routes(state: Shared) -> Router<Shared> {
         .route("/ui/paychecks/{id}/status", post(actions::paycheck_status))
         .route("/ui/paychecks/{id}/apply-actual", post(actions::apply_actual))
         .route("/ui/paychecks/{id}/delete", post(actions::delete_paycheck))
+        .route("/ui/paychecks/{id}/give", post(actions::give))
         .route("/ui/paychecks/{pid}/lines/{lid}", post(actions::set_allocation))
         .route("/ui/categories/{id}/rename", post(actions::rename_category))
         .route("/ui/categories/{id}/move", post(actions::move_category))

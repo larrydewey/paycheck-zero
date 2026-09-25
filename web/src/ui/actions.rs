@@ -506,6 +506,18 @@ pub async fn apply_actual(State(st): State<Shared>, Extension(user): Extension<A
     .await
 }
 
+/// One-click 10% giving to Giving → Tithe (user request).
+pub async fn give(State(st): State<Shared>, Extension(user): Extension<AuthUser>, headers: HeaderMap, Path(pid): Path<Id>, Form(f): F) -> Sse {
+    let user = user.0;
+    let (mid, view) = paycheck_view(&st, &user, &f, &pid).await;
+    let cur = user.currency.clone();
+    let pid2 = pid.clone();
+    month_action(&st, &user, &headers, view, mid, |m| m.give_percent(&pid, 10), move |_, m| {
+        vec![toast(ToastKind::Success, &tf("give.toast", &[("amount", &crate::money::format(m.tithe_amount(&pid2, 10), &cur))]), None)]
+    })
+    .await
+}
+
 pub async fn delete_paycheck(State(st): State<Shared>, Extension(user): Extension<AuthUser>, headers: HeaderMap, Path(pid): Path<Id>, Form(f): F) -> Sse {
     let user = user.0;
     let (mid, _) = paycheck_view(&st, &user, &f, &pid).await;

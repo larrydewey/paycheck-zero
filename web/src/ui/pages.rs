@@ -550,6 +550,23 @@ pub fn render_paycheck(c: &Ctx, m: &Month, archived: bool, pid: &Id) -> Markup {
             }
         }
 
+        @if editable && v.planned_amount.is_positive() {
+            @let tithe = m.tithe_amount(pid, 10);
+            @let current = m.categories.iter().find(|c| c.name.eq_ignore_ascii_case("Giving"))
+                .and_then(|c| m.lines_of(&c.id).into_iter().find(|l| l.name.eq_ignore_ascii_case("Tithe")))
+                .and_then(|l| m.allocation_for(pid, &l.id)).map_or(Cents::ZERO, |a| a.amount);
+            div class="quick-actions" {
+                @if current == tithe {
+                    span class="pill ok" { (icon("check")) " " (tf("give.done", &[("amount", &c.money(tithe))])) }
+                } @else {
+                    form class="inline" data-on:submit__prevent=(post_form(&format!("/ui/paychecks/{pid}/give"))) {
+                        (view_input(&view))
+                        button type="submit" class="btn" { (tf("give.button", &[("amount", &c.money(tithe))])) }
+                    }
+                }
+            }
+        }
+
         section class="funding five" aria-labelledby="funding-h" {
             div class="section-head" {
                 h2 id="funding-h" { (t("paycheck.funds")) }
