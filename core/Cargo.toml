@@ -3,10 +3,11 @@ name = "paycheckzero-core"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "PaycheckZero pure domain: models, invariants, safe-to-spend, zero-based validation. No web/db deps."
+description = "PaycheckZero pure domain: models, invariants, safe-to-spend, zero-based validation, reports. No web/db deps."
 
 [dependencies]
 serde.workspace = true
+serde_json.workspace = true
 chrono.workspace = true
 uuid.workspace = true
 thiserror.workspace = true
