@@ -13,6 +13,8 @@
   "auth.create_account": "Create account",
   "auth.no_account": "New here?",
   "auth.have_account": "Already have an account?",
+  "auth.cookie_blocked": "You signed in, but this browser didn't keep the sign-in cookie. Allow cookies for this site (and, if the server uses PZ_SECURE_COOKIES=true, open it with https://), then try again.",
+  "auth.check_fields": "Check your email and password and try again.",
 
   "common.loading": "Loading…",
   "common.retry": "Try again",
@@ -49,6 +51,7 @@
   "offline.body": "This page hasn't been saved for offline use yet. Reconnect and try again.",
 
   "error.load_title": "We couldn't load this page",
+  "error.no_scripts": "This browser couldn't start PaycheckZero's scripts, so buttons may not respond. Update your browser (Chrome 93+, Safari 15.4+, Firefox 92+) or turn off content blockers for this site.",
   "error.load_body": "Check your connection and try again. Your data is safe.",
   "error.back_to_months": "Go to your months",
 

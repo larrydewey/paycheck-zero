@@ -263,7 +263,23 @@
     if (closer) { var dlg = closer.closest("dialog"); if (dlg) dlg.close(); }
   });
 
+  // If Datastar never starts (old browser, blocked script), say so instead of
+  // leaving buttons that silently do nothing.
+  var datastarReady = false;
+  document.addEventListener("datastar-ready", function () { datastarReady = true; });
+  window.addEventListener("load", function () {
+    setTimeout(function () {
+      if (datastarReady) return;
+      var b = byId("script-banner"); if (b) b.hidden = false;
+    }, 4000);
+  });
+
   document.addEventListener("DOMContentLoaded", function () {
+    // Drop the one-time sign-in marker from the address bar.
+    if (/[?&]signed_in=1/.test(location.search)) {
+      var u = new URL(location.href); u.searchParams.delete("signed_in");
+      history.replaceState(null, "", u.pathname + (u.search || "") + u.hash);
+    }
     // Timezone defaults to the browser's at registration (spec §13.9).
     document.querySelectorAll("input[data-timezone]").forEach(function (i) {
       try { i.value = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC"; } catch (_) { i.value = "UTC"; }

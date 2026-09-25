@@ -112,7 +112,23 @@ async fn month_page(st: &Shared, user: &UserRecord, mid: &Id, view: View, active
 // Public pages
 // ----------------------------------------------------------------------
 
-pub async fn login_page(State(st): State<Shared>, headers: HeaderMap) -> Page {
+#[derive(Deserialize)]
+pub struct AuthQuery {
+    #[serde(default)]
+    error: Option<String>,
+}
+
+fn auth_query_error(q: &AuthQuery) -> Option<String> {
+    q.error.as_deref().map(|code| match code {
+        "INVALID_CREDENTIALS" => t("err.invalid_credentials"),
+        "REGISTRATION_CLOSED" => t("err.registration_closed"),
+        "COOKIE_BLOCKED" => t("auth.cookie_blocked"),
+        "BAD_REQUEST" => t("auth.check_fields"),
+        _ => t("err.internal"),
+    })
+}
+
+pub async fn login_page(State(st): State<Shared>, headers: HeaderMap, Query(q): Query<AuthQuery>) -> Page {
     if crate::auth::session_user(&st, &headers).await.is_some() {
         return Ok(Redirect::to("/").into_response());
     }
@@ -121,12 +137,14 @@ pub async fn login_page(State(st): State<Shared>, headers: HeaderMap) -> Page {
         section class="auth-card" {
             h1 { (t("auth.login_title")) }
             p class="muted" { (t("app.tagline")) }
-            form id="login-form" data-on:submit__prevent=(post_form("/ui/login")) {
+            form id="login-form" method="post" action="/ui/login" data-on:submit__prevent=(post_form("/ui/login")) {
                 label for="email" { (t("auth.email")) }
                 input id="email" name="email" type="email" autocomplete="email" required;
                 label for="password" { (t("auth.password")) }
                 input id="password" name="password" type="password" autocomplete="current-password" required;
-                div id="auth-error" {}
+                div id="auth-error" {
+                    @if let Some(e) = auth_query_error(&q) { div class="field-error" role="alert" { (e) } }
+                }
                 button type="submit" class="btn primary" { (t("auth.login")) }
             }
             @if open {
@@ -136,7 +154,7 @@ pub async fn login_page(State(st): State<Shared>, headers: HeaderMap) -> Page {
     })).into_response())
 }
 
-pub async fn register_page(State(st): State<Shared>) -> Page {
+pub async fn register_page(State(st): State<Shared>, Query(q): Query<AuthQuery>) -> Page {
     if !st.registration_open().await? {
         return Ok(Redirect::to("/login").into_response());
     }
@@ -144,14 +162,16 @@ pub async fn register_page(State(st): State<Shared>) -> Page {
         section class="auth-card" {
             h1 { (t("auth.register_title")) }
             p class="muted" { (t("auth.register_intro")) }
-            form id="register-form" data-on:submit__prevent=(post_form("/ui/register")) {
+            form id="register-form" method="post" action="/ui/register" data-on:submit__prevent=(post_form("/ui/register")) {
                 label for="email" { (t("auth.email")) }
                 input id="email" name="email" type="email" autocomplete="email" required;
                 label for="password" { (t("auth.password")) }
                 input id="password" name="password" type="password" autocomplete="new-password" minlength=(crate::service::MIN_PASSWORD) required aria-describedby="pw-hint";
                 p id="pw-hint" class="hint" { (tf("auth.password_hint", &[("n", &crate::service::MIN_PASSWORD.to_string())])) }
                 input type="hidden" name="timezone" data-timezone;
-                div id="auth-error" {}
+                div id="auth-error" {
+                    @if let Some(e) = auth_query_error(&q) { div class="field-error" role="alert" { (e) } }
+                }
                 button type="submit" class="btn primary" { (t("auth.create_account")) }
             }
             p { (t("auth.have_account")) " " a href="/login" { (t("auth.login")) } }

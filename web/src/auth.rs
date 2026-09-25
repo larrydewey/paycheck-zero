@@ -214,10 +214,16 @@ pub async fn session_user(state: &AppState, headers: &HeaderMap) -> Option<(User
 pub async fn require_session(State(state): State<Arc<AppState>>, mut req: Request, next: Next) -> Response {
     let Some((user, cookies)) = session_user(&state, req.headers()).await else {
         let datastar = req.headers().contains_key("datastar-request");
+        // Just signed in but no session came back: the browser refused the cookie.
+        let just_signed_in = req.uri().query().is_some_and(|q| q.split('&').any(|kv| kv == "signed_in=1"));
+        let target = if just_signed_in { "/login?error=COOKIE_BLOCKED" } else { "/login" };
+        if just_signed_in {
+            tracing::warn!(ua = ?req.headers().get(axum::http::header::USER_AGENT), "session cookie missing right after sign-in");
+        }
         let mut resp = if datastar {
-            crate::sse::Sse::new().redirect("/login").into_response()
+            crate::sse::Sse::new().redirect(target).into_response()
         } else {
-            axum::response::Redirect::to("/login").into_response()
+            axum::response::Redirect::to(target).into_response()
         };
         for c in clear_cookies(&state) {
             resp.headers_mut().append(SET_COOKIE, c);
@@ -240,4 +246,25 @@ pub async fn require_datastar_header(req: Request, next: Next) -> Response {
         return (axum::http::StatusCode::FORBIDDEN, "missing request header").into_response();
     }
     next.run(req).await
+}
+
+/// CSRF defence for the sign-in forms, which must also work as plain HTML
+/// form posts (no JavaScript): accept Datastar requests, or plain posts whose
+/// `Origin` (or `Referer`) matches the `Host` they were sent to.
+pub async fn same_origin_or_datastar(req: Request, next: Next) -> Response {
+    let h = req.headers();
+    if h.contains_key("datastar-request") {
+        return next.run(req).await;
+    }
+    let host = h.get(axum::http::header::HOST).and_then(|v| v.to_str().ok()).unwrap_or("");
+    let origin = h
+        .get(axum::http::header::ORIGIN)
+        .or_else(|| h.get(axum::http::header::REFERER))
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    let origin_host = origin.split("://").nth(1).and_then(|r| r.split('/').next()).unwrap_or("");
+    if !host.is_empty() && origin_host == host {
+        return next.run(req).await;
+    }
+    (axum::http::StatusCode::FORBIDDEN, "cross-site request refused").into_response()
 }

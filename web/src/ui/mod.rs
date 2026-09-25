@@ -84,8 +84,8 @@ pub fn routes(state: Shared) -> Router<Shared> {
         .route("/login", get(pages::login_page))
         .route("/register", get(pages::register_page))
         .route("/offline", get(pages::offline_page))
-        .route("/ui/login", post(actions::login).layer(middleware::from_fn(auth::require_datastar_header)))
-        .route("/ui/register", post(actions::register).layer(middleware::from_fn(auth::require_datastar_header)))
+        .route("/ui/login", post(actions::login).layer(middleware::from_fn(auth::same_origin_or_datastar)))
+        .route("/ui/register", post(actions::register).layer(middleware::from_fn(auth::same_origin_or_datastar)))
         .merge(protected)
 }
 
@@ -455,6 +455,7 @@ pub fn layout(user: Option<&UserRecord>, title: &str, header: Option<(&MonthHead
             body {
                 a class="skip-link" href="#content" { (t("common.skip")) }
                 div id="offline-banner" class="banner offline" role="status" hidden { (t("offline.banner")) }
+                div id="script-banner" class="banner offline" role="alert" hidden { (t("error.no_scripts")) }
                 div id="sync-banner" class="banner sync" role="status" hidden {
                     span id="sync-text" {}
                     button type="button" class="link" id="sync-review" hidden { (t("sync.review")) }

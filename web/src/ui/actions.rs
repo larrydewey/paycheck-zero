@@ -113,17 +113,56 @@ fn auth_error(msg: &str) -> Sse {
     Sse::new().patch(html! { div id="auth-error" class="field-error" role="alert" { (msg) } })
 }
 
-pub async fn login(State(st): State<Shared>, Form(f): F) -> Response {
-    match st.login(field(&f, "email"), f.get("password").map_or("", String::as_str)).await {
-        Ok(user) => match auth::issue(&st, &user).await {
-            Ok(tokens) => Sse::new().with_cookies(auth::session_cookies(&st, &tokens)).redirect("/").into_response(),
-            Err(e) => auth_error(&e.human(&user.currency, None)).into_response(),
-        },
-        Err(e) => auth_error(&e.human("USD", None)).into_response(),
+fn is_datastar(headers: &HeaderMap) -> bool {
+    headers.contains_key("datastar-request")
+}
+
+fn user_agent(headers: &HeaderMap) -> &str {
+    headers.get(axum::http::header::USER_AGENT).and_then(|v| v.to_str().ok()).unwrap_or("-")
+}
+
+/// Sign-in outcome for both Datastar (SSE) and plain form posts (303).
+fn auth_response(st: &Shared, headers: &HeaderMap, result: Result<(auth::Tokens, String), AppError>, back: &str) -> Response {
+    let datastar = is_datastar(headers);
+    match result {
+        Ok((tokens, to)) => {
+            let cookies = auth::session_cookies(st, &tokens);
+            if datastar {
+                Sse::new().with_cookies(cookies).redirect(&to).into_response()
+            } else {
+                let mut r = axum::response::Redirect::to(&to).into_response();
+                for c in cookies {
+                    r.headers_mut().append(axum::http::header::SET_COOKIE, c);
+                }
+                r
+            }
+        }
+        Err(e) => {
+            if datastar {
+                auth_error(&e.human("USD", None)).into_response()
+            } else {
+                axum::response::Redirect::to(&format!("{back}?error={}", e.code())).into_response()
+            }
+        }
     }
 }
 
-pub async fn register(State(st): State<Shared>, Form(f): F) -> Response {
+pub async fn login(State(st): State<Shared>, headers: HeaderMap, Form(f): F) -> Response {
+    let email = field(&f, "email").to_string();
+    let r = async {
+        let user = st.login(&email, f.get("password").map_or("", String::as_str)).await?;
+        let tokens = auth::issue(&st, &user).await?;
+        Ok::<_, AppError>((tokens, "/?signed_in=1".to_string()))
+    }
+    .await;
+    match &r {
+        Ok(_) => tracing::info!(email = %email, ua = %user_agent(&headers), js = is_datastar(&headers), "sign-in ok"),
+        Err(e) => tracing::info!(email = %email, ua = %user_agent(&headers), js = is_datastar(&headers), code = e.code(), "sign-in failed"),
+    }
+    auth_response(&st, &headers, r, "/login")
+}
+
+pub async fn register(State(st): State<Shared>, headers: HeaderMap, Form(f): F) -> Response {
     let r = async {
         let user = st.register(field(&f, "email"), f.get("password").map_or("", String::as_str), field(&f, "timezone")).await?;
         let tokens = auth::issue(&st, &user).await?;
@@ -131,16 +170,13 @@ pub async fn register(State(st): State<Shared>, Form(f): F) -> Response {
         let today = st.today_for(&user);
         let m = st.create_month(&user, today, CopyMode::Blank, None).await?;
         st.store.set_last_month(&user.id, Some(&m.id)).await?;
-        Ok::<_, AppError>((tokens, m.id))
+        Ok::<_, AppError>((tokens, format!("/months/{}/income?welcome=1&signed_in=1", m.id)))
     }
     .await;
-    match r {
-        Ok((tokens, mid)) => Sse::new()
-            .with_cookies(auth::session_cookies(&st, &tokens))
-            .redirect(&format!("/months/{mid}/income?welcome=1"))
-            .into_response(),
-        Err(e) => auth_error(&e.human("USD", None)).into_response(),
+    if let Err(e) = &r {
+        tracing::info!(ua = %user_agent(&headers), code = e.code(), "registration failed");
     }
+    auth_response(&st, &headers, r, "/register")
 }
 
 pub async fn logout(State(st): State<Shared>, headers: HeaderMap) -> Sse {
