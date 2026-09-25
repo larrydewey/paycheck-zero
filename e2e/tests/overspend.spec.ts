@@ -7,9 +7,9 @@ test.describe("overspending warnings", () => {
     await expect(page.locator("#overspent-banner")).toHaveCount(0);
     await pz.transactions(page, s);
     const form = page.locator("#add-tx");
-    await form.getByLabel("Amount").fill("112.30");
+    await form.getByLabel("Amount", { exact: true }).fill("112.30");
     await form.getByLabel("Payee").fill("Gas station");
-    await form.getByLabel("Expense line").selectOption({ label: "Gas" });
+    await form.getByLabel("Expense line", { exact: true }).selectOption({ label: "Gas" });
     await form.getByRole("button", { name: "Save transaction" }).click();
     await expect(page.locator("#toasts")).toContainText("Gas is now $52.30 over plan.");
     await expect(page.locator("#overspent-banner")).toContainText("1 line(s) over plan: Gas ($52.30 over)");

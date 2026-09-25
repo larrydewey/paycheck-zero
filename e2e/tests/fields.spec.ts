@@ -11,7 +11,7 @@ test.describe("field behaviour", () => {
     await input.fill("600 + 80");
     await input.press("Enter");
     await expect(input).toHaveValue("680.00");
-    await expect(pz.category(page, "Housing").locator("summary [data-col=planned]")).toContainText("$680.00");
+    await expect(pz.category(page, "Housing").locator("summary [data-col=this]")).toContainText("$680.00");
     const amt = page.getByLabel("Amount", { exact: true });
     await amt.fill("(100+20)/3");
     await amt.blur();
@@ -30,7 +30,7 @@ test.describe("field behaviour", () => {
     const input = page.getByLabel("Planned for Gas from this paycheck");
     await input.click();
     await input.fill("75");
-    await page.getByRole("heading", { name: "This paycheck funds" }).hover();
+    await page.getByRole("heading", { name: "Your budget, from this paycheck" }).hover();
     await expect(pz.sts(page)).toHaveText("$413.00");
   });
 

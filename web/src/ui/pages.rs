@@ -19,7 +19,12 @@ use serde::Deserialize;
 type Page = AppResult<Response>;
 
 pub fn ctx(st: &Shared, user: &UserRecord, headers: &HeaderMap) -> Ctx {
-    Ctx { user: user.clone(), today: st.today_for(user), collapsed: collapsed_from(headers) }
+    Ctx {
+        user: user.clone(),
+        today: st.today_for(user),
+        collapsed: collapsed_from(headers),
+        only_funded: crate::auth::cookie_value(headers, "pz_only_funded").is_some_and(|v| v == "1"),
+    }
 }
 
 /// Renders an error as a recoverable in-page state.
@@ -502,9 +507,9 @@ fn category_details(c: &Ctx, cat: &CategoryView, summary_right: Markup, body: Ma
 
 fn triad(c: &Ctx, planned: Cents, spent: Cents, remaining: Cents) -> Markup {
     html! {
-        span class="num" data-col="planned" { (c.money(planned)) }
-        span class="num" data-col="spent" { (c.money(spent)) }
-        span class=(if remaining.is_negative() { "num neg" } else { "num" }) data-col="remaining" { (c.money(remaining)) }
+        span class="num" data-col="planned" data-label=(t("col.planned")) { (c.money(planned)) }
+        span class="num" data-col="spent" data-label=(t("col.spent")) { (c.money(spent)) }
+        span class=(if remaining.is_negative() { "num neg" } else { "num" }) data-col="remaining" data-label=(t("col.remaining")) { (c.money(remaining)) }
     }
 }
 
@@ -541,7 +546,7 @@ pub fn render_paycheck(c: &Ctx, m: &Month, archived: bool, pid: &Id) -> Markup {
     let view = View::Paycheck { month: m.id.clone(), paycheck: pid.clone() };
     let editable = m.allocations_editable() && !archived && p.status != PaycheckStatus::Skipped;
     let structure = !m.is_locked() && !archived;
-    let funding = m.funding_views(pid);
+    let all_cats = m.paycheck_category_views(pid);
     let targets: Vec<&ExpenseLine> =
         m.expense_lines.iter().filter(|l| m.line_unfunded_target(&l.id).is_positive()).collect();
     let fund_url = format!("/ui/months/{}/fund", m.id);
@@ -619,57 +624,85 @@ pub fn render_paycheck(c: &Ctx, m: &Month, archived: bool, pid: &Id) -> Markup {
             }
         }
 
-        section class="funding five" aria-labelledby="funding-h" {
+        section class=(if c.only_funded { "funding five only-funded" } else { "funding five" }) id="funding" aria-labelledby="funding-h" {
             div class="section-head" {
                 h2 id="funding-h" { (t("paycheck.funds")) }
-            }
-            @if funding.is_empty() {
-                (empty_state(&t("paycheck.empty_title"), &t("paycheck.empty_body"), None))
-            } @else {
-                div class="grid-head" aria-hidden="true" {
-                    span { (t("col.name")) } span { (t("col.this_paycheck")) } span { (t("col.planned")) } span { (t("col.spent")) } span { (t("col.remaining")) }
+                button type="button" class="chip-toggle" data-only-funded aria-pressed=(if c.only_funded { "true" } else { "false" }) {
+                    (t("paycheck.only_funded"))
                 }
-                @for cat in &funding {
-                    (category_details(c, cat, html! {
-                        span class="num" data-col="this" { (c.money(cat.this_paycheck)) }
-                        (triad(c, cat.planned, cat.spent, cat.remaining))
-                    }, html! {
-                        ul class="lines" {
-                            @for l in &cat.lines {
-                                li class={ "line" @if l.spent > l.planned { " over" } } id=(format!("line-{}", l.id)) data-line=(l.name) {
-                                    div class="cell name" {
-                                        @if structure {
-                                            form data-on:submit__prevent=(post_form(&format!("/ui/lines/{}/rename", l.id))) {
-                                                (view_input(&view))
-                                                input type="text" name="name" value=(l.name) aria-label=(tf("line.name_label", &[("name", &l.name)])) data-on:change="el.form.requestSubmit()" required maxlength="100";
-                                            }
-                                        } @else {
-                                            span class="name-text" { (l.name) }
+            }
+            @if all_cats.iter().all(|c| c.lines.is_empty()) && !structure {
+                (empty_state(&t("paycheck.empty_title"), &t("paycheck.empty_body"), None))
+            }
+            div class="grid-head" aria-hidden="true" {
+                span { (t("col.name")) } span { (t("col.this_paycheck")) } span { (t("col.planned")) } span { (t("col.spent")) } span { (t("col.remaining")) }
+            }
+            @for cat in &all_cats {
+                @let funded = cat.lines.iter().any(|l| l.this_paycheck.is_positive());
+                div class=(if funded { "cat-wrap" } else { "cat-wrap unfunded" }) {
+                (category_details(c, cat, html! {
+                    span class="num" data-col="this" data-label=(t("col.this_paycheck")) { (c.money(cat.this_paycheck)) }
+                    (triad(c, cat.planned, cat.spent, cat.remaining))
+                }, html! {
+                    ul class="lines" {
+                        @for l in &cat.lines {
+                            li class={ "line" @if l.spent > l.planned { " over" } @if !l.this_paycheck.is_positive() { " unfunded" } } id=(format!("line-{}", l.id)) data-line=(l.name) {
+                                div class="cell name" {
+                                    @if structure {
+                                        form data-on:submit__prevent=(post_form(&format!("/ui/lines/{}/rename", l.id))) {
+                                            (view_input(&view))
+                                            input type="text" name="name" value=(l.name) aria-label=(tf("line.name_label", &[("name", &l.name)])) data-on:change="el.form.requestSubmit()" required maxlength="100";
                                         }
-                                        @if l.funders.len() > 1 {
-                                            span class="split-note" { (tf("line.split_note", &[("count", &l.funders.len().to_string())])) }
-                                        }
-                                        (over_badge(c, l))
+                                    } @else {
+                                        span class="name-text" { (l.name) }
                                     }
-                                    div class="cell num" data-col="this" {
-                                       
-                                        @if editable {
-                                            form data-on:submit__prevent=(post_form_guarded(&format!("/ui/paychecks/{}/lines/{}", pid, l.id))) {
-                                                (view_input(&view))
-                                                (money_input("amount", Some(l.this_paycheck), &tf("line.planned_label", &[("name", &l.name)]), Some((l.this_paycheck + v.unallocated).get())))
-                                                span class="field-error" aria-live="polite" {}
-                                            }
-                                        } @else {
-                                            span { (c.money(l.this_paycheck)) }
-                                        }
+                                    @if l.funders.len() > 1 {
+                                        span class="split-note" { (tf("line.split_note", &[("count", &l.funders.len().to_string())])) }
                                     }
-                                    span class="cell num" data-col="planned" { (c.money(l.planned)) }
-                                    span class="cell num" data-col="spent" { (c.money(l.spent)) }
-                                    span class=(if l.remaining.is_negative() { "cell num neg" } else { "cell num" }) data-col="remaining" { (c.money(l.remaining)) }
+                                    (over_badge(c, l))
                                 }
+                                div class="cell num" data-col="this" data-label=(t("col.this_paycheck")) {
+                                    @if editable {
+                                        form data-on:submit__prevent=(post_form_guarded(&format!("/ui/paychecks/{}/lines/{}", pid, l.id))) {
+                                            (view_input(&view))
+                                            (money_input("amount", Some(l.this_paycheck), &tf("line.planned_label", &[("name", &l.name)]), Some((l.this_paycheck + v.unallocated).get())))
+                                            span class="field-error" aria-live="polite" {}
+                                        }
+                                    } @else {
+                                        span { (c.money(l.this_paycheck)) }
+                                    }
+                                }
+                                span class="cell num" data-col="planned" data-label=(t("col.planned")) { (c.money(l.planned)) }
+                                span class="cell num" data-col="spent" data-label=(t("col.spent")) { (c.money(l.spent)) }
+                                span class=(if l.remaining.is_negative() { "cell num neg" } else { "cell num" }) data-col="remaining" data-label=(t("col.remaining")) { (c.money(l.remaining)) }
                             }
                         }
-                    }))
+                    }
+                    @if structure {
+                        form class="add-line" id=(format!("pc-add-line-{}", cat.id)) data-clear data-on:submit__prevent=(post_form_guarded(&format!("/ui/months/{}/lines", m.id))) {
+                            (view_input(&view))
+                            input type="hidden" name="category_id" value=(cat.id);
+                            input type="hidden" name="paycheck_id" value=(pid);
+                            span class="add-icon" aria-hidden="true" { (icon("plus")) }
+                            input type="text" name="name" required maxlength="100" placeholder=(t("line.add_placeholder")) aria-label=(tf("line.add_label", &[("category", &cat.name)]));
+                            @if editable {
+                                span class="add-extra" {
+                                    input type="text" inputmode="decimal" class="money" name="amount" placeholder="0.00" autocomplete="off"
+                                        data-max-cents=(v.unallocated.get()) aria-label=(tf("line.add_from_this_label", &[("category", &cat.name)]));
+                                }
+                            }
+                            button type="submit" class="btn small" { (t("line.add")) }
+                        }
+                    }
+                }))
+                }
+            }
+            @if structure {
+                form class="add-category" id="pc-add-category" data-clear data-on:submit__prevent=(post_form(&format!("/ui/months/{}/categories", m.id))) {
+                    (view_input(&view))
+                    label for="pc-new-category" { (t("category.add_label")) }
+                    input id="pc-new-category" type="text" name="name" required maxlength="100";
+                    button type="submit" class="btn" { (t("category.add")) }
                 }
             }
         }
@@ -957,8 +990,7 @@ pub fn render_overview(c: &Ctx, m: &Month, archived: bool) -> Markup {
                                         }
                                     }
                                 }
-                                div class="cell num" data-col="planned" {
-                                   
+                                div class="cell num" data-col="planned" data-label=(t("col.planned")) {
                                     @if alloc {
                                         form data-on:submit__prevent=(post_form_guarded(&format!("/ui/lines/{}/planned", l.id))) {
                                             (view_input(&view))
@@ -969,8 +1001,8 @@ pub fn render_overview(c: &Ctx, m: &Month, archived: bool) -> Markup {
                                         span { (c.money(l.planned)) }
                                     }
                                 }
-                                span class="cell num" data-col="spent" { (c.money(l.spent)) }
-                                span class=(if l.remaining.is_negative() { "cell num neg" } else { "cell num" }) data-col="remaining" { (c.money(l.remaining)) }
+                                span class="cell num" data-col="spent" data-label=(t("col.spent")) { (c.money(l.spent)) }
+                                span class=(if l.remaining.is_negative() { "cell num neg" } else { "cell num" }) data-col="remaining" data-label=(t("col.remaining")) { (c.money(l.remaining)) }
                                 @if structure {
                                     div class="line-tools" {
                                         (move_btn(format!("/ui/lines/{}/move", l.id), "up", tf("line.move_up", &[("name", &l.name)])))
@@ -1250,9 +1282,20 @@ fn paycheck_options(m: &Month, selected: Option<&Id>) -> Markup {
     }
 }
 
-fn tx_fields(m: &Month, prefix: &str, t_: Option<&Transaction>, default_date: NaiveDate) -> Markup {
+/// One transaction form for both plain and split transactions. With one
+/// part it reads as a normal transaction (Amount, Expense line, Paycheck);
+/// "Split into parts" turns the same fields into part rows.
+fn tx_fields(c: &Ctx, m: &Month, prefix: &str, parts: &[&Transaction], default_date: NaiveDate) -> Markup {
     let id = |f: &str| format!("{prefix}-{f}");
-    let is_income = t_.is_some_and(|x| x.amount.is_positive());
+    let first = parts.first().copied();
+    let is_income = first.is_some_and(|x| x.amount.is_positive());
+    let split = parts.len() > 1;
+    let total: Cents = parts.iter().map(|p| p.amount.abs()).sum();
+    let rows: Vec<(Option<Cents>, Option<Id>, Option<Id>)> = if parts.is_empty() {
+        vec![(None, None, None)]
+    } else {
+        parts.iter().map(|x| (Some(x.amount.abs()), x.expense_line_id.clone(), x.paycheck_id.clone())).collect()
+    };
     html! {
         fieldset class="segmented field" {
             legend { (t("tx.kind")) }
@@ -1261,29 +1304,63 @@ fn tx_fields(m: &Month, prefix: &str, t_: Option<&Transaction>, default_date: Na
         }
         div class="field" {
             label for=(id("date")) { (t("tx.date")) }
-            input id=(id("date")) type="date" name="date" required value=(t_.map_or(default_date, |x| x.date).to_string())
+            input id=(id("date")) type="date" name="date" required value=(first.map_or(default_date, |x| x.date).to_string())
                 min=(m.year_month.to_string()) max=(recurrence::last_of_month(m.year_month).to_string());
         }
         div class="field" {
             label for=(id("amount")) { (t("tx.amount")) }
             input id=(id("amount")) type="text" inputmode="decimal" class="money" name="amount" required placeholder="0.00"
-                value=[t_.map(|x| crate::money::plain(x.amount.abs()))];
+                value=[first.map(|_| crate::money::plain(total))] data-split-total;
         }
         div class="field" {
             label for=(id("payee")) { (t("tx.payee")) }
-            input id=(id("payee")) type="text" name="payee" maxlength="200" value=[t_.and_then(|x| x.payee.clone())];
+            input id=(id("payee")) type="text" name="payee" maxlength="200" value=[first.and_then(|x| x.payee.clone())];
         }
-        div class="field" {
-            label for=(id("line")) { (t("tx.line")) }
-            select id=(id("line")) name="expense_line_id" { (line_options(m, t_.and_then(|x| x.expense_line_id.as_ref()))) }
-        }
-        div class="field" {
-            label for=(id("paycheck")) { (t("tx.paycheck")) }
-            select id=(id("paycheck")) name="paycheck_id" aria-describedby=(id("paycheck-hint")) { (paycheck_options(m, t_.and_then(|x| x.paycheck_id.as_ref()))) }
+        div class={ "tx-parts wide" @if split { " is-split" } } data-split-editor
+            data-label-line=(t("tx.line")) data-label-paycheck=(t("tx.paycheck"))
+            data-label-part-line=(t("split.part_line")) data-label-part-paycheck=(t("split.part_paycheck"))
+            data-label-part-amount=(t("split.part_amount")) data-label-remove=(t("split.remove_part")) {
+            div class="parts-head" aria-hidden="true" {
+                span { (t("tx.line")) } span { (t("tx.paycheck")) } span { (t("split.amount_col")) } span {}
+            }
+            ol class="parts" data-parts {
+                @for (i, (amt, line, pc)) in rows.iter().enumerate() {
+                    @let n = (i + 1).to_string();
+                    li class="part" data-part {
+                        div class="field" {
+                            label class="part-label" for=(format!("{}-line-{i}", prefix)) { (t("tx.line")) }
+                            select id=(format!("{}-line-{i}", prefix)) name=(format!("part_line_{i}"))
+                                aria-label=(if split { tf("split.part_line", &[("n", &n)]) } else { t("tx.line") }) {
+                                (line_options(m, line.as_ref()))
+                            }
+                        }
+                        div class="field" {
+                            label class="part-label" for=(format!("{}-pc-{i}", prefix)) { (t("tx.paycheck")) }
+                            select id=(format!("{}-pc-{i}", prefix)) name=(format!("part_paycheck_{i}")) aria-describedby=(id("paycheck-hint"))
+                                aria-label=(if split { tf("split.part_paycheck", &[("n", &n)]) } else { t("tx.paycheck") }) {
+                                (paycheck_options(m, pc.as_ref()))
+                            }
+                        }
+                        input type="text" inputmode="decimal" class="money part-amount" name=(format!("part_amount_{i}")) placeholder="0.00"
+                            value=[amt.filter(|_| split).map(crate::money::plain)] aria-label=(tf("split.part_amount", &[("n", &n)])) data-part-amount;
+                        button type="button" class="icon-btn danger part-remove" data-remove-part aria-label=(tf("split.remove_part", &[("n", &n)])) { (icon("trash")) }
+                    }
+                }
+            }
+            div class="split-foot" {
+                button type="button" class="link" data-add-part {
+                    span class="when-single" { (t("split.start")) }
+                    span class="when-split" { (t("split.add_part")) }
+                }
+                span class="split-left when-split" data-split-left aria-live="polite" {
+                    (t("split.remaining")) ": " span data-split-left-amt { (c.money(Cents::ZERO)) }
+                }
+            }
+            span class="field-error" aria-live="polite" {}
         }
         div class="field wide" {
             label for=(id("notes")) { (t("tx.notes")) }
-            input id=(id("notes")) type="text" name="notes" maxlength="2000" value=[t_.and_then(|x| x.notes.clone())];
+            input id=(id("notes")) type="text" name="notes" maxlength="2000" value=[first.and_then(|x| x.notes.clone())];
         }
         p id=(id("paycheck-hint")) class="hint wide" { (t("tx.paycheck_hint")) }
     }
@@ -1292,76 +1369,6 @@ fn tx_fields(m: &Month, prefix: &str, t_: Option<&Transaction>, default_date: Na
 enum TxItem<'a> {
     Single(&'a Transaction),
     Split(Id),
-}
-
-/// Split editor: date, type, payee, notes, total and 2+ parts (line, paycheck, amount).
-fn split_form(c: &Ctx, m: &Month, view: &View, prefix: &str, url: &str, existing: Option<&[&Transaction]>, default_date: NaiveDate) -> Markup {
-    let id = |f: &str| format!("{prefix}-{f}");
-    let first = existing.and_then(|p| p.first().copied());
-    let is_income = first.is_some_and(|x| x.amount.is_positive());
-    let parts: Vec<(Option<Cents>, Option<Id>, Option<Id>)> = match existing {
-        Some(ps) => ps.iter().map(|x| (Some(x.amount.abs()), x.expense_line_id.clone(), x.paycheck_id.clone())).collect(),
-        None => vec![(None, None, None), (None, None, None)],
-    };
-    let total: Cents = parts.iter().filter_map(|p| p.0).sum();
-    html! {
-        form class="split-form" id=(id("form")) data-split-editor data-online-only data-clear[existing.is_none()]
-            data-on:submit__prevent=(format!("pz.checkSplit(el) && @post('{url}', {{contentType: 'form'}})")) {
-            (view_input(view))
-            @if let Some(f) = first { input type="hidden" name="part_of" value=(f.id); }
-            div class="tx-form" {
-                fieldset class="segmented field" {
-                    legend { (t("tx.kind")) }
-                    label { input type="radio" name="direction" value="expense" checked[!is_income]; span { (t("tx.expense")) } }
-                    label { input type="radio" name="direction" value="income" checked[is_income]; span { (t("tx.income")) } }
-                }
-                div class="field" {
-                    label for=(id("date")) { (t("tx.date")) }
-                    input id=(id("date")) type="date" name="date" required value=(first.map_or(default_date, |x| x.date).to_string())
-                        min=(m.year_month.to_string()) max=(recurrence::last_of_month(m.year_month).to_string());
-                }
-                div class="field" {
-                    label for=(id("total")) { (t("split.total")) }
-                    input id=(id("total")) type="text" inputmode="decimal" class="money" name="total" required placeholder="0.00"
-                        value=[existing.map(|_| crate::money::plain(total))] data-split-total;
-                }
-                div class="field" {
-                    label for=(id("payee")) { (t("tx.payee")) }
-                    input id=(id("payee")) type="text" name="payee" maxlength="200" value=[first.and_then(|x| x.payee.clone())];
-                }
-                div class="field wide" {
-                    label for=(id("notes")) { (t("tx.notes")) }
-                    input id=(id("notes")) type="text" name="notes" maxlength="2000" value=[first.and_then(|x| x.notes.clone())];
-                }
-            }
-            fieldset class="split-parts" {
-                legend { (t("split.parts")) }
-                ol class="parts" data-parts {
-                    @for (i, (amt, line, pc)) in parts.iter().enumerate() {
-                        @let n = (i + 1).to_string();
-                        li class="part" data-part {
-                            select name=(format!("part_line_{i}")) aria-label=(tf("split.part_line", &[("n", &n)])) { (line_options(m, line.as_ref())) }
-                            select name=(format!("part_paycheck_{i}")) aria-label=(tf("split.part_paycheck", &[("n", &n)])) { (paycheck_options(m, pc.as_ref())) }
-                            input type="text" inputmode="decimal" class="money" name=(format!("part_amount_{i}")) required placeholder="0.00"
-                                value=[amt.map(crate::money::plain)] aria-label=(tf("split.part_amount", &[("n", &n)])) data-part-amount;
-                            button type="button" class="icon-btn danger" data-remove-part aria-label=(tf("split.remove_part", &[("n", &n)])) { (icon("trash")) }
-                        }
-                    }
-                }
-                div class="split-foot" {
-                    button type="button" class="link" data-add-part { (t("split.add_part")) }
-                    span class="split-left" data-split-left aria-live="polite" {
-                        (t("split.remaining")) ": " span data-split-left-amt { (c.money(Cents::ZERO)) }
-                    }
-                }
-                span class="field-error" aria-live="polite" {}
-            }
-            div class="form-actions" {
-                @if existing.is_some() { button type="button" class="btn" data-close-dialog { (t("common.cancel")) } }
-                button type="submit" class="btn primary" { (t("split.save")) }
-            }
-        }
-    }
 }
 
 pub fn render_transactions(c: &Ctx, m: &Month, archived: bool) -> Markup {
@@ -1392,17 +1399,12 @@ pub fn render_transactions(c: &Ctx, m: &Month, archived: bool) -> Markup {
             section class="card" aria-labelledby="add-tx-h" {
                 h2 id="add-tx-h" class="h3" { (t("tx.add")) }
                 form id="add-tx" class="tx-form" data-clear data-offline="create_transaction" data-month=(m.id)
-                    data-on:submit__prevent=(post_form(&format!("/ui/months/{}/transactions", m.id))) {
+                    data-on:submit__prevent=(format!("pz.checkSplit(el) && @post('/ui/months/{}/transactions', {{contentType: 'form'}})", m.id)) {
                     (view_input(&view))
-                    (tx_fields(m, "new-tx", None, default_date))
+                    (tx_fields(c, m, "new-tx", &[], default_date))
                     div class="form-actions wide" {
                         button type="submit" class="btn primary" { (t("tx.save")) }
                     }
-                }
-                details class="split-open" {
-                    summary { (t("split.open")) }
-                    p class="muted small" { (t("split.intro")) }
-                    (split_form(c, m, &view, "new-split", &format!("/ui/months/{}/splits", m.id), None, default_date))
                 }
             }
         }
@@ -1439,7 +1441,15 @@ pub fn render_transactions(c: &Ctx, m: &Month, archived: bool) -> Markup {
                                     data-on:click=(format!("document.getElementById('{dlg}').showModal()")) { (icon("edit")) }
                                 dialog id=(dlg) aria-labelledby=(format!("{dlg}-h")) {
                                     h2 id=(format!("{dlg}-h")) class="h3" { (t("split.edit_title")) }
-                                    (split_form(c, m, &view, &format!("split-{g}"), &format!("/ui/splits/{g}"), Some(&parts), default_date))
+                                    form class="tx-form" data-online-only
+                                        data-on:submit__prevent=(format!("pz.checkSplit(el) && @post('/ui/transactions/{}', {{contentType: 'form'}})", x.id)) {
+                                        (view_input(&view))
+                                        (tx_fields(c, m, &format!("split-{g}"), &parts, default_date))
+                                        div class="form-actions wide" {
+                                            button type="button" class="btn" data-close-dialog { (t("common.cancel")) }
+                                            button type="submit" class="btn primary" { (t("common.save")) }
+                                        }
+                                    }
                                     form class="dialog-danger" data-on:submit__prevent=(post_form(&format!("/ui/splits/{g}/delete"))) {
                                         (view_input(&view))
                                         input type="hidden" name="part_of" value=(x.id);
@@ -1477,7 +1487,7 @@ pub fn render_transactions(c: &Ctx, m: &Month, archived: bool) -> Markup {
                                     form class="tx-form" data-offline="update_transaction" data-month=(m.id) data-tx=(x.id) data-base=(base.clone())
                                         data-on:submit__prevent=(post_form(&format!("/ui/transactions/{}", x.id))) {
                                         (view_input(&view))
-                                        (tx_fields(m, &format!("tx-{}", x.id), Some(x), default_date))
+                                        (tx_fields(c, m, &format!("tx-{}", x.id), &[x], default_date))
                                         div class="form-actions wide" {
                                             button type="button" class="btn" data-close-dialog { (t("common.cancel")) }
                                             button type="submit" class="btn primary" { (t("common.save")) }
@@ -1608,6 +1618,104 @@ fn comparison(c: &Ctx, id: &str, title: &str, cmp: &Comparison) -> Markup {
 
 fn short_month(d: NaiveDate) -> String {
     d.format("%b %Y").to_string()
+}
+
+/// Part-to-whole donut: top five slices plus "Other", with a legend that
+/// carries names, amounts and shares (identity is never colour alone).
+fn donut(c: &Ctx, id: &str, title: &str, center_label: &str, items: &[(String, Cents)]) -> Markup {
+    let mut items: Vec<(String, Cents)> = items.iter().filter(|(_, v)| v.is_positive()).cloned().collect();
+    items.sort_by_key(|(_, v)| std::cmp::Reverse(*v));
+    if items.len() > 6 {
+        let other: Cents = items[5..].iter().map(|(_, v)| *v).sum();
+        items.truncate(5);
+        items.push((t("chart.other"), other));
+    }
+    let total: Cents = items.iter().map(|(_, v)| *v).sum();
+    let circ = 2.0 * std::f64::consts::PI * 40.0;
+    let gap = if items.len() > 1 { 2.0 } else { 0.0 };
+    let pct = |v: Cents| if total.is_positive() { v.get() as f64 * 100.0 / total.get() as f64 } else { 0.0 };
+    // (name, value, slot class, dash length, offset) per slice.
+    let mut offset = 0.0_f64;
+    let segs: Vec<(String, Cents, String, f64, f64)> = items
+        .iter()
+        .enumerate()
+        .map(|(i, (name, v))| {
+            let len = if total.is_positive() { (v.get() as f64 / total.get() as f64) * circ } else { 0.0 };
+            let slot = if name == &t("chart.other") { "other".to_string() } else { (i + 1).to_string() };
+            let seg = (name.clone(), *v, slot, (len - gap).max(0.5), offset);
+            offset += len;
+            seg
+        })
+        .collect();
+    html! {
+        figure class="chart-card" id=(id) {
+            figcaption class="chart-title" { (title) }
+            @if items.is_empty() {
+                p class="muted" { (t("chart.nothing")) }
+            } @else {
+                div class="donut-wrap" {
+                    svg class="donut" viewBox="0 0 100 100" role="img" aria-label=(tf("chart.donut_label", &[("title", title), ("total", &c.money(total))])) {
+                        circle class="donut-track" cx="50" cy="50" r="40" {}
+                        @for (name, v, slot, dash, off) in &segs {
+                            circle class=(format!("donut-seg s-{slot}")) cx="50" cy="50" r="40"
+                                stroke-dasharray=(format!("{dash:.2} {:.2}", circ - dash)) stroke-dashoffset=(format!("{:.2}", -off))
+                                transform="rotate(-90 50 50)" {
+                                title { (name) ": " (c.money(*v)) " (" (format!("{:.0}", pct(*v))) "%)" }
+                            }
+                        }
+                        text class="donut-total" x="50" y="48" text-anchor="middle" { (c.money(total)) }
+                        text class="donut-sub" x="50" y="60" text-anchor="middle" { (center_label) }
+                    }
+                    ul class="legend" {
+                        @for (name, v, slot, _, _) in &segs {
+                            li data-slice=(name) {
+                                span class=(format!("swatch s-{slot}")) aria-hidden="true" {}
+                                span class="legend-name" { (name) }
+                                span class="legend-val" { (c.money(*v)) " · " (format!("{:.0}", pct(*v))) "%" }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// A single ratio against guide thresholds, as a ring gauge with a status
+/// label (never colour alone).
+fn ratio_gauge(id: &str, title: &str, ratio_bp: Option<i64>, good_max: i64, ok_max: i64, higher_is_better: bool, detail: Markup) -> Markup {
+    let circ = 2.0 * std::f64::consts::PI * 40.0;
+    let (status, label) = match ratio_bp {
+        None => ("none", t("chart.no_income")),
+        Some(bp) => {
+            let good = if higher_is_better { bp >= good_max } else { bp <= good_max };
+            let ok = if higher_is_better { bp >= ok_max } else { bp <= ok_max };
+            if good { ("good", t("chart.status_good")) } else if ok { ("ok", t("chart.status_ok")) } else { ("high", if higher_is_better { t("chart.status_low") } else { t("chart.status_high") }) }
+        }
+    };
+    let pct = ratio_bp.map_or(0.0, |bp| (bp as f64 / 100.0).clamp(0.0, 100.0));
+    let dash = circ * pct / 100.0;
+    html! {
+        figure class="chart-card" id=(id) {
+            figcaption class="chart-title" { (title) }
+            div class="donut-wrap" {
+                svg class=(format!("gauge g-{status}")) viewBox="0 0 100 100" role="img"
+                    aria-label=(format!("{title}: {}", ratio_bp.map_or_else(|| "—".to_string(), |bp| format!("{:.1}%", bp as f64 / 100.0)))) {
+                    circle class="donut-track" cx="50" cy="50" r="40" {}
+                    @if dash > 0.0 {
+                        circle class="gauge-fill" cx="50" cy="50" r="40" stroke-dasharray=(format!("{dash:.2} {:.2}", circ - dash)) transform="rotate(-90 50 50)" {}
+                    }
+                    text class="donut-total" x="50" y="53" text-anchor="middle" {
+                        (ratio_bp.map_or_else(|| "—".to_string(), |bp| format!("{:.0}%", bp as f64 / 100.0)))
+                    }
+                }
+                div class="gauge-info" {
+                    p class=(format!("gauge-status st-{status}")) { (icon(if status == "good" { "check" } else { "alert" })) " " (label) }
+                    (detail)
+                }
+            }
+        }
+    }
 }
 
 /// Planned vs spent per category for the selected month (pure CSS bars).
@@ -1870,9 +1978,38 @@ fn render_summary(c: &Ctx, m: &Month, all: &[Month], q: &ReportQuery) -> Markup 
     let yoy = report::year_over_year(m, all);
     let ytd = report::year_to_date(m, all);
     let names: Vec<String> = ytd.figures.categories.iter().map(|c| c.name.clone()).collect();
+    let fig = report::month_figures(m);
+    let planned_items: Vec<(String, Cents)> = fig.categories.iter().map(|x| (x.name.clone(), x.planned)).collect();
+    let spent_items: Vec<(String, Cents)> = fig.categories.iter().map(|x| (x.name.clone(), x.actual)).collect();
+    let debt_lines: Vec<&ExpenseLine> = m.expense_lines.iter().filter(|l| m.is_debt_line(&l.id)).collect();
+    let debt_pay: Cents = debt_lines.iter().map(|l| m.line_planned(&l.id)).sum();
+    let debt_min: Cents = debt_lines.iter().filter_map(|l| l.minimum_payment).sum();
+    let debt_bal: Cents = debt_lines.iter().filter_map(|l| l.current_balance).sum();
+    let income = fig.planned_income;
+    let bp = |part: Cents| (income.is_positive()).then(|| part.get().saturating_mul(10_000) / income.get());
+    let saving: Cents = m.categories.iter().filter(|x| x.name.eq_ignore_ascii_case("Saving")).flat_map(|x| m.lines_of(&x.id)).map(|l| m.line_planned(&l.id)).sum();
     html! {
         (summary_cards(c, m))
-        (category_chart(c, &report::month_figures(m)))
+        section class="chart-grid" aria-label=(t("chart.section")) {
+            (donut(c, "donut-planned", &t("chart.planned_title"), &t("chart.planned_center"), &planned_items))
+            (donut(c, "donut-spent", &t("chart.spent_title"), &t("chart.spent_center"), &spent_items))
+            (ratio_gauge("gauge-dti", &t("chart.dti_title"), bp(debt_pay), 1_500, 3_600, false, html! {
+                p class="small" { (tf("chart.dti_detail", &[("pay", &c.money(debt_pay)), ("income", &c.money(income))])) }
+                @if debt_min.is_positive() { p class="small muted" { (tf("chart.dti_min", &[("amount", &c.money(debt_min))])) } }
+                @if debt_bal.is_positive() {
+                    p class="small muted" { (tf("chart.debt_balance", &[
+                        ("amount", &c.money(debt_bal)),
+                        ("months", &if income.is_positive() { format!("{:.1}", debt_bal.get() as f64 / income.get() as f64) } else { "—".into() }),
+                    ])) }
+                }
+                p class="small muted" { (t("chart.dti_guide")) }
+            }))
+            (ratio_gauge("gauge-savings", &t("chart.savings_title"), bp(saving), 2_000, 1_000, true, html! {
+                p class="small" { (tf("chart.savings_detail", &[("amount", &c.money(saving)), ("income", &c.money(income))])) }
+                p class="small muted" { (t("chart.savings_guide")) }
+            }))
+        }
+        (category_chart(c, &fig))
         div class="section-head" { span {} (csv_link(m, "mom", q)) }
         (comparison(c, "mom", &t("report.mom"), &mom))
         section class="report-section" aria-labelledby="ytd-h" {

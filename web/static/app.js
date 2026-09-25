@@ -207,63 +207,84 @@
     });
   });
 
-  // Split editor: add/remove parts, live "left to split", validation.
-  function renumber(list) {
-    Array.prototype.forEach.call(list.querySelectorAll("[data-part]"), function (row, i) {
+  // Unified transaction form: "Split into parts" turns the line/paycheck
+  // fields into part rows; removing parts back to one makes it plain again.
+  function editorOf(el) { return el && el.closest ? el.closest("[data-split-editor]") : null; }
+  function formOf(ed) { return ed.closest("form"); }
+  function relabel(ed) {
+    var rows = ed.querySelectorAll("[data-part]"), split = rows.length > 1;
+    ed.classList.toggle("is-split", split);
+    Array.prototype.forEach.call(rows, function (row, i) {
       row.querySelectorAll("[name]").forEach(function (el) { el.name = el.name.replace(/_\d+$/, "_" + i); });
-      row.querySelectorAll("[aria-label]").forEach(function (el) { el.setAttribute("aria-label", el.getAttribute("aria-label").replace(/\d+/, String(i + 1))); });
+      row.querySelectorAll("[id]").forEach(function (el) { el.id = el.id.replace(/-\d+$/, "-" + i); });
+      row.querySelectorAll("label[for]").forEach(function (el) { el.htmlFor = el.htmlFor.replace(/-\d+$/, "-" + i); });
+      var n = String(i + 1), ls = row.querySelectorAll("select");
+      ls[0].setAttribute("aria-label", split ? ed.dataset.labelPartLine.replace("{n}", n) : ed.dataset.labelLine);
+      ls[1].setAttribute("aria-label", split ? ed.dataset.labelPartPaycheck.replace("{n}", n) : ed.dataset.labelPaycheck);
+      row.querySelector("[data-part-amount]").setAttribute("aria-label", ed.dataset.labelPartAmount.replace("{n}", n));
+      row.querySelector("[data-remove-part]").setAttribute("aria-label", ed.dataset.labelRemove.replace("{n}", n));
     });
   }
-  function splitLeft(form) {
-    var total = cents(form.querySelector("[data-split-total]").value) || 0;
+  function splitLeft(ed) {
+    var total = cents(formOf(ed).querySelector("[data-split-total]").value) || 0;
     var sum = 0;
-    form.querySelectorAll("[data-part-amount]").forEach(function (i) { var v = cents(i.value); if (v && !Number.isNaN(v)) sum += v; });
+    ed.querySelectorAll("[data-part-amount]").forEach(function (i) { var v = cents(i.value); if (v && !Number.isNaN(v)) sum += v; });
     return total - sum;
   }
-  function updateSplit(form) {
-    var out = form.querySelector("[data-split-left-amt]");
-    if (!out) return;
-    var left = splitLeft(form);
+  function updateSplit(ed) {
+    var out = ed.querySelector("[data-split-left-amt]");
+    if (!out || !ed.classList.contains("is-split")) return;
+    var left = splitLeft(ed);
     out.textContent = fmt(left);
-    form.querySelector("[data-split-left]").classList.toggle("bad", left !== 0);
+    ed.querySelector("[data-split-left]").classList.toggle("bad", left !== 0);
   }
   document.addEventListener("input", function (e) {
-    var f = e.target instanceof Element ? e.target.closest("[data-split-editor]") : null;
-    if (f) updateSplit(f);
+    var f = e.target instanceof Element ? e.target.closest("form") : null;
+    var ed = f && f.querySelector("[data-split-editor]");
+    if (ed) updateSplit(ed);
   });
   document.addEventListener("click", function (e) {
     var t0 = e.target instanceof Element ? e.target : null;
     if (!t0) return;
     var add = t0.closest("[data-add-part]"), rm = t0.closest("[data-remove-part]");
-    var form = (add || rm) && (add || rm).closest("[data-split-editor]");
-    if (!form) return;
-    var list = form.querySelector("[data-parts]");
+    var ed = editorOf(add || rm);
+    if (!ed) return;
+    var list = ed.querySelector("[data-parts]"), rows = list.querySelectorAll("[data-part]");
     if (add) {
-      var rows = list.querySelectorAll("[data-part]");
+      if (rows.length === 1) {
+        // Becoming a split: the whole amount starts in part 1.
+        var total = formOf(ed).querySelector("[data-split-total]");
+        normalizeMoney(total);
+        rows[0].querySelector("[data-part-amount]").value = total.value;
+      }
       var copy = rows[rows.length - 1].cloneNode(true);
       copy.querySelectorAll("input").forEach(function (i) { i.value = ""; i.defaultValue = ""; });
-      copy.querySelectorAll("select").forEach(function (s) { s.selectedIndex = 0; });
+      copy.querySelectorAll("select").forEach(function (sel) { sel.selectedIndex = 0; });
       list.appendChild(copy);
-      renumber(list);
+      relabel(ed);
       copy.querySelector("select").focus();
-    } else if (list.querySelectorAll("[data-part]").length > 2) {
+    } else if (rows.length > 1) {
       rm.closest("[data-part]").remove();
-      renumber(list);
+      if (list.querySelectorAll("[data-part]").length === 1) list.querySelector("[data-part-amount]").value = "";
+      relabel(ed);
     }
-    updateSplit(form);
+    updateSplit(ed);
   });
-  /** Blocks saving a split whose parts don't add up to the total. */
+  /** Plain transactions pass; splits must add up to the Amount. */
   function checkSplit(form) {
     form.querySelectorAll("input[inputmode=decimal]").forEach(normalizeMoney);
-    var err = form.querySelector(".field-error");
-    if (splitLeft(form) !== 0) { if (err) err.textContent = t("split_mismatch"); return false; }
+    var ed = form.querySelector("[data-split-editor]");
+    if (!ed || !ed.classList.contains("is-split")) return true;
+    var err = ed.querySelector(".field-error");
+    if (splitLeft(ed) !== 0) { if (err) err.textContent = t("split_mismatch"); return false; }
     if (err) err.textContent = "";
     return true;
   }
   // Forms that can't be queued offline explain why instead of failing.
   document.addEventListener("submit", function (e) {
     var f = e.target;
-    if (navigator.onLine || !(f instanceof HTMLFormElement) || !f.hasAttribute("data-online-only")) return;
+    if (navigator.onLine || !(f instanceof HTMLFormElement)) return;
+    if (!f.hasAttribute("data-online-only") && !f.querySelector("[data-split-editor].is-split")) return;
     e.preventDefault(); e.stopImmediatePropagation();
     toast("warning", t("online_only"));
   }, true);
@@ -286,6 +307,16 @@
     new FormData(f).forEach(function (v, k) { url.searchParams.set(k, String(v)); });
     var a = document.createElement("a");
     a.href = url.pathname + url.search; a.download = ""; document.body.appendChild(a); a.click(); a.remove();
+  });
+
+  // Paycheck view filter: only lines this paycheck funds (remembered).
+  document.addEventListener("click", function (e) {
+    var b = e.target instanceof Element ? e.target.closest("[data-only-funded]") : null;
+    if (!b) return;
+    var on = b.getAttribute("aria-pressed") !== "true";
+    b.setAttribute("aria-pressed", String(on));
+    var sec = byId("funding"); if (sec) sec.classList.toggle("only-funded", on);
+    document.cookie = "pz_only_funded=" + (on ? "1" : "0") + "; path=/; SameSite=Lax; max-age=31536000";
   });
 
   window.pz = { clearDone: clearDone, checkSplit: checkSplit, cents: cents, fmt: fmt, guard: guard, t: t, fillIncome: fillIncome, toast: toast, resetInline: resetInline };
@@ -585,7 +616,7 @@
     var text = function (k) { var v = String(fd.get(k) || "").trim(); return v === "" ? null : v; };
     return {
       date: String(fd.get("date") || ""), amount: signed, payee: text("payee"), notes: text("notes"),
-      expense_line_id: text("expense_line_id"), paycheck_id: text("paycheck_id")
+      expense_line_id: text("part_line_0") || text("expense_line_id"), paycheck_id: text("part_paycheck_0") || text("paycheck_id")
     };
   }
 

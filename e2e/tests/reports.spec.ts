@@ -19,6 +19,18 @@ test.describe("reports (seeded history)", () => {
     await expect(page.locator('[data-card="trend"]')).toContainText("$3,862.80 left to spend");
   });
 
+  test("donuts and gauges: where the plan goes, where the money went, debt-to-income, savings rate", async ({ page }) => {
+    const planned = page.locator("#donut-planned");
+    await expect(planned).toContainText("$4,000.00");
+    await expect(planned.locator('[data-slice="Saving"]')).toContainText("$1,875.00 · 47%");
+    await expect(page.locator("#donut-spent").locator('[data-slice="Food"]')).toContainText("$85.20 · 62%");
+    const dti = page.locator("#gauge-dti");
+    await expect(dti).toContainText("2%");
+    await expect(dti).toContainText("Healthy");
+    await expect(dti).toContainText("Total debt balance $3,200.00");
+    await expect(page.locator("#gauge-savings")).toContainText("47%");
+  });
+
   test("planned vs spent chart", async ({ page }) => {
     await expect(page.locator('[data-bar="Food"]')).toContainText("$85.20 of $600.00");
     await expect(page.locator('[data-bar="Uncategorized"]')).toHaveClass(/over/);

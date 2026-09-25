@@ -32,7 +32,7 @@ test.describe("UI states", () => {
     await expect(page.getByRole("heading", { name: "September 2026 overview" })).toBeVisible();
   });
 
-  test("empty paycheck state guides the next action", async ({ page, seed, login }) => {
+  test("a new paycheck shows every line ready to fund", async ({ page, seed, login }) => {
     const s = await seed("basic");
     await login();
     await pz.income(page, s);
@@ -43,7 +43,7 @@ test.describe("UI states", () => {
     await add.getByLabel("Pay date").fill("2026-09-20");
     await add.getByRole("button", { name: "Add income" }).click();
     await page.locator("section.income-line", { hasText: "Gift" }).getByRole("link", { name: "Sep 20" }).click();
-    await expect(page.getByRole("heading", { name: "Nothing funded yet" })).toBeVisible();
+    await expect(page.getByLabel("Planned for Rent from this paycheck")).toHaveValue("0.00");
     await expect(page.getByRole("heading", { name: "Assign money from this paycheck" })).toBeVisible();
   });
 });

@@ -14,10 +14,10 @@ test.describe("transactions", () => {
     await pz.transactions(page, s);
     const form = page.locator("#add-tx");
     await form.getByLabel("Date").fill("2026-09-11");
-    await form.getByLabel("Amount").fill("20.80");
+    await form.getByLabel("Amount", { exact: true }).fill("20.80");
     await form.getByLabel("Payee").fill("Farmers market");
-    await form.getByLabel("Expense line").selectOption({ label: "Groceries" });
-    await form.getByLabel("Paycheck").selectOption({ label: "Sep 4 · Acme Payroll" });
+    await form.getByLabel("Expense line", { exact: true }).selectOption({ label: "Groceries" });
+    await form.getByLabel("Paycheck", { exact: true }).selectOption({ label: "Sep 4 · Acme Payroll" });
     await form.getByRole("button", { name: "Save transaction" }).click();
     await expect(pz.toast(page)).toContainText("Transaction saved.");
     await expect(page.locator("#tx-list")).toContainText("Farmers market");
@@ -32,8 +32,8 @@ test.describe("transactions", () => {
     await login();
     await pz.transactions(page, s);
     const form = page.locator("#add-tx");
-    await form.getByLabel("Amount").fill("10");
-    await form.getByLabel("Expense line").selectOption({ label: "Gas" });
+    await form.getByLabel("Amount", { exact: true }).fill("10");
+    await form.getByLabel("Expense line", { exact: true }).selectOption({ label: "Gas" });
     await form.getByRole("button", { name: "Save transaction" }).click();
     await expect(pz.toast(page)).toContainText("Transaction saved.");
     await pz.paycheck(page, s, 0);
@@ -48,7 +48,7 @@ test.describe("transactions", () => {
     await pz.transactions(page, s);
     await page.getByRole("button", { name: "Edit Shell on Sep 6" }).click();
     const dialog = page.getByRole("dialog", { name: "Edit transaction" });
-    await dialog.getByLabel("Amount").fill("55");
+    await dialog.getByLabel("Amount", { exact: true }).fill("55");
     await dialog.getByRole("radio", { name: "Income" }).check();
     await dialog.getByRole("button", { name: "Save" }).click();
     await expect(page.locator("#tx-list li", { hasText: "Shell" })).toContainText("$55.00");
@@ -64,9 +64,9 @@ test.describe("transactions", () => {
     await pz.transactions(page, s);
     const form = page.locator("#add-tx");
     await form.getByRole("radio", { name: "Income" }).check();
-    await form.getByLabel("Amount").fill("1,950");
+    await form.getByLabel("Amount", { exact: true }).fill("1,950");
     await form.getByLabel("Payee").fill("Acme deposit");
-    await form.getByLabel("Paycheck").selectOption({ label: "Sep 4 · Acme Payroll" });
+    await form.getByLabel("Paycheck", { exact: true }).selectOption({ label: "Sep 4 · Acme Payroll" });
     await form.getByRole("button", { name: "Save transaction" }).click();
     await expect(pz.toast(page)).toContainText("Transaction saved.");
     await pz.income(page, s);
@@ -83,7 +83,7 @@ test.describe("transactions", () => {
     await pz.transactions(page, s);
     await expect(page.getByText("This month is locked. You can still record transactions.")).toBeVisible();
     const form = page.locator("#add-tx");
-    await form.getByLabel("Amount").fill("5");
+    await form.getByLabel("Amount", { exact: true }).fill("5");
     await form.getByRole("button", { name: "Save transaction" }).click();
     await expect(pz.toast(page)).toContainText("Transaction saved.");
   });

@@ -546,3 +546,129 @@ dialog .split-form { min-width: min(40rem, calc(100vw - 4rem)); }
 .report .total-row th { font-weight: 700; }
 .spark rect { fill: var(--primary); }
 .trend td:last-child { width: 1%; }
+
+/* Paycheck view: every line, with an optional "only funded" filter */
+.chip-toggle { border: 1px solid var(--line); background: var(--card); color: var(--text); border-radius: 999px; padding: 0.35rem 0.8rem; font: inherit; font-size: 0.85rem; font-weight: 600; cursor: pointer; }
+.chip-toggle[aria-pressed=true] { background: var(--primary); border-color: var(--primary); color: var(--on-primary); }
+.funding li.line.unfunded .cell.name input, .funding li.line.unfunded .name-text { color: var(--muted); }
+.only-funded li.line.unfunded, .only-funded .cat-wrap.unfunded, .only-funded .add-line, .only-funded .add-category { display: none; }
+
+/* ================================================================
+   Phone layout for budget lines (paycheck view + month overview)
+   ================================================================ */
+@media (max-width: 640px) {
+  .funding .grid-head, .overview .grid-head { display: none; }
+  /* Labelled numbers instead of a far-away column header. */
+  li.line [data-label]::before, details.category > summary [data-label]::before {
+    content: attr(data-label); display: block; font-size: 0.66rem; font-weight: 700; letter-spacing: 0.03em;
+    text-transform: uppercase; color: var(--muted); margin-bottom: 0.1rem;
+  }
+  li.line, .funding li.line, .overview li.line {
+    grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0.35rem 0.6rem; padding: 0.6rem 0.75rem;
+  }
+  li.line .cell.name { grid-column: 1 / -1; display: flex; flex-wrap: wrap; align-items: center; gap: 0 0.25rem; }
+  li.line .cell.name form { flex: 1 1 10rem; }
+  li.line .cell.name input { font-weight: 600; padding-left: 0; }
+  li.line .num { text-align: left; }
+  li.line input.money { text-align: left; width: 100%; min-width: 0; }
+  li.line [data-col=remaining] { font-weight: 700; }
+  /* Paycheck view: This paycheck | Planned | Spent, Remaining next to the name. */
+  .funding li.line { grid-template-areas: "name name name" "this planned remaining" ; }
+  .funding li.line .cell.name { grid-area: name; }
+  .funding li.line [data-col=this] { grid-area: this; }
+  .funding li.line [data-col=planned] { grid-area: planned; }
+  .funding li.line [data-col=spent] { display: none; }
+  .funding li.line [data-col=remaining] { grid-area: remaining; text-align: right; }
+  /* Overview: Planned | Spent | Remaining, tools and extras full width. */
+  .overview li.line { grid-template-areas: "name name name" "planned spent remaining" "funding funding tools" "debt debt debt"; }
+  .overview li.line .cell.name { grid-area: name; }
+  .overview li.line [data-col=planned] { grid-area: planned; }
+  .overview li.line [data-col=spent] { grid-area: spent; }
+  .overview li.line [data-col=remaining] { grid-area: remaining; text-align: right; }
+  .overview li.line .line-tools { grid-area: tools; justify-content: flex-end; }
+  .overview li.line .line-funding { grid-area: funding; align-self: center; }
+  .overview li.line .debt { grid-area: debt; }
+  .overview li.line .debt-form input { width: 6.5rem; }
+  li.line .split-note { flex-basis: 100%; padding-left: 0; }
+  /* Category headers: name, then labelled totals. */
+  details.category > summary, .funding details.category > summary, .overview details.category > summary {
+    grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0.25rem 0.6rem; padding: 0.65rem 0.75rem;
+  }
+  details.category > summary .cat-name { grid-column: 1 / -1; }
+  details.category > summary .num { text-align: left; font-size: 0.95rem; }
+  details.category > summary [data-col=remaining] { text-align: right; }
+  .funding details.category > summary [data-col=spent] { display: none; }
+  .overview details.category > summary > span:empty { display: none; }
+  .cat-tools { padding: 0.3rem 0.75rem; }
+  /* Add a line: one tidy row; amount appears once you start typing. */
+  .add-line { flex-wrap: wrap; padding: 0.35rem 0.75rem 0.6rem; }
+  .add-line input[name=name] { flex: 1 1 8rem; min-width: 0; }
+  .add-extra { flex-basis: 100%; order: 3; gap: 0.5rem; }
+  .add-extra input { flex: 1; width: auto; }
+  .add-extra select { flex: 1.4; min-width: 0; }
+  .funding-list { padding: 0.4rem 0.5rem; }
+  .funding-list li { grid-template-columns: minmax(0, 1fr) 7rem; }
+}
+@media (max-width: 640px) { .grip { display: none !important; } }
+
+/* Unified transaction form parts */
+.tx-parts { border-top: 1px solid var(--divider); padding-top: 0.5rem; margin-bottom: 0.5rem; }
+.tx-parts .parts { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.4rem; }
+.tx-parts .part { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 0 1rem; align-items: end; }
+.tx-parts .part .field { margin-bottom: 0.3rem; }
+.tx-parts .part-amount, .tx-parts .part-remove, .tx-parts .parts-head, .tx-parts .when-split { display: none; }
+.tx-parts.is-split .part { grid-template-columns: minmax(0, 1.3fr) minmax(0, 1.2fr) 8rem auto; gap: 0.5rem; align-items: center; }
+.tx-parts.is-split .part-label, .tx-parts.is-split .when-single { display: none; }
+.tx-parts.is-split .part-amount, .tx-parts.is-split .part-remove { display: inline-flex; }
+.tx-parts.is-split .when-split { display: inline; }
+.tx-parts.is-split .parts-head { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(0, 1.2fr) 8rem 2.25rem; gap: 0.5rem; font-size: 0.75rem; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: 0.03em; }
+.tx-parts.is-split .part .field { margin: 0; }
+@media (max-width: 640px) {
+  .tx-parts .part { grid-template-columns: 1fr; }
+  .tx-parts.is-split .part { grid-template-columns: 1fr 1fr; padding: 0.4rem 0; border-bottom: 1px dashed var(--divider); }
+  .tx-parts.is-split .part-amount { grid-column: 1; }
+  .tx-parts.is-split .parts-head { display: none; }
+}
+
+/* Report charts: validated categorical palette (dataviz reference instance) */
+:root {
+  --series-1: #2a78d6; --series-2: #eb6834; --series-3: #1baf7a; --series-4: #eda100; --series-5: #e87ba4; --series-6: #008300;
+  --series-other: #9ca3af;
+}
+@media (prefers-color-scheme: dark) {
+  :root { --series-1: #3987e5; --series-2: #d95926; --series-3: #199e70; --series-4: #c98500; --series-5: #d55181; --series-6: #008300; --series-other: #6b7280; }
+}
+.chart-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(17rem, 1fr)); gap: 0.75rem; margin: 1rem 0; }
+.chart-card { margin: 0; background: var(--card); border-radius: var(--radius); box-shadow: var(--shadow); padding: 1rem; }
+.chart-title { font-weight: 700; margin-bottom: 0.5rem; }
+.donut-wrap { display: flex; gap: 1rem; align-items: center; }
+.donut, .gauge { width: 8.5rem; height: 8.5rem; flex: none; }
+.donut circle { fill: none; stroke-width: 14; }
+.donut-track { stroke: var(--divider); fill: none; stroke-width: 14; }
+.donut-seg { transition: stroke-width 0.15s; cursor: default; }
+.donut-seg:hover { stroke-width: 18; }
+.s-1 { stroke: var(--series-1); background: var(--series-1); } .s-2 { stroke: var(--series-2); background: var(--series-2); }
+.s-3 { stroke: var(--series-3); background: var(--series-3); } .s-4 { stroke: var(--series-4); background: var(--series-4); }
+.s-5 { stroke: var(--series-5); background: var(--series-5); } .s-6 { stroke: var(--series-6); background: var(--series-6); }
+.s-other { stroke: var(--series-other); background: var(--series-other); }
+.donut-total { font-size: 11px; font-weight: 800; fill: var(--text); font-variant-numeric: tabular-nums; }
+.donut-sub { font-size: 7px; fill: var(--muted); }
+.legend { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.3rem; font-size: 0.85rem; flex: 1; min-width: 0; }
+.legend li { display: grid; grid-template-columns: 0.8rem minmax(0, 1fr) auto; gap: 0.4rem; align-items: center; }
+.legend .swatch { width: 0.8rem; height: 0.8rem; border-radius: 3px; margin: 0; }
+.legend-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.legend-val { color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.gauge circle { fill: none; stroke-width: 12; }
+.gauge .donut-track { stroke-width: 12; }
+.gauge-fill { stroke-linecap: round; }
+.g-good .gauge-fill { stroke: var(--ok); } .g-ok .gauge-fill { stroke: #d97706; } .g-high .gauge-fill { stroke: var(--danger); }
+.gauge .donut-total { font-size: 16px; }
+.gauge-info p { margin: 0 0 0.3rem; }
+.gauge-status { font-weight: 700; display: inline-flex; align-items: center; gap: 0.3rem; }
+.st-good { color: var(--ok); } .st-ok { color: var(--warn); } .st-high { color: var(--danger); } .st-none { color: var(--muted); }
+@media (max-width: 640px) { .donut, .gauge { width: 7rem; height: 7rem; } }
+.chart-grid { grid-template-columns: repeat(auto-fit, minmax(min(100%, 24rem), 1fr)); }
+.donut-track, .gauge .donut-track { stroke: var(--line); }
+.donut-wrap { flex-wrap: wrap; }
+.legend { min-width: 12rem; }
+.gauge-info { flex: 1; min-width: 12rem; }

@@ -14,7 +14,9 @@ test.describe("paycheck view (primary)", () => {
     await expect(page.locator('[data-stat="rolling"]')).toHaveText("$1,475.00");
     await expect(page.locator("#zero-status")).toContainText("$1,875.00 left to assign this month");
     await expect(pz.line(page, "Rent")).toBeVisible();
-    await expect(pz.line(page, "Electric")).toHaveCount(0);
+    // Every line shows, including ones this paycheck doesn't fund.
+    await expect(page.getByLabel("Planned for Electric from this paycheck")).toHaveValue("0.00");
+    await expect(pz.category(page, "Giving")).toBeVisible();
     const food = pz.category(page, "Food");
     await expect(food.locator("summary [data-col=this]")).toContainText("$300.00");
     await expect(food.locator("summary [data-col=planned]")).toContainText("$600.00");
@@ -27,7 +29,7 @@ test.describe("paycheck view (primary)", () => {
     await input.fill("1,000.50");
     await input.press("Enter");
     await expect(pz.sts(page)).toHaveText("$587.50");
-    await expect(pz.category(page, "Housing").locator("summary [data-col=planned]")).toContainText("$1,000.50");
+    await expect(pz.category(page, "Housing").locator("summary [data-col=this]")).toContainText("$1,000.50");
     await expect(page.locator("#zero-status")).toContainText("$2,074.50 left");
     await expect(input).toHaveValue("1000.50");
   });
@@ -36,7 +38,8 @@ test.describe("paycheck view (primary)", () => {
     const input = page.getByLabel("Planned for Gas from this paycheck");
     await input.fill("0");
     await input.press("Enter");
-    await expect(pz.line(page, "Gas")).toHaveCount(0);
+    await expect(pz.line(page, "Gas")).toHaveClass(/unfunded/);
+    await expect(input).toHaveValue("0.00");
     await expect(pz.sts(page)).toHaveText("$488.00");
   });
 
@@ -115,7 +118,7 @@ test.describe("paycheck view (primary)", () => {
     await expect(pz.toast(page)).toContainText("Funding was reduced for: Gas.");
     await expect(pz.toast(page)).toContainText("Re-balance the $1,475.00 difference");
     await expect(page.locator('[data-stat="assigned"]')).toHaveText("$1,500.00");
-    await expect(pz.line(page, "Gas")).toHaveCount(0);
+    await expect(page.getByLabel("Planned for Gas from this paycheck")).toHaveValue("0.00");
   });
 
   test("skipping a paycheck deletes its allocations", async ({ page }) => {
@@ -165,6 +168,32 @@ test.describe("paycheck view (primary)", () => {
     await expect(pz.category(page, "Giving").locator("summary [data-col=this]")).toContainText("$200.00");
     await expect(page.getByText("10% given ($200.00)")).toBeVisible();
     await expect(pz.sts(page)).toHaveText("$188.00");
+  });
+
+  test("add a line (and category) right from the paycheck view", async ({ page }) => {
+    const input = page.getByLabel("New line in Personal", { exact: true });
+    await input.fill("Haircut");
+    await page.getByLabel("Amount from this paycheck for the new line in Personal").fill("35");
+    await pz.category(page, "Personal").getByRole("button", { name: "Add line" }).click();
+    await expect(page.getByLabel("Planned for Haircut from this paycheck")).toHaveValue("35.00");
+    await expect(pz.sts(page)).toHaveText("$353.00");
+    await expect(input).toHaveValue("");
+    await page.getByLabel("New category").fill("Kids");
+    await page.getByRole("button", { name: "Add category" }).click();
+    await expect(pz.category(page, "Kids")).toBeVisible();
+  });
+
+  test("filter to only the lines this paycheck funds (remembered)", async ({ page }) => {
+    const toggle = page.getByRole("button", { name: "Only lines this paycheck funds" });
+    await toggle.click();
+    await expect(toggle).toHaveAttribute("aria-pressed", "true");
+    await expect(pz.line(page, "Electric")).toBeHidden();
+    await expect(pz.category(page, "Giving")).toBeHidden();
+    await expect(pz.line(page, "Rent")).toBeVisible();
+    await page.reload();
+    await expect(pz.line(page, "Electric")).toBeHidden();
+    await page.getByRole("button", { name: "Only lines this paycheck funds" }).click();
+    await expect(pz.line(page, "Electric")).toBeVisible();
   });
 
   test("navigating between paychecks", async ({ page }) => {

@@ -8,9 +8,9 @@ test.describe("offline & sync", () => {
     await context.setOffline(true);
     await expect(page.locator("#offline-banner")).toBeVisible();
     const form = page.locator("#add-tx");
-    await form.getByLabel("Amount").fill("7.25");
+    await form.getByLabel("Amount", { exact: true }).fill("7.25");
     await form.getByLabel("Payee").fill("Bakery");
-    await form.getByLabel("Expense line").selectOption({ label: "Groceries" });
+    await form.getByLabel("Expense line", { exact: true }).selectOption({ label: "Groceries" });
     await form.getByRole("button", { name: "Save transaction" }).click();
     await expect(page.locator("li.tx.pending", { hasText: "Bakery" })).toContainText("Pending sync");
     await expect(page.locator("#sync-banner")).toContainText("1 pending sync");
@@ -30,7 +30,7 @@ test.describe("offline & sync", () => {
     const row = page.locator("#tx-list li", { hasText: "Shell" });
     await page.getByRole("button", { name: "Edit Shell on Sep 6" }).click();
     const editDialog = page.getByRole("dialog", { name: "Edit transaction" });
-    await editDialog.getByLabel("Amount").fill("41");
+    await editDialog.getByLabel("Amount", { exact: true }).fill("41");
     await editDialog.getByRole("button", { name: "Save" }).click();
     await expect(row).toHaveClass(/pending/);
     await expect(page.locator("#sync-banner")).toContainText("1 pending sync");

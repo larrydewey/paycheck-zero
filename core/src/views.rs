@@ -152,6 +152,19 @@ impl Month {
             .collect()
     }
 
+    /// Every category and line, with what `paycheck` puts into each
+    /// (paycheck view; unfunded lines show 0).
+    #[must_use]
+    pub fn paycheck_category_views(&self, paycheck: &Id) -> Vec<CategoryView> {
+        self.categories_sorted()
+            .into_iter()
+            .map(|c| {
+                let lines = self.lines_of(&c.id).into_iter().map(|l| self.line_view(l, Some(paycheck))).collect();
+                self.category_view(c, lines)
+            })
+            .collect()
+    }
+
     /// Only the lines a paycheck funds, grouped by category (paycheck view).
     #[must_use]
     pub fn funding_views(&self, paycheck: &Id) -> Vec<CategoryView> {

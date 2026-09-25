@@ -685,25 +685,6 @@ pub async fn delete_line(State(st): State<Shared>, Extension(user): Extension<Au
 // Transactions
 // ----------------------------------------------------------------------
 
-fn tx_from_form(f: &HashMap<String, String>, id: Id) -> AppResult<Transaction> {
-    let date = chrono::NaiveDate::parse_from_str(field(f, "date"), "%Y-%m-%d").map_err(|_| AppError::bad(t("err.date")))?;
-    let amount = money_field(f, "amount")?;
-    let signed = if field(f, "direction") == "income" { amount } else { -amount };
-    let text = |k: &str| {
-        let v = field(f, k);
-        (!v.is_empty()).then(|| v.to_string())
-    };
-    Ok(Transaction {
-        id,
-        date,
-        amount: signed,
-        payee: text("payee"),
-        notes: text("notes"),
-        expense_line_id: opt_id(f, "expense_line_id"),
-        paycheck_id: opt_id(f, "paycheck_id"),
-        split_group: None,
-    })
-}
 
 /// Warning toasts for lines a transaction change pushed (further) over plan.
 fn overspend_toasts(user: &UserRecord, before: &[(Id, Cents)], m: &Month) -> Vec<Markup> {
@@ -726,28 +707,55 @@ fn overs(m: &Month) -> Vec<(Id, Cents)> {
 pub async fn add_transaction(State(st): State<Shared>, Extension(user): Extension<AuthUser>, headers: HeaderMap, Path(id): Path<Id>, Form(f): F) -> Sse {
     let user = user.0;
     let view = view_of(&f, View::Transactions { month: id.clone() });
-    let tx = match tx_from_form(&f, Id::generate()) {
-        Ok(t) => t,
+    let entry = match entry_from_form(&f, Id::generate(), &user.currency) {
+        Ok(e) => e,
         Err(e) => return failed(&st, &user, &headers, &view, &e).await,
     };
     let u = user.clone();
-    month_action(&st, &user, &headers, view, Ok(id), |m| { let b = overs(m); m.add_transaction(tx).map(|_| b) }, move |b, m| {
-        let mut v = vec![toast(ToastKind::Success, &t("tx.saved"), None)];
+    month_action(&st, &user, &headers, view, Ok(id), |m| {
+        let b = overs(m);
+        match entry {
+            TxEntry::Single(tx) => m.add_transaction(tx).map(|_| (b, false)),
+            TxEntry::Split(sp) => m.save_split(None, sp.date, sp.payee, sp.notes, sp.parts).map(|_| (b, true)),
+        }
+    }, move |(b, split), m| {
+        let mut v = vec![toast(ToastKind::Success, &t(if *split { "split.saved" } else { "tx.saved" }), None)];
         v.extend(overspend_toasts(&u, b, m));
         v
     }).await
 }
 
+/// Saves an edit from the unified form. Works on plain and split
+/// transactions, and converts between them when parts are added or removed.
 pub async fn update_transaction(State(st): State<Shared>, Extension(user): Extension<AuthUser>, headers: HeaderMap, Path(id): Path<Id>, Form(f): F) -> Sse {
     let user = user.0;
     let mid = st.resolve(&user, Owner::Transaction, &id).await;
     let view = view_of(&f, View::Transactions { month: mid.as_ref().cloned().unwrap_or_default() });
-    let tx = match tx_from_form(&f, id) {
-        Ok(t) => t,
+    let entry = match entry_from_form(&f, id.clone(), &user.currency) {
+        Ok(e) => e,
         Err(e) => return failed(&st, &user, &headers, &view, &e).await,
     };
     let u = user.clone();
-    month_action(&st, &user, &headers, view, mid, |m| { let b = overs(m); m.update_transaction(tx).map(|()| b) }, move |b, m| {
+    month_action(&st, &user, &headers, view, mid, |m| {
+        let b = overs(m);
+        let group = m.transaction(&id).ok_or(DomainError::NotFound { kind: "transaction", id: id.clone() })?.split_group.clone();
+        match (group, entry) {
+            (None, TxEntry::Single(tx)) => m.update_transaction(tx)?,
+            (Some(g), TxEntry::Split(sp)) => {
+                m.save_split(Some(&g), sp.date, sp.payee, sp.notes, sp.parts)?;
+            }
+            (None, TxEntry::Split(sp)) => {
+                m.delete_transaction(&id)?;
+                m.save_split(None, sp.date, sp.payee, sp.notes, sp.parts)?;
+            }
+            (Some(g), TxEntry::Single(mut tx)) => {
+                m.delete_split(&g)?;
+                tx.id = Id::generate();
+                m.add_transaction(tx)?;
+            }
+        }
+        Ok(b)
+    }, move |b, m| {
         let mut v = vec![toast(ToastKind::Success, &t("tx.saved"), None)];
         v.extend(overspend_toasts(&u, b, m));
         v
@@ -772,80 +780,60 @@ struct SplitInput {
     parts: Vec<SplitPart>,
 }
 
-fn split_from_form(f: &HashMap<String, String>, currency: &str) -> AppResult<SplitInput> {
+/// What the unified transaction form describes.
+enum TxEntry {
+    Single(Transaction),
+    Split(SplitInput),
+}
+
+/// Reads the unified transaction form: one part row means a plain
+/// transaction; two or more mean a split whose parts must add up to Amount.
+fn entry_from_form(f: &HashMap<String, String>, id: Id, currency: &str) -> AppResult<TxEntry> {
     let date = chrono::NaiveDate::parse_from_str(field(f, "date"), "%Y-%m-%d").map_err(|_| AppError::bad(t("err.date")))?;
     let income = field(f, "direction") == "income";
-    let mut idx: Vec<usize> = f
-        .keys()
-        .filter_map(|k| k.strip_prefix("part_amount_").and_then(|n| n.parse().ok()))
-        .collect();
-    idx.sort_unstable();
-    let mut parts = Vec::new();
-    for i in idx {
-        let Some(amount) = opt_money_field(f, &format!("part_amount_{i}"))? else { continue };
-        if amount.is_zero() {
-            continue;
-        }
-        parts.push(SplitPart {
-            amount: if income { amount } else { -amount },
-            expense_line_id: opt_id(f, &format!("part_line_{i}")),
-            paycheck_id: opt_id(f, &format!("part_paycheck_{i}")),
-        });
-    }
-    if let Some(total) = opt_money_field(f, "total")? {
-        let sum: Cents = parts.iter().map(|p| p.amount.abs()).sum();
-        if sum != total {
-            return Err(AppError::bad(tf("err.split_total", &[
-                ("parts", &crate::money::format(sum, currency)),
-                ("total", &crate::money::format(total, currency)),
-            ])));
-        }
-    }
+    let sign = |c: Cents| if income { c } else { -c };
     let text = |k: &str| {
         let v = field(f, k);
         (!v.is_empty()).then(|| v.to_string())
     };
-    Ok(SplitInput { date, payee: text("payee"), notes: text("notes"), parts })
-}
-
-pub async fn add_split(State(st): State<Shared>, Extension(user): Extension<AuthUser>, headers: HeaderMap, Path(id): Path<Id>, Form(f): F) -> Sse {
-    let user = user.0;
-    let view = view_of(&f, View::Transactions { month: id.clone() });
-    let input = match split_from_form(&f, &user.currency) {
-        Ok(i) => i,
-        Err(e) => return failed(&st, &user, &headers, &view, &e).await,
-    };
-    let u = user.clone();
-    month_action(&st, &user, &headers, view, Ok(id), |m| {
-        let b = overs(m);
-        m.save_split(None, input.date, input.payee, input.notes, input.parts).map(|_| b)
-    }, move |b, m| {
-        let mut v = vec![toast(ToastKind::Success, &t("split.saved"), None)];
-        v.extend(overspend_toasts(&u, b, m));
-        v
-    })
-    .await
-}
-
-pub async fn update_split(State(st): State<Shared>, Extension(user): Extension<AuthUser>, headers: HeaderMap, Path(group): Path<Id>, Form(f): F) -> Sse {
-    let user = user.0;
-    let part = Id::new(field(&f, "part_of"));
-    let mid = st.resolve(&user, Owner::Transaction, &part).await;
-    let view = view_of(&f, View::Transactions { month: mid.as_ref().cloned().unwrap_or_default() });
-    let input = match split_from_form(&f, &user.currency) {
-        Ok(i) => i,
-        Err(e) => return failed(&st, &user, &headers, &view, &e).await,
-    };
-    let u = user.clone();
-    month_action(&st, &user, &headers, view, mid, |m| {
-        let b = overs(m);
-        m.save_split(Some(&group), input.date, input.payee, input.notes, input.parts).map(|_| b)
-    }, move |b, m| {
-        let mut v = vec![toast(ToastKind::Success, &t("split.saved"), None)];
-        v.extend(overspend_toasts(&u, b, m));
-        v
-    })
-    .await
+    let mut idx: Vec<usize> = f.keys().filter_map(|k| k.strip_prefix("part_line_").and_then(|n| n.parse().ok())).collect();
+    idx.sort_unstable();
+    let total = money_field(f, "amount")?;
+    if idx.len() <= 1 {
+        let i = idx.first().copied().unwrap_or(0);
+        let line = opt_id(f, &format!("part_line_{i}")).or_else(|| opt_id(f, "expense_line_id"));
+        let paycheck = opt_id(f, &format!("part_paycheck_{i}")).or_else(|| opt_id(f, "paycheck_id"));
+        return Ok(TxEntry::Single(Transaction {
+            id,
+            date,
+            amount: sign(total),
+            payee: text("payee"),
+            notes: text("notes"),
+            expense_line_id: line,
+            paycheck_id: paycheck,
+            split_group: None,
+        }));
+    }
+    let mut parts = Vec::new();
+    for i in idx {
+        let amount = opt_money_field(f, &format!("part_amount_{i}"))?.unwrap_or(Cents::ZERO);
+        if amount.is_zero() {
+            continue;
+        }
+        parts.push(SplitPart {
+            amount: sign(amount),
+            expense_line_id: opt_id(f, &format!("part_line_{i}")),
+            paycheck_id: opt_id(f, &format!("part_paycheck_{i}")),
+        });
+    }
+    let sum: Cents = parts.iter().map(|p| p.amount.abs()).sum();
+    if sum != total {
+        return Err(AppError::bad(tf("err.split_total", &[
+            ("parts", &crate::money::format(sum, currency)),
+            ("total", &crate::money::format(total, currency)),
+        ])));
+    }
+    Ok(TxEntry::Split(SplitInput { date, payee: text("payee"), notes: text("notes"), parts }))
 }
 
 pub async fn delete_split(State(st): State<Shared>, Extension(user): Extension<AuthUser>, headers: HeaderMap, Path(group): Path<Id>, Form(f): F) -> Sse {

@@ -76,8 +76,6 @@ pub fn routes(state: Shared) -> Router<Shared> {
         .route("/ui/lines/{id}/debt", post(actions::line_debt))
         .route("/ui/lines/{id}/move", post(actions::move_line))
         .route("/ui/lines/{id}/delete", post(actions::delete_line))
-        .route("/ui/months/{id}/splits", post(actions::add_split))
-        .route("/ui/splits/{group}", post(actions::update_split))
         .route("/ui/splits/{group}/delete", post(actions::delete_split))
         .route("/ui/transactions/{id}", post(actions::update_transaction))
         .route("/ui/transactions/{id}/delete", post(actions::delete_transaction))
@@ -273,6 +271,8 @@ pub struct Ctx {
     pub today: NaiveDate,
     /// Category names the user has collapsed (remembered per session, §14.7).
     pub collapsed: Vec<String>,
+    /// Paycheck view: show only lines this paycheck funds.
+    pub only_funded: bool,
 }
 
 impl Ctx {
