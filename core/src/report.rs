@@ -199,8 +199,12 @@ pub struct SummaryCards {
     pub actual_expense: Cents,
     /// Remaining-to-zero (planned income − planned expense).
     pub remaining_to_zero: Cents,
-    /// actual − planned.
+    /// actual − planned, over paychecks whose actual has been recorded
+    /// (plus unlinked positive transactions). Paychecks not yet received
+    /// don't count as a shortfall.
     pub income_variance: Cents,
+    pub paychecks_received: usize,
+    pub paychecks_total: usize,
     /// actual − planned.
     pub expense_variance: Cents,
     pub spending: SpendingStatus,
@@ -210,13 +214,26 @@ pub struct SummaryCards {
 pub fn summary_cards(m: &Month) -> SummaryCards {
     let f = month_figures(m);
     let expense_variance = f.actual_expense - f.planned_expense;
+    let counted: Vec<&crate::models::Paycheck> =
+        m.paychecks.iter().filter(|p| p.status != PaycheckStatus::Skipped).collect();
+    let received: Vec<&&crate::models::Paycheck> = counted.iter().filter(|p| p.actual_amount.is_some()).collect();
+    let unlinked_income: Cents = m
+        .transactions
+        .iter()
+        .filter(|t| t.expense_line_id.is_none() && t.amount.is_positive())
+        .map(|t| t.amount)
+        .sum();
+    let income_variance =
+        received.iter().filter_map(|p| p.variance()).sum::<Cents>() + unlinked_income;
     SummaryCards {
         planned_income: f.planned_income,
         actual_income: f.actual_income,
         planned_expense: f.planned_expense,
         actual_expense: f.actual_expense,
         remaining_to_zero: m.zero_difference(),
-        income_variance: f.actual_income - f.planned_income,
+        income_variance,
+        paychecks_received: received.len(),
+        paychecks_total: counted.len(),
         expense_variance,
         spending: match expense_variance.get() {
             v if v > 0 => SpendingStatus::Over,

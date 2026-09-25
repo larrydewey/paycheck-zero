@@ -506,6 +506,38 @@ impl Month {
         Ok(())
     }
 
+    /// Drag-and-drop: puts a category at `index` in display order.
+    pub fn place_category(&mut self, id: &Id, index: usize) -> Result<(), DomainError> {
+        self.require_draft()?;
+        let mut order: Vec<Id> = self.categories_sorted().iter().map(|c| c.id.clone()).collect();
+        let pos = order.iter().position(|x| x == id).ok_or_else(|| DomainError::not_found("category", id))?;
+        let item = order.remove(pos);
+        order.insert(index.min(order.len()), item);
+        for (i, cid) in order.iter().enumerate() {
+            self.category_mut(cid)?.sort_order = (i32::try_from(i).unwrap_or(i32::MAX / 10) + 1) * 10;
+        }
+        Ok(())
+    }
+
+    /// Drag-and-drop: puts a line at `index` within `category` (which may be
+    /// a different category than its current one).
+    pub fn place_line(&mut self, id: &Id, category: &Id, index: usize) -> Result<(), DomainError> {
+        self.require_draft()?;
+        if self.category(category).is_none() {
+            return Err(DomainError::not_found("category", category));
+        }
+        if self.expense_line(id).is_none() {
+            return Err(DomainError::not_found("expense line", id));
+        }
+        self.set_line_category(id, category)?;
+        let mut order: Vec<Id> = self.lines_of(category).iter().map(|l| l.id.clone()).filter(|l| l != id).collect();
+        order.insert(index.min(order.len()), id.clone());
+        for (i, lid) in order.iter().enumerate() {
+            self.line_mut(lid)?.sort_order = (i32::try_from(i).unwrap_or(i32::MAX / 10) + 1) * 10;
+        }
+        Ok(())
+    }
+
     /// Sets the Debt-only fields (spec §2.5).
     pub fn set_debt_fields(
         &mut self,

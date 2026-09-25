@@ -12,12 +12,12 @@ test.describe("offline & sync", () => {
     await form.getByLabel("Payee").fill("Bakery");
     await form.getByLabel("Expense line").selectOption({ label: "Groceries" });
     await form.getByRole("button", { name: "Save transaction" }).click();
-    await expect(page.locator("tr.pending", { hasText: "Bakery" })).toContainText("Pending sync");
+    await expect(page.locator("li.tx.pending", { hasText: "Bakery" })).toContainText("Pending sync");
     await expect(page.locator("#sync-banner")).toContainText("1 pending sync");
     await context.setOffline(false);
     await page.waitForURL(/transactions/);
     await waitForContent(page);
-    await expect(page.locator("#tx-table tr", { hasText: "Bakery" })).not.toHaveClass(/pending/);
+    await expect(page.locator("#tx-list li", { hasText: "Bakery" })).not.toHaveClass(/pending/);
     await expect(page.locator("#toasts")).toContainText("1 offline change(s) synced.");
     await expect(page.locator("#sync-banner")).toBeHidden();
   });
@@ -27,10 +27,12 @@ test.describe("offline & sync", () => {
     await login();
     await pz.transactions(page, s);
     await context.setOffline(true);
-    const row = page.locator("#tx-table tr", { hasText: "Shell" });
-    await row.getByText("Edit").click();
-    await row.getByLabel("Amount").fill("41");
-    await row.getByRole("button", { name: "Save" }).click();
+    const row = page.locator("#tx-list li", { hasText: "Shell" });
+    await page.getByRole("button", { name: "Edit Shell on Sep 6" }).click();
+    const editDialog = page.getByRole("dialog", { name: "Edit transaction" });
+    await editDialog.getByLabel("Amount").fill("41");
+    await editDialog.getByRole("button", { name: "Save" }).click();
+    await expect(row).toHaveClass(/pending/);
     await expect(page.locator("#sync-banner")).toContainText("1 pending sync");
     // Meanwhile another device changes the same transaction.
     const token = await pz.apiToken(server);
@@ -52,7 +54,7 @@ test.describe("offline & sync", () => {
     await dialog.getByRole("button", { name: "Keep mine" }).click();
     await page.waitForLoadState("load");
     await waitForContent(page);
-    await expect(page.locator("#tx-table tr", { hasText: "Shell" })).toContainText("-$41.00");
+    await expect(page.locator("#tx-list li", { hasText: "Shell" })).toContainText("-$41.00");
     await expect(page.locator("#sync-banner")).toBeHidden();
   });
 

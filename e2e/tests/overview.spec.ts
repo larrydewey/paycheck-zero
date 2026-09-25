@@ -74,6 +74,16 @@ test.describe("monthly overview", () => {
     await expect.poll(async () => pz.category(page, "Housing").locator("li.line").evaluateAll((els) => els.map((e) => e.getAttribute("data-line")))).toEqual(["Electric", "Rent"]);
   });
 
+  test("drag and drop reorders lines and moves them between categories", async ({ page, isMobile }) => {
+    test.skip(isMobile, "drag handles are a mouse enhancement; phones use the move buttons");
+    const order = (cat: string) => pz.category(page, cat).locator("li.line").evaluateAll((els) => els.map((e) => e.getAttribute("data-line")));
+    await pz.line(page, "Electric").locator(".grip").dragTo(pz.line(page, "Rent"), { targetPosition: { x: 10, y: 2 } });
+    await expect.poll(() => order("Housing")).toEqual(["Electric", "Rent"]);
+    await pz.line(page, "Gas").locator(".grip").dragTo(pz.category(page, "Food").locator(":scope > summary"));
+    await expect.poll(() => order("Food")).toEqual(["Gas", "Groceries"]);
+    await expect(pz.category(page, "Transportation").locator("li.line")).toHaveCount(0);
+  });
+
   test("collapse state is remembered across reloads", async ({ page }) => {
     const food = pz.category(page, "Food");
     await expect(food).toHaveAttribute("open", "");

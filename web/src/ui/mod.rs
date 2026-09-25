@@ -55,6 +55,7 @@ pub fn routes(state: Shared) -> Router<Shared> {
         .route("/ui/months/{id}/categories", post(actions::add_category))
         .route("/ui/months/{id}/lines", post(actions::add_line))
         .route("/ui/months/{id}/fund", post(actions::fund))
+        .route("/ui/months/{id}/place", post(actions::place))
         .route("/ui/months/{id}/transactions", post(actions::add_transaction))
         .route("/ui/income/{id}", post(actions::update_income))
         .route("/ui/income/{id}/delete", post(actions::delete_income))
@@ -332,30 +333,72 @@ pub fn money_input(name: &str, value: Option<Cents>, label: &str, max_cents: Opt
     }
 }
 
+/// Inline SVG icons (decorative; always paired with visible or aria text).
+#[must_use]
+pub fn icon(name: &str) -> Markup {
+    let path = match name {
+        "paychecks" => "M3 6h18v12H3z M3 10h18 M7 15h4",
+        "overview" => "M4 5h16 M4 12h16 M4 19h10",
+        "income" => "M12 19V5 M6 11l6-6 6 6",
+        "transactions" => "M4 7h13l-3-3 M20 17H7l3 3",
+        "reports" => "M5 20V10 M12 20V4 M19 20v-7",
+        "trash" => "M4 7h16 M9 7V4h6v3 M6 7l1 13h10l1-13",
+        "up" => "M12 19V5 M6 11l6-6 6 6",
+        "down" => "M12 5v14 M6 13l6 6 6-6",
+        "grip" => "M9 6h.01 M15 6h.01 M9 12h.01 M15 12h.01 M9 18h.01 M15 18h.01",
+        "edit" => "M4 20h4L19 9l-4-4L4 16z M13 7l4 4",
+        "lock" => "M6 11h12v9H6z M8 11V8a4 4 0 0 1 8 0v3",
+        "check" => "M5 12l5 5 9-10",
+        "plus" => "M12 5v14 M5 12h14",
+        "alert" => "M12 4l9 16H3z M12 10v4 M12 17h.01",
+        _ => "",
+    };
+    let width = if name == "grip" { "3" } else { "2" };
+    html! {
+        svg class=(format!("icon icon-{name}")) viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor"
+            stroke-width=(width) stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false" {
+            path d=(path) {}
+        }
+    }
+}
+
 struct NavTab {
     key: &'static str,
     label: String,
+    short: String,
     href: String,
 }
 
-/// Top navigation within a month.
+/// Section navigation within a month: tabs on wide screens, a bottom tab
+/// bar on phones.
 fn month_nav(month: &Id, active: &str, default_paycheck: Option<&Id>) -> Markup {
     let tabs = [
         NavTab {
             key: "paycheck",
             label: t("nav.paychecks"),
+            short: t("nav.paychecks_short"),
             href: default_paycheck.map_or_else(|| format!("/months/{month}"), |p| format!("/months/{month}/paychecks/{p}")),
         },
-        NavTab { key: "overview", label: t("nav.overview"), href: format!("/months/{month}/overview") },
-        NavTab { key: "income", label: t("nav.income"), href: format!("/months/{month}/income") },
-        NavTab { key: "transactions", label: t("nav.transactions"), href: format!("/months/{month}/transactions") },
-        NavTab { key: "reports", label: t("nav.reports"), href: format!("/months/{month}/reports") },
+        NavTab { key: "overview", label: t("nav.overview"), short: t("nav.overview_short"), href: format!("/months/{month}/overview") },
+        NavTab { key: "income", label: t("nav.income"), short: t("nav.income_short"), href: format!("/months/{month}/income") },
+        NavTab { key: "transactions", label: t("nav.transactions"), short: t("nav.transactions_short"), href: format!("/months/{month}/transactions") },
+        NavTab { key: "reports", label: t("nav.reports"), short: t("nav.reports_short"), href: format!("/months/{month}/reports") },
     ];
+    let icon_of = |k: &str| icon(if k == "paycheck" { "paychecks" } else { k });
     html! {
         nav class="tabs" aria-label=(t("nav.sections")) {
             @for tab in &tabs {
                 a href=(tab.href) class=(if tab.key == active { "tab active" } else { "tab" })
                     aria-current=[(tab.key == active).then_some("page")] { (tab.label) }
+            }
+        }
+        nav class="bottom-tabs" aria-label=(t("nav.sections_mobile")) {
+            @for tab in &tabs {
+                a href=(tab.href) class=(if tab.key == active { "btab active" } else { "btab" })
+                    aria-current=[(tab.key == active).then_some("page")] aria-label=(tab.label) {
+                    (icon_of(tab.key))
+                    span { (tab.short) }
+                }
             }
         }
     }

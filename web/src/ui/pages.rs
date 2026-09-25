@@ -308,75 +308,103 @@ fn month_status(c: &Ctx, m: &Month, archived: bool, view: &View) -> Markup {
     html! {
         section class="month-status" aria-label=(t("status.label")) {
             @if archived {
-                p class="notice warn" { (t("status.archived")) }
+                p class="notice warn" { (icon("alert")) " " (t("status.archived")) }
             }
             @if m.is_locked() && !m.reassigning {
-                p class="pill locked" { "🔒 " (t("status.locked")) }
+                p class="pill locked" { (icon("lock")) " " (t("status.locked")) }
             }
-            @if m.reassigning {
-                div class="notice info" {
-                    p { (t("status.reassigning")) }
-                    form data-on:submit__prevent=(post_form(&format!("/ui/months/{}/reassign/finish", m.id))) {
-                        (view_input(view))
-                        button type="submit" class="btn primary" { (t("status.finish_reassign")) }
-                    }
-                }
-            }
-            div id="zero-status" class=(if diff.is_zero() { "zero ok" } else { "zero todo" }) aria-live="polite" {
-                @if diff.is_zero() {
-                    span { "✓ " (t("status.zero")) }
+            div id="zero-status" class=(if m.paychecks.is_empty() { "zero todo" } else if diff.is_zero() && m.has_variance() { "zero caution" } else if diff.is_zero() { "zero ok" } else { "zero todo" }) aria-live="polite" {
+                @if m.paychecks.is_empty() {
+                    span { (t("status.no_income")) }
+                } @else if diff.is_zero() && m.has_variance() {
+                    span { (t("status.zero_with_variance")) }
+                } @else if diff.is_zero() {
+                    span { (icon("check")) " " (t("status.zero")) }
                 } @else if diff.is_positive() {
                     span { (tf("status.left_to_assign", &[("amount", &c.money(diff))])) }
                 } @else {
                     span { (tf("status.over_assigned", &[("amount", &c.money(diff.abs()))])) }
                 }
-                @if !m.is_locked() && !archived {
+                @if !m.is_locked() && !archived && !m.paychecks.is_empty() {
                     form class="inline" data-on:submit__prevent=(post_form(&lock_url)) {
                         (view_input(view))
-                        button type="submit" class=(if diff.is_zero() { "btn primary" } else { "btn" }) aria-describedby="zero-status" { (t("status.lock")) }
+                        button type="submit" class=(if diff.is_zero() { "btn primary" } else { "btn" }) aria-describedby="zero-status" { (icon("lock")) " " (t("status.lock")) }
                     }
                 }
             }
-            @if m.has_variance() && !archived {
+            @if (m.has_variance() || m.reassigning) && !archived {
                 (variance_panel(c, m, view))
             }
         }
     }
 }
 
+/// One panel for the whole variance flow (spec §2.9): what differs, the
+/// steps to bring the month back to zero, and where to look.
 fn variance_panel(c: &Ctx, m: &Month, view: &View) -> Markup {
     let report = variance_suggestions(m);
+    let pending: Vec<&Paycheck> = m.paychecks_by_date().into_iter().filter(|p| p.has_variance()).collect();
+    let step = |done: bool, active: bool, body: Markup| {
+        html! {
+            li class={ "step" @if done { " done" } @if active { " active" } } {
+                span class="step-mark" aria-hidden="true" { @if done { (icon("check")) } }
+                div class="step-body" { (body) }
+            }
+        }
+    };
     html! {
-        div class="notice variance" id="variance-panel" {
-            h2 class="h3" { (t("variance.title")) }
-            p { (tf("variance.net", &[("amount", &c.money(report.net_variance))])) }
+        section class="variance card" id="variance-panel" aria-labelledby="variance-h" {
+            h2 id="variance-h" class="h3" { (icon("alert")) " " (t("variance.title")) }
+            @if m.reassigning {
+                p class="notice info" { (t("status.reassigning")) }
+            }
+            @if !pending.is_empty() {
+                p { (tf("variance.net", &[("amount", &c.money(report.net_variance))])) }
+            }
             ul class="variance-list" {
-                @for p in m.paychecks_by_date().iter().filter(|p| p.has_variance()) {
+                @for p in &pending {
                     li {
-                        (tf("variance.paycheck", &[
+                        span { (tf("variance.paycheck", &[
                             ("date", &short_date(p.date)),
                             ("planned", &c.money(p.planned_amount)),
                             ("actual", &c.money(p.actual_amount.unwrap_or_default())),
-                        ]))
+                        ])) }
                         @if m.allocations_editable() {
                             form class="inline" data-on:submit__prevent=(post_form(&format!("/ui/paychecks/{}/apply-actual", p.id))) {
                                 (view_input(view))
-                                button type="submit" class="btn small" { (t("variance.apply")) }
+                                button type="submit" class="btn small primary" { (t("variance.apply")) }
                             }
                         }
                     }
                 }
             }
-            @if m.is_locked() && !m.reassigning {
-                form data-on:submit__prevent=(post_form(&format!("/ui/months/{}/reassign/begin", m.id))) {
-                    (view_input(view))
-                    button type="submit" class="btn primary" { (t("variance.begin")) }
+            @if m.is_locked() {
+                ol class="steps" aria-label=(t("variance.steps")) {
+                    (step(m.reassigning, !m.reassigning, html! {
+                        @if m.reassigning { (t("variance.step_open_done")) } @else {
+                            form data-on:submit__prevent=(post_form(&format!("/ui/months/{}/reassign/begin", m.id))) {
+                                (view_input(view))
+                                button type="submit" class="btn primary" { (t("variance.begin")) }
+                            }
+                            span class="muted small" { (t("variance.step_open_hint")) }
+                        }
+                    }))
+                    (step(m.reassigning && pending.is_empty(), m.reassigning && !pending.is_empty(), html! { (t("variance.step_apply")) }))
+                    (step(m.reassigning && pending.is_empty() && m.is_zero(), m.reassigning && pending.is_empty() && !m.is_zero(), html! { (t("variance.step_balance")) }))
+                    (step(false, m.reassigning && pending.is_empty() && m.is_zero(), html! {
+                        @if m.reassigning {
+                            form data-on:submit__prevent=(post_form(&format!("/ui/months/{}/reassign/finish", m.id))) {
+                                (view_input(view))
+                                button type="submit" class=(if pending.is_empty() && m.is_zero() { "btn primary" } else { "btn" }) { (icon("lock")) " " (t("status.finish_reassign")) }
+                            }
+                        } @else { (t("variance.step_relock")) }
+                    }))
                 }
             }
             @if !report.suggestions.is_empty() {
                 p class="muted" { (t("variance.suggestions")) }
                 ul class="suggestions" {
-                    @for s in report.suggestions.iter().take(5) {
+                    @for s in report.suggestions.iter().take(3) {
                         li {
                             strong { (s.line_name) } " — "
                             (match s.kind {
@@ -394,7 +422,7 @@ fn variance_panel(c: &Ctx, m: &Month, view: &View) -> Markup {
 
 fn category_details(c: &Ctx, cat: &CategoryView, summary_right: Markup, body: Markup) -> Markup {
     html! {
-        details class="category" data-category=(cat.name) open[c.is_open(&cat.name)] {
+        details class="category" data-category=(cat.name) data-cat-id=(cat.id) open[c.is_open(&cat.name)] {
             summary {
                 span class="cat-name" { (cat.name) }
                 (summary_right)
@@ -406,11 +434,9 @@ fn category_details(c: &Ctx, cat: &CategoryView, summary_right: Markup, body: Ma
 
 fn triad(c: &Ctx, planned: Cents, spent: Cents, remaining: Cents) -> Markup {
     html! {
-        span class="num" data-col="planned" { span class="col-label" { (t("col.planned")) } (c.money(planned)) }
-        span class="num" data-col="spent" { span class="col-label" { (t("col.spent")) } (c.money(spent)) }
-        span class=(if remaining.is_negative() { "num neg" } else { "num" }) data-col="remaining" {
-            span class="col-label" { (t("col.remaining")) } (c.money(remaining))
-        }
+        span class="num" data-col="planned" { (c.money(planned)) }
+        span class="num" data-col="spent" { (c.money(spent)) }
+        span class=(if remaining.is_negative() { "num neg" } else { "num" }) data-col="remaining" { (c.money(remaining)) }
     }
 }
 
@@ -431,7 +457,7 @@ fn paycheck_strip(c: &Ctx, m: &Month, active: &Id) -> Markup {
                     span class="chip-amt" { (c.money(v.planned_amount)) }
                     span class="chip-state" {
                         @if v.status == PaycheckStatus::Skipped { (t("paycheck.skipped")) }
-                        @else if v.fully_allocated { "✓ " (t("paycheck.fully_assigned")) }
+                        @else if v.fully_allocated { (icon("check")) " " (t("paycheck.fully_assigned")) }
                         @else { (tf("paycheck.left", &[("amount", &c.money(v.unallocated))])) }
                     }
                 }
@@ -476,7 +502,10 @@ pub fn render_paycheck(c: &Ctx, m: &Month, archived: bool, pid: &Id) -> Markup {
         } @else if v.unallocated.is_positive() {
             p class="notice todo" id="unassigned-nudge" role="status" { (tf("paycheck.nudge", &[("amount", &c.money(v.unallocated))])) }
         } @else {
-            p class="notice ok" id="unassigned-nudge" { "✓ " (t("paycheck.all_assigned")) }
+            p class="notice ok" id="unassigned-nudge" {
+                (icon("check")) " " (t("paycheck.all_assigned"))
+                @if editable { " " span class="muted small" { (t("paycheck.all_assigned_hint")) } }
+            }
         }
 
         @if editable && !targets.is_empty() && v.unallocated.is_positive() {
@@ -513,7 +542,7 @@ pub fn render_paycheck(c: &Ctx, m: &Month, archived: bool, pid: &Id) -> Markup {
                 }
                 @for cat in &funding {
                     (category_details(c, cat, html! {
-                        span class="num" data-col="this" { span class="col-label" { (t("col.this_paycheck")) } (c.money(cat.this_paycheck)) }
+                        span class="num" data-col="this" { (c.money(cat.this_paycheck)) }
                         (triad(c, cat.planned, cat.spent, cat.remaining))
                     }, html! {
                         ul class="lines" {
@@ -526,14 +555,14 @@ pub fn render_paycheck(c: &Ctx, m: &Month, archived: bool, pid: &Id) -> Markup {
                                                 input type="text" name="name" value=(l.name) aria-label=(tf("line.name_label", &[("name", &l.name)])) data-on:change="el.form.requestSubmit()" required maxlength="100";
                                             }
                                         } @else {
-                                            span { (l.name) }
+                                            span class="name-text" { (l.name) }
                                         }
                                         @if l.funders.len() > 1 {
                                             span class="split-note" { (tf("line.split_note", &[("count", &l.funders.len().to_string())])) }
                                         }
                                     }
                                     div class="cell num" data-col="this" {
-                                        span class="col-label" { (t("col.this_paycheck")) }
+                                       
                                         @if editable {
                                             form data-on:submit__prevent=(post_form_guarded(&format!("/ui/paychecks/{}/lines/{}", pid, l.id))) {
                                                 (view_input(&view))
@@ -544,9 +573,9 @@ pub fn render_paycheck(c: &Ctx, m: &Month, archived: bool, pid: &Id) -> Markup {
                                             span { (c.money(l.this_paycheck)) }
                                         }
                                     }
-                                    span class="cell num" data-col="planned" { span class="col-label" { (t("col.planned")) } (c.money(l.planned)) }
-                                    span class="cell num" data-col="spent" { span class="col-label" { (t("col.spent")) } (c.money(l.spent)) }
-                                    span class=(if l.remaining.is_negative() { "cell num neg" } else { "cell num" }) data-col="remaining" { span class="col-label" { (t("col.remaining")) } (c.money(l.remaining)) }
+                                    span class="cell num" data-col="planned" { (c.money(l.planned)) }
+                                    span class="cell num" data-col="spent" { (c.money(l.spent)) }
+                                    span class=(if l.remaining.is_negative() { "cell num neg" } else { "cell num" }) data-col="remaining" { (c.money(l.remaining)) }
                                 }
                             }
                         }
@@ -555,7 +584,7 @@ pub fn render_paycheck(c: &Ctx, m: &Month, archived: bool, pid: &Id) -> Markup {
             }
         }
 
-        @if editable {
+        @if editable && v.unallocated.is_positive() {
             (fund_form(c, m, pid, &view, v.unallocated, structure))
         }
 
@@ -566,8 +595,10 @@ pub fn render_paycheck(c: &Ctx, m: &Month, archived: bool, pid: &Id) -> Markup {
                     form data-on:submit__prevent=(post_form(&format!("/ui/paychecks/{pid}/planned"))) {
                         (view_input(&view))
                         label for="pc-planned" { (t("paycheck.planned_amount")) }
-                        input id="pc-planned" type="text" inputmode="decimal" name="amount" value=(crate::money::plain(p.planned_amount)) required;
-                        button type="submit" class="btn small" { (t("common.save")) }
+                        div class="inline-field" {
+                            input id="pc-planned" type="text" inputmode="decimal" class="money" name="amount" value=(crate::money::plain(p.planned_amount)) required;
+                            button type="submit" class="btn" { (t("common.save")) }
+                        }
                     }
                 }
                 @if !archived && p.status != PaycheckStatus::Skipped {
@@ -576,11 +607,14 @@ pub fn render_paycheck(c: &Ctx, m: &Month, archived: bool, pid: &Id) -> Markup {
                         data-on:submit__prevent=(post_form(&format!("/ui/paychecks/{pid}/actual"))) {
                         (view_input(&view))
                         label for="pc-actual" { (t("paycheck.actual_amount")) }
-                        input id="pc-actual" type="text" inputmode="decimal" name="amount" value=[p.actual_amount.map(crate::money::plain)] placeholder=(t("paycheck.actual_placeholder"));
-                        button type="submit" class="btn small" { (t("paycheck.record_actual")) }
+                        div class="inline-field" {
+                            input id="pc-actual" type="text" inputmode="decimal" class="money" name="amount" value=[p.actual_amount.map(crate::money::plain)] placeholder=(t("paycheck.actual_placeholder"));
+                            button type="submit" class="btn" { (t("paycheck.record_actual")) }
+                        }
                     }
                 }
                 @if structure {
+                    div class="danger-actions" {
                     form data-on:submit__prevent=(post_form(&format!("/ui/paychecks/{pid}/status"))) {
                         (view_input(&view))
                         @if p.status == PaycheckStatus::Skipped {
@@ -593,7 +627,8 @@ pub fn render_paycheck(c: &Ctx, m: &Month, archived: bool, pid: &Id) -> Markup {
                     }
                     form data-on:submit__prevent=(post_form(&format!("/ui/paychecks/{pid}/delete"))) {
                         (view_input(&view))
-                        button type="submit" class="btn small danger" data-confirm=(t("paycheck.delete_confirm")) { (t("paycheck.delete")) }
+                        button type="submit" class="btn small danger" data-confirm=(t("paycheck.delete_confirm")) { (icon("trash")) " " (t("paycheck.delete")) }
+                    }
                     }
                 }
             }
@@ -606,53 +641,59 @@ fn fund_form(c: &Ctx, m: &Month, pid: &Id, view: &View, unallocated: Cents, stru
     let url = format!("/ui/months/{}/fund", m.id);
     let cats = m.categories_sorted();
     let default_cat = cats.first().map(|c| c.id.clone());
+    let fill_all = format!("document.getElementById('fund-amount').value = '{}'", crate::money::plain(unallocated));
     html! {
         section class="fund" aria-labelledby="fund-h" data-signals="{_fundline: ''}" {
             h2 id="fund-h" { (t("fund.title")) }
             form id="fund-form" data-on:submit__prevent=(post_form_guarded(&url)) {
                 (view_input(view))
                 input type="hidden" name="paycheck_id" value=(pid);
-                div class="field" {
-                    label for="fund-line" { (t("fund.line")) }
-                    select id="fund-line" name="line_id" data-bind:_fundline required {
-                        option value="" { (t("fund.choose")) }
-                        @for cat in &cats {
-                            @let lines = m.lines_of(&cat.id);
-                            @if !lines.is_empty() {
-                                optgroup label=(cat.name) {
-                                    @for l in lines {
-                                        option value=(l.id) { (l.name) }
+                div class="fund-grid" {
+                    div class="field f-line" {
+                        label for="fund-line" { (t("fund.line")) }
+                        select id="fund-line" name="line_id" data-bind:_fundline required {
+                            option value="" { (t("fund.choose")) }
+                            @for cat in &cats {
+                                @let lines = m.lines_of(&cat.id);
+                                @if !lines.is_empty() {
+                                    optgroup label=(cat.name) {
+                                        @for l in lines {
+                                            option value=(l.id) { (l.name) }
+                                        }
                                     }
                                 }
                             }
-                        }
-                        @if structure {
-                            option value="__new" { (t("fund.new_line")) }
-                        }
-                    }
-                }
-                @if structure {
-                    div class="field" data-show="$_fundline == '__new'" {
-                        label for="fund-new-name" { (t("fund.new_name")) }
-                        input id="fund-new-name" name="new_name" type="text" maxlength="100";
-                    }
-                    div class="field" data-show="$_fundline == '__new'" {
-                        label for="fund-new-cat" { (t("fund.new_category")) }
-                        select id="fund-new-cat" name="new_category" {
-                            @for cat in &cats {
-                                option value=(cat.id) selected[Some(&cat.id) == default_cat.as_ref()] { (cat.name) }
+                            @if structure {
+                                option value="__new" { (t("fund.new_line")) }
                             }
                         }
                     }
+                    @if structure {
+                        div class="field f-name" data-show="$_fundline == '__new'" {
+                            label for="fund-new-name" { (t("fund.new_name")) }
+                            input id="fund-new-name" name="new_name" type="text" maxlength="100";
+                        }
+                        div class="field f-cat" data-show="$_fundline == '__new'" {
+                            label for="fund-new-cat" { (t("fund.new_category")) }
+                            select id="fund-new-cat" name="new_category" {
+                                @for cat in &cats {
+                                    option value=(cat.id) selected[Some(&cat.id) == default_cat.as_ref()] { (cat.name) }
+                                }
+                            }
+                        }
+                    }
+                    div class="field f-amount" {
+                        label for="fund-amount" { (t("fund.amount")) }
+                        input id="fund-amount" type="text" inputmode="decimal" class="money" name="amount" autocomplete="off" required
+                            data-max-cents=(unallocated.get()) placeholder="0.00" aria-describedby="fund-hint";
+                    }
+                    button type="submit" class="btn primary f-btn" { (t("fund.submit")) }
                 }
-                div class="field" {
-                    label for="fund-amount" { (t("fund.amount")) }
-                    input id="fund-amount" type="text" inputmode="decimal" class="money" name="amount" autocomplete="off" required
-                        data-max-cents=(unallocated.get()) placeholder="0.00" aria-describedby="fund-hint";
-                    p id="fund-hint" class="hint" { (tf("fund.available", &[("amount", &c.money(unallocated))])) }
-                    span class="field-error" aria-live="polite" {}
+                p id="fund-hint" class="hint" {
+                    (tf("fund.available", &[("amount", &c.money(unallocated))])) " "
+                    button type="button" class="link" data-on:click=(fill_all) { (tf("fund.use_all", &[("amount", &c.money(unallocated))])) }
                 }
-                button type="submit" class="btn primary" { (t("fund.submit")) }
+                span class="field-error" aria-live="polite" {}
             }
         }
     }
@@ -662,19 +703,40 @@ fn fund_form(c: &Ctx, m: &Month, pid: &Id, view: &View, unallocated: Cents, stru
 // Monthly overview (secondary, spec §14.6)
 // ----------------------------------------------------------------------
 
+fn signed(c: &Ctx, v: Cents) -> String {
+    if v.is_positive() {
+        format!("+{}", c.money(v))
+    } else {
+        c.money(v)
+    }
+}
+
 fn summary_cards(c: &Ctx, m: &Month) -> Markup {
     let s = report::summary_cards(m);
+    let pct = if s.planned_expense.is_positive() {
+        (s.actual_expense.get().saturating_mul(100) / s.planned_expense.get()).clamp(0, 999)
+    } else {
+        0
+    };
     html! {
         section class="cards" aria-label=(t("cards.label")) {
             div class="card" data-card="income" {
                 p class="card-label" { (t("cards.income")) }
                 p class="card-value" { (c.money(s.planned_income)) }
-                p class="card-sub" { (tf("cards.actual", &[("amount", &c.money(s.actual_income))])) }
+                p class="card-sub" { (tf("cards.received", &[
+                    ("amount", &c.money(s.actual_income)),
+                    ("n", &s.paychecks_received.to_string()),
+                    ("total", &s.paychecks_total.to_string()),
+                ])) }
             }
             div class="card" data-card="expenses" {
                 p class="card-label" { (t("cards.expenses")) }
                 p class="card-value" { (c.money(s.planned_expense)) }
-                p class="card-sub" { (tf("cards.spent", &[("amount", &c.money(s.actual_expense))])) }
+                div class=(if pct > 100 { "meter over" } else { "meter" }) role="meter" aria-valuemin="0" aria-valuemax="100"
+                    aria-valuenow=(pct.min(100)) aria-label=(t("cards.spent_meter")) {
+                    span style=(format!("width: {}%", pct.min(100))) {}
+                }
+                p class="card-sub" { (tf("cards.spent", &[("amount", &c.money(s.actual_expense)), ("pct", &pct.to_string())])) }
             }
             div class="card" data-card="remaining" {
                 p class="card-label" { (t("cards.remaining")) }
@@ -683,8 +745,13 @@ fn summary_cards(c: &Ctx, m: &Month) -> Markup {
             }
             div class="card" data-card="variance" {
                 p class="card-label" { (t("cards.variance")) }
-                p class="card-value" { (tf("cards.income_variance", &[("amount", &c.money(s.income_variance))])) }
-                p class="card-sub" { (tf("cards.expense_variance", &[("amount", &c.money(s.expense_variance))])) }
+                @if s.paychecks_received == 0 {
+                    p class="card-value muted" { "—" }
+                    p class="card-sub" { (t("cards.none_received")) }
+                } @else {
+                    p class=(if s.income_variance.is_negative() { "card-value neg" } else { "card-value" }) { (signed(c, s.income_variance)) }
+                    p class="card-sub" { (tf("cards.variance_sub", &[("n", &s.paychecks_received.to_string())])) }
+                }
             }
             div class=(match s.spending { SpendingStatus::Over => "card over", _ => "card" }) data-card="trend" {
                 p class="card-label" { (t("cards.trend")) }
@@ -694,6 +761,10 @@ fn summary_cards(c: &Ctx, m: &Month) -> Markup {
                         SpendingStatus::OnPlan => t("cards.on_plan"),
                         SpendingStatus::Under => t("cards.under"),
                     })
+                }
+                p class="card-sub" {
+                    @if s.expense_variance.is_positive() { (tf("cards.over_by", &[("amount", &c.money(s.expense_variance))])) }
+                    @else { (tf("cards.left_to_spend", &[("amount", &c.money(s.expense_variance.abs()))])) }
                 }
             }
         }
@@ -711,7 +782,7 @@ pub fn render_overview(c: &Ctx, m: &Month, archived: bool) -> Markup {
             form class="inline" data-on:submit__prevent=(post_form(&url)) {
                 (view_input(&view))
                 input type="hidden" name="direction" value=(dir);
-                button type="submit" class="icon-btn" aria-label=(label) { @if dir == "up" { "↑" } @else { "↓" } }
+                button type="submit" class="icon-btn" aria-label=(label) { (icon(dir)) }
             }
         }
     };
@@ -724,7 +795,16 @@ pub fn render_overview(c: &Ctx, m: &Month, archived: bool) -> Markup {
             (empty_state(&t("overview.no_income_title"), &t("overview.no_income_body"),
                 Some(html! { a class="btn primary" href=(format!("/months/{}/income", m.id)) { (t("income.add")) } })))
         }
-        section class="overview five" aria-label=(t("overview.categories")) {
+        @if structure {
+            form id="dnd-form" hidden data-on:submit__prevent=(post_form(&format!("/ui/months/{}/place", m.id))) {
+                (view_input(&view))
+                input type="hidden" name="kind";
+                input type="hidden" name="id";
+                input type="hidden" name="category_id";
+                input type="hidden" name="index";
+            }
+        }
+        section class=(if structure { "overview five dnd" } else { "overview five" }) aria-label=(t("overview.categories")) {
             div class="grid-head" aria-hidden="true" {
                 span { (t("col.name")) } span { (t("col.planned")) } span { (t("col.spent")) } span { (t("col.remaining")) } span {}
             }
@@ -745,25 +825,26 @@ pub fn render_overview(c: &Ctx, m: &Month, archived: bool) -> Markup {
                             (move_btn(format!("/ui/categories/{}/move", cat.id), "down", tf("category.move_down", &[("name", &cat.name)])))
                             form class="inline" data-on:submit__prevent=(post_form(&format!("/ui/categories/{}/delete", cat.id))) {
                                 (view_input(&view))
-                                button type="submit" class="icon-btn danger" aria-label=(tf("category.delete", &[("name", &cat.name)])) data-confirm=(tf("category.delete_confirm", &[("name", &cat.name)])) { "🗑" }
+                                button type="submit" class="icon-btn danger" aria-label=(tf("category.delete", &[("name", &cat.name)])) data-confirm=(tf("category.delete_confirm", &[("name", &cat.name)])) { (icon("trash")) }
                             }
                             }
                         }
                     }
-                    @if cat.lines.is_empty() {
+                    @if cat.lines.is_empty() && !structure {
                         p class="muted small" { (t("category.empty")) }
                     }
                     ul class="lines" {
                         @for l in &cat.lines {
-                            li class="line" data-line=(l.name) {
+                            li class="line" data-line=(l.name) data-line-id=[structure.then_some(&l.id)] data-cat-id=(cat.id) {
                                 div class="cell name" {
                                     @if structure {
+                                        span class="grip" title=(t("line.drag")) aria-hidden="true" { (icon("grip")) }
                                         form data-on:submit__prevent=(post_form(&format!("/ui/lines/{}/rename", l.id))) {
                                             (view_input(&view))
                                             input type="text" name="name" value=(l.name) required maxlength="100" aria-label=(tf("line.name_label", &[("name", &l.name)])) data-on:change="el.form.requestSubmit()";
                                         }
                                     } @else {
-                                        span { (l.name) }
+                                        span class="name-text" { (l.name) }
                                     }
                                     @if !l.funders.is_empty() {
                                         span class="split-note" {
@@ -780,7 +861,7 @@ pub fn render_overview(c: &Ctx, m: &Month, archived: bool) -> Markup {
                                     }
                                 }
                                 div class="cell num" data-col="planned" {
-                                    span class="col-label" { (t("col.planned")) }
+                                   
                                     @if alloc {
                                         form data-on:submit__prevent=(post_form_guarded(&format!("/ui/lines/{}/planned", l.id))) {
                                             (view_input(&view))
@@ -791,15 +872,15 @@ pub fn render_overview(c: &Ctx, m: &Month, archived: bool) -> Markup {
                                         span { (c.money(l.planned)) }
                                     }
                                 }
-                                span class="cell num" data-col="spent" { span class="col-label" { (t("col.spent")) } (c.money(l.spent)) }
-                                span class=(if l.remaining.is_negative() { "cell num neg" } else { "cell num" }) data-col="remaining" { span class="col-label" { (t("col.remaining")) } (c.money(l.remaining)) }
+                                span class="cell num" data-col="spent" { (c.money(l.spent)) }
+                                span class=(if l.remaining.is_negative() { "cell num neg" } else { "cell num" }) data-col="remaining" { (c.money(l.remaining)) }
                                 @if structure {
                                     div class="line-tools" {
                                         (move_btn(format!("/ui/lines/{}/move", l.id), "up", tf("line.move_up", &[("name", &l.name)])))
                                         (move_btn(format!("/ui/lines/{}/move", l.id), "down", tf("line.move_down", &[("name", &l.name)])))
                                         form class="inline" data-on:submit__prevent=(post_form(&format!("/ui/lines/{}/delete", l.id))) {
                                             (view_input(&view))
-                                            button type="submit" class="icon-btn danger" aria-label=(tf("line.delete", &[("name", &l.name)])) data-confirm=(tf("line.delete_confirm", &[("name", &l.name)])) { "🗑" }
+                                            button type="submit" class="icon-btn danger" aria-label=(tf("line.delete", &[("name", &l.name)])) data-confirm=(tf("line.delete_confirm", &[("name", &l.name)])) { (icon("trash")) }
                                         }
                                     }
                                 }
@@ -829,6 +910,7 @@ pub fn render_overview(c: &Ctx, m: &Month, archived: bool) -> Markup {
                         form class="add-line" data-on:submit__prevent=(post_form(&format!("/ui/months/{}/lines", m.id))) {
                             (view_input(&view))
                             input type="hidden" name="category_id" value=(cat.id);
+                            span class="add-icon" aria-hidden="true" { (icon("plus")) }
                             input type="text" name="name" required maxlength="100" placeholder=(t("line.add_placeholder")) aria-label=(tf("line.add_label", &[("category", &cat.name)]));
                             button type="submit" class="btn small" { (t("line.add")) }
                         }
@@ -952,7 +1034,7 @@ fn income_form(view: &View, url: &str, prefix: &str, line: Option<&IncomeLine>, 
         .unwrap_or_else(|| m.year_month.to_string());
     let is_new = line.is_none();
     let sig = format!("_{prefix}kind");
-    let signals = format!("{{{sig}: '{}'}}", if is_new { "biweekly" } else { kind });
+    let signals = format!("{{{sig}: '{}', _sugoff: false}}", if is_new { "biweekly" } else { kind });
     let id = |f: &str| format!("{prefix}-{f}");
     let suggest_url = format!("/months/{}/income/suggestions", m.id);
     html! {
@@ -962,11 +1044,11 @@ fn income_form(view: &View, url: &str, prefix: &str, line: Option<&IncomeLine>, 
                 label for=(id("name")) { (t("income.name")) }
                 input id=(id("name")) type="text" name="name" required maxlength="100" autocomplete="off"
                     value=[line.map(|l| l.name.clone())]
-                    "data-on:input__debounce.250ms"=[is_new.then(|| format!("@get('{suggest_url}?q=' + encodeURIComponent(el.value))"))]
+                    "data-on:input__debounce.250ms"=[is_new.then(|| format!("$_sugoff = false; @get('{suggest_url}?q=' + encodeURIComponent(el.value))"))]
                     data-on:focus=[is_new.then(|| format!("@get('{suggest_url}?q=' + encodeURIComponent(el.value))"))];
             }
             @if is_new {
-                div id="income-suggestions" {}
+                div id="income-suggestions" class="suggest-box" data-show="!$_sugoff" {}
             }
             div class="field" {
                 label for=(id("amount")) { (t("income.amount")) }
@@ -1035,14 +1117,15 @@ fn tx_fields(m: &Month, prefix: &str, t_: Option<&Transaction>, default_date: Na
     let id = |f: &str| format!("{prefix}-{f}");
     let is_income = t_.is_some_and(|x| x.amount.is_positive());
     html! {
+        fieldset class="segmented field" {
+            legend { (t("tx.kind")) }
+            label { input type="radio" name="direction" value="expense" checked[!is_income]; span { (t("tx.expense")) } }
+            label { input type="radio" name="direction" value="income" checked[is_income]; span { (t("tx.income")) } }
+        }
         div class="field" {
             label for=(id("date")) { (t("tx.date")) }
-            input id=(id("date")) type="date" name="date" required value=(t_.map_or(default_date, |x| x.date).to_string());
-        }
-        fieldset class="field kind" {
-            legend { (t("tx.kind")) }
-            label { input type="radio" name="direction" value="expense" checked[!is_income]; " " (t("tx.expense")) }
-            label { input type="radio" name="direction" value="income" checked[is_income]; " " (t("tx.income")) }
+            input id=(id("date")) type="date" name="date" required value=(t_.map_or(default_date, |x| x.date).to_string())
+                min=(m.year_month.to_string()) max=(recurrence::last_of_month(m.year_month).to_string());
         }
         div class="field" {
             label for=(id("amount")) { (t("tx.amount")) }
@@ -1060,12 +1143,12 @@ fn tx_fields(m: &Month, prefix: &str, t_: Option<&Transaction>, default_date: Na
         div class="field" {
             label for=(id("paycheck")) { (t("tx.paycheck")) }
             select id=(id("paycheck")) name="paycheck_id" aria-describedby=(id("paycheck-hint")) { (paycheck_options(m, t_.and_then(|x| x.paycheck_id.as_ref()))) }
-            p id=(id("paycheck-hint")) class="hint" { (t("tx.paycheck_hint")) }
         }
         div class="field wide" {
             label for=(id("notes")) { (t("tx.notes")) }
             input id=(id("notes")) type="text" name="notes" maxlength="2000" value=[t_.and_then(|x| x.notes.clone())];
         }
+        p id=(id("paycheck-hint")) class="hint wide" { (t("tx.paycheck_hint")) }
     }
 }
 
@@ -1087,7 +1170,9 @@ pub fn render_transactions(c: &Ctx, m: &Month, archived: bool) -> Markup {
                     data-on:submit__prevent=(post_form(&format!("/ui/months/{}/transactions", m.id))) {
                     (view_input(&view))
                     (tx_fields(m, "new-tx", None, default_date))
-                    button type="submit" class="btn primary" { (t("tx.save")) }
+                    div class="form-actions wide" {
+                        button type="submit" class="btn primary" { (t("tx.save")) }
+                    }
                 }
             }
         }
@@ -1096,46 +1181,50 @@ pub fn render_transactions(c: &Ctx, m: &Month, archived: bool) -> Markup {
             @if txs.is_empty() {
                 (empty_state(&t("tx.empty_title"), &t("tx.empty_body"), None))
             } @else {
-                div class="table-scroll" tabindex="0" role="region" aria-labelledby="tx-list-h" {
-                table class="table tx-table" id="tx-table" {
-                    thead { tr {
-                        th scope="col" { (t("col.date")) } th scope="col" { (t("tx.payee")) } th scope="col" { (t("tx.line")) }
-                        th scope="col" { (t("tx.paycheck")) } th scope="col" class="num" { (t("tx.amount")) } th scope="col" { span class="visually-hidden" { (t("common.actions")) } }
-                    } }
-                    tbody {
-                        @for x in &txs {
-                            @let base = serde_json::json!({
-                                "date": x.date, "amount": x.amount.get(), "payee": x.payee, "notes": x.notes,
-                                "expense_line_id": x.expense_line_id, "paycheck_id": x.paycheck_id,
-                            }).to_string();
-                            tr data-tx=(x.id) {
-                                td { (short_date(x.date)) }
-                                td { (x.payee.clone().unwrap_or_default()) @if let Some(n) = &x.notes { br; span class="muted small" { (n) } } }
-                                td { (line_name(&x.expense_line_id).unwrap_or_else(|| t("tx.uncategorized"))) }
-                                td { (x.paycheck_id.as_ref().and_then(|p| m.paycheck(p)).map(|p| short_date(p.date)).unwrap_or_else(|| "—".into())) }
-                                td class=(if x.amount.is_negative() { "num" } else { "num pos" }) { (c.money(x.amount)) }
-                                td {
-                                    @if !archived {
-                                        details class="row-edit" {
-                                            summary { (t("common.edit")) span class="visually-hidden" { " " (x.payee.clone().unwrap_or_default()) } }
-                                            form class="tx-form" data-offline="update_transaction" data-month=(m.id) data-tx=(x.id) data-base=(base)
-                                                data-on:submit__prevent=(post_form(&format!("/ui/transactions/{}", x.id))) {
-                                                (view_input(&view))
-                                                (tx_fields(m, &format!("tx-{}", x.id), Some(x), default_date))
-                                                button type="submit" class="btn small primary" { (t("common.save")) }
-                                            }
-                                            form data-offline="delete_transaction" data-month=(m.id) data-tx=(x.id) data-base=(base)
-                                                data-on:submit__prevent=(post_form(&format!("/ui/transactions/{}/delete", x.id))) {
-                                                (view_input(&view))
-                                                button type="submit" class="btn small danger" data-confirm=(t("tx.delete_confirm")) { (t("common.delete")) }
-                                            }
+                ul class="tx-list card" id="tx-list" {
+                    @for x in &txs {
+                        @let base = serde_json::json!({
+                            "date": x.date, "amount": x.amount.get(), "payee": x.payee, "notes": x.notes,
+                            "expense_line_id": x.expense_line_id, "paycheck_id": x.paycheck_id,
+                        }).to_string();
+                        @let payee = x.payee.clone().unwrap_or_else(|| t("tx.no_payee"));
+                        @let dlg = format!("edit-tx-{}", x.id);
+                        li class="tx" data-tx=(x.id) {
+                            span class="tx-date" { (short_date(x.date)) }
+                            div class="tx-main" {
+                                span class="tx-payee" { (payee) }
+                                span class="tx-meta" {
+                                    (line_name(&x.expense_line_id).unwrap_or_else(|| t("tx.uncategorized")))
+                                    @if let Some(p) = x.paycheck_id.as_ref().and_then(|p| m.paycheck(p)) {
+                                        " · " (tf("tx.from_paycheck", &[("date", &short_date(p.date))]))
+                                    }
+                                    @if let Some(n) = &x.notes { " · " (n) }
+                                }
+                            }
+                            span class=(if x.amount.is_negative() { "tx-amt num" } else { "tx-amt num pos" }) { (c.money(x.amount)) }
+                            @if !archived {
+                                button type="button" class="icon-btn" aria-label=(tf("tx.edit_label", &[("payee", &payee), ("date", &short_date(x.date))]))
+                                    data-on:click=(format!("document.getElementById('{dlg}').showModal()")) { (icon("edit")) }
+                                dialog id=(dlg) aria-labelledby=(format!("{dlg}-h")) {
+                                    h2 id=(format!("{dlg}-h")) class="h3" { (t("tx.edit_title")) }
+                                    form class="tx-form" data-offline="update_transaction" data-month=(m.id) data-tx=(x.id) data-base=(base.clone())
+                                        data-on:submit__prevent=(post_form(&format!("/ui/transactions/{}", x.id))) {
+                                        (view_input(&view))
+                                        (tx_fields(m, &format!("tx-{}", x.id), Some(x), default_date))
+                                        div class="form-actions wide" {
+                                            button type="button" class="btn" data-close-dialog { (t("common.cancel")) }
+                                            button type="submit" class="btn primary" { (t("common.save")) }
                                         }
+                                    }
+                                    form class="dialog-danger" data-offline="delete_transaction" data-month=(m.id) data-tx=(x.id) data-base=(base)
+                                        data-on:submit__prevent=(post_form(&format!("/ui/transactions/{}/delete", x.id))) {
+                                        (view_input(&view))
+                                        button type="submit" class="btn small danger" data-confirm=(t("tx.delete_confirm")) { (icon("trash")) " " (t("tx.delete")) }
                                     }
                                 }
                             }
                         }
                     }
-                }
                 }
             }
         }
@@ -1151,7 +1240,7 @@ fn figures_table(c: &Ctx, id: &str, caption: &str, cur_label: &str, cur: &Figure
     let cat = |f: &Figures, n: &str| f.category(n).cloned().unwrap_or_default();
     html! {
         table class="table report" id=(id) {
-            caption { (caption) }
+            caption class="visually-hidden" { (caption) }
             thead {
                 tr {
                     th scope="col" { (t("report.row")) }
@@ -1180,7 +1269,11 @@ fn figures_table(c: &Ctx, id: &str, caption: &str, cur_label: &str, cur: &Figure
                         @else { td class="num" { "—" } td class="num" { "—" } }
                     }
                 }
-                @for n in names {
+                @for n in names.iter().filter(|n| {
+                    let a = cat(cur, n);
+                    let b = other.map(|o| cat(o, n)).unwrap_or_default();
+                    !(a.planned.is_zero() && a.actual.is_zero() && b.planned.is_zero() && b.actual.is_zero())
+                }) {
                     @let a = cat(cur, n);
                     tr data-row=(format!("cat:{n}")) class="cat-row" {
                         th scope="row" { (n) }
@@ -1217,6 +1310,38 @@ fn short_month(d: NaiveDate) -> String {
     d.format("%b %Y").to_string()
 }
 
+/// Planned vs spent per category for the selected month (pure CSS bars).
+fn category_chart(c: &Ctx, f: &Figures) -> Markup {
+    let rows: Vec<&report::CategoryFigures> = f.categories.iter().filter(|x| x.planned.is_positive() || x.actual.is_positive()).collect();
+    let max = rows.iter().map(|x| x.planned.max(x.actual).get()).max().unwrap_or(0).max(1);
+    let w = |v: Cents| (v.get().saturating_mul(1000) / max) as f64 / 10.0;
+    html! {
+        section class="report-section card chart" aria-labelledby="chart-h" {
+            h2 id="chart-h" class="h3" { (t("report.chart")) }
+            @if rows.is_empty() {
+                p class="muted" { (t("report.chart_empty")) }
+            } @else {
+                p class="chart-legend" aria-hidden="true" {
+                    span class="swatch planned" {} (t("report.planned")) " "
+                    span class="swatch actual" {} (t("report.spent"))
+                }
+                ul class="bars" {
+                    @for r in &rows {
+                        li class=(if r.actual > r.planned { "bar-row over" } else { "bar-row" }) data-bar=(r.name) {
+                            span class="bar-name" { (r.name) }
+                            span class="bar-track" aria-hidden="true" {
+                                span class="bar planned" style=(format!("width: {:.1}%", w(r.planned))) {}
+                                span class="bar actual" style=(format!("width: {:.1}%", w(r.actual))) {}
+                            }
+                            span class="bar-vals" { (tf("report.bar_vals", &[("actual", &c.money(r.actual)), ("planned", &c.money(r.planned))])) }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 pub fn render_reports(c: &Ctx, m: &Month, all: &[Month]) -> Markup {
     let mom = report::month_over_month(m, all);
     let yoy = report::year_over_year(m, all);
@@ -1225,6 +1350,7 @@ pub fn render_reports(c: &Ctx, m: &Month, all: &[Month]) -> Markup {
     html! {
         h1 { (tf("report.title", &[("month", &month_label(m.year_month))])) }
         (summary_cards(c, m))
+        (category_chart(c, &report::month_figures(m)))
         (comparison(c, "mom", &t("report.mom"), &mom))
         section class="report-section" aria-labelledby="ytd-h" {
             h2 id="ytd-h" class="h3" { (t("report.ytd")) }
@@ -1349,6 +1475,24 @@ pub fn render_months(c: &Ctx, metas: &[MonthMeta], months: &[Month], archived: b
 // Settings (spec §13.5, §13.9)
 // ----------------------------------------------------------------------
 
+/// IANA zones grouped by region (e.g. "America" → ["America/Chicago", …]).
+fn timezone_groups() -> Vec<(&'static str, Vec<&'static str>)> {
+    let mut groups: Vec<(&'static str, Vec<&'static str>)> = Vec::new();
+    for tz in chrono_tz::TZ_VARIANTS.iter() {
+        let name = tz.name();
+        let Some((region, _)) = name.split_once('/') else { continue };
+        if matches!(region, "Etc" | "SystemV" | "US" | "Canada" | "Brazil" | "Chile" | "Mexico") {
+            continue;
+        }
+        match groups.iter_mut().find(|(r, _)| *r == region) {
+            Some((_, v)) => v.push(name),
+            None => groups.push((region, vec![name])),
+        }
+    }
+    groups.push(("UTC", vec!["UTC"]));
+    groups
+}
+
 pub fn render_settings(c: &Ctx) -> Markup {
     let view = View::Settings;
     html! {
@@ -1380,10 +1524,12 @@ pub fn render_settings(c: &Ctx) -> Markup {
                 }
                 div class="field" {
                     label for="rate" { (tf("settings.rate", &[("from", &c.user.currency)])) }
-                    input id="rate" type="text" inputmode="decimal" name="rate" required placeholder="0.92" aria-describedby="rate-hint";
+                    div class="inline-field" {
+                        input id="rate" type="text" inputmode="decimal" name="rate" required placeholder="0.92" aria-describedby="rate-hint";
+                        button type="submit" class="btn primary" data-confirm=(t("settings.currency_confirm")) { (t("settings.convert")) }
+                    }
                     p id="rate-hint" class="hint" { (t("settings.rate_hint")) }
                 }
-                button type="submit" class="btn primary" data-confirm=(t("settings.currency_confirm")) { (t("settings.convert")) }
             }
         }
         section class="card" aria-labelledby="tz-h" {
@@ -1392,12 +1538,21 @@ pub fn render_settings(c: &Ctx) -> Markup {
             form data-on:submit__prevent=(post_form("/ui/settings/timezone")) {
                 (view_input(&view))
                 label for="timezone" { (t("settings.timezone")) }
-                select id="timezone" name="timezone" {
-                    @for tz in chrono_tz::TZ_VARIANTS.iter() {
-                        option value=(tz.name()) selected[tz.name() == c.user.timezone] { (tz.name()) }
+                div class="inline-field" {
+                    select id="timezone" name="timezone" {
+                        @if !timezone_groups().iter().any(|(_, z)| z.contains(&c.user.timezone.as_str())) {
+                            option value=(c.user.timezone) selected { (c.user.timezone) }
+                        }
+                        @for (region, zones) in &timezone_groups() {
+                            optgroup label=(region) {
+                                @for z in zones {
+                                    option value=(z) selected[*z == c.user.timezone] { (z.split_once('/').map_or(*z, |(_, city)| city).replace('_', " ").replace('/', " / ")) }
+                                }
+                            }
+                        }
                     }
+                    button type="submit" class="btn" { (t("common.save")) }
                 }
-                button type="submit" class="btn" { (t("common.save")) }
             }
         }
     }

@@ -95,14 +95,135 @@
   window.pz = { cents: cents, fmt: fmt, guard: guard, t: t, fillIncome: fillIncome, toast: toast, resetInline: resetInline };
 
   // ------------------------------------------------------------------
-  // Confirmations: buttons with data-confirm must be confirmed first.
+  // Confirmations: buttons with data-confirm open a styled, accessible dialog.
+  function confirmDialog() {
+    var d = byId("pz-confirm");
+    if (d) return d;
+    d = document.createElement("dialog");
+    d.id = "pz-confirm";
+    d.setAttribute("aria-labelledby", "pz-confirm-msg");
+    d.innerHTML = '<p id="pz-confirm-msg" class="confirm-msg"></p><div class="dialog-actions">' +
+      '<button type="button" class="btn" data-act="cancel"></button><button type="button" class="btn danger-solid" data-act="ok"></button></div>';
+    document.body.appendChild(d);
+    return d;
+  }
   document.addEventListener("submit", function (e) {
-    var btn = e.submitter;
-    if (btn && btn.dataset && btn.dataset.confirm && !window.confirm(btn.dataset.confirm)) {
-      e.preventDefault();
-      e.stopImmediatePropagation();
-    }
+    var btn = e.submitter, form = e.target;
+    if (!btn || !btn.dataset || !btn.dataset.confirm) return;
+    if (form.dataset.confirmed === "1") { delete form.dataset.confirmed; return; }
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    var d = confirmDialog();
+    d.querySelector("#pz-confirm-msg").textContent = btn.dataset.confirm;
+    var ok = d.querySelector("[data-act=ok]"), cancel = d.querySelector("[data-act=cancel]");
+    ok.textContent = (btn.textContent || "").trim() || t("confirm");
+    cancel.textContent = t("cancel");
+    ok.onclick = function () { d.close(); form.dataset.confirmed = "1"; form.requestSubmit(btn); };
+    cancel.onclick = function () { d.close(); btn.focus(); };
+    d.showModal();
+    cancel.focus();
   }, true);
+
+  // Saving feedback: the acting form is marked busy; a slim progress bar
+  // appears when a request takes longer than a blink.
+  var inflight = 0, barTimer = null;
+  function bar(on) {
+    var b = byId("pz-progress");
+    if (!b) { b = document.createElement("div"); b.id = "pz-progress"; b.setAttribute("aria-hidden", "true"); document.body.appendChild(b); }
+    b.classList.toggle("on", on);
+  }
+  document.addEventListener("datastar-fetch", function (e) {
+    var d = e.detail || {}, el = d.el;
+    if (!el || el.id === "content") return;
+    var form = el.closest ? (el.closest("form") || el) : el;
+    if (d.type === "started") {
+      // Close a dialog before the server re-renders the page: a morph that
+      // drops `open` from a modal dialog would leave the page inert.
+      var dlg = form.closest && form.closest("dialog");
+      if (dlg && dlg.open) dlg.close();
+      form.classList.add("is-busy"); form.setAttribute("aria-busy", "true");
+      inflight++;
+      if (!barTimer) barTimer = setTimeout(function () { if (inflight > 0) bar(true); }, 150);
+    } else if (d.type === "finished" || d.type === "error" || d.type === "retries-failed") {
+      form.classList.remove("is-busy"); form.removeAttribute("aria-busy");
+      inflight = Math.max(0, inflight - 1);
+      if (inflight === 0) { clearTimeout(barTimer); barTimer = null; bar(false); }
+    }
+  });
+
+  // Drag and drop (overview): reorder lines, move lines between categories,
+  // reorder categories. Keyboard users keep the move up/down buttons.
+  var drag = null;
+  function dndForm() { return byId("dnd-form"); }
+  function place(kind, id, category, index) {
+    var f = dndForm(); if (!f) return;
+    f.elements.kind.value = kind; f.elements.id.value = id;
+    f.elements.category_id.value = category || ""; f.elements.index.value = String(index);
+    f.requestSubmit();
+  }
+  document.addEventListener("mousedown", function (e) {
+    var g = e.target instanceof Element && e.target.closest(".dnd .grip");
+    if (!g) return;
+    var host = g.closest("li.line") || g.closest("details.category");
+    if (host) host.setAttribute("draggable", "true");
+  });
+  document.addEventListener("dragstart", function (e) {
+    var el = e.target;
+    if (!(el instanceof Element) || !el.closest(".dnd")) return;
+    if (el.matches("li.line[data-line-id]")) drag = { kind: "line", el: el, id: el.dataset.lineId };
+    else if (el.matches("details.category[data-cat-id]")) drag = { kind: "category", el: el, id: el.dataset.catId };
+    else return;
+    el.classList.add("dragging");
+    e.dataTransfer.effectAllowed = "move";
+    e.dataTransfer.setData("text/plain", drag.id);
+  });
+  function dropTarget(e) {
+    if (!drag || !(e.target instanceof Element)) return null;
+    if (drag.kind === "line") return e.target.closest(".dnd li.line[data-line-id]") || e.target.closest(".dnd details.category[data-cat-id]");
+    return e.target.closest(".dnd details.category[data-cat-id]");
+  }
+  function clearMarks() { document.querySelectorAll(".drop-before,.drop-after,.drop-into").forEach(function (x) { x.classList.remove("drop-before", "drop-after", "drop-into"); }); }
+  document.addEventListener("dragover", function (e) {
+    var tgt = dropTarget(e);
+    if (!tgt || tgt === drag.el) return;
+    e.preventDefault();
+    clearMarks();
+    var r = tgt.getBoundingClientRect();
+    if (drag.kind === "line" && tgt.matches("details.category")) tgt.classList.add("drop-into");
+    else tgt.classList.add(e.clientY < r.top + r.height / 2 ? "drop-before" : "drop-after");
+  });
+  document.addEventListener("drop", function (e) {
+    var tgt = dropTarget(e);
+    if (!tgt || tgt === drag.el) return;
+    e.preventDefault();
+    var after = tgt.classList.contains("drop-after");
+    clearMarks();
+    if (drag.kind === "line") {
+      if (tgt.matches("details.category")) { place("line", drag.id, tgt.dataset.catId, 0); return; }
+      var cat = tgt.dataset.catId;
+      var lines = Array.prototype.slice.call(tgt.parentElement.querySelectorAll("li.line[data-line-id]")).filter(function (x) { return x !== drag.el; });
+      place("line", drag.id, cat, lines.indexOf(tgt) + (after ? 1 : 0));
+    } else {
+      var cats = Array.prototype.slice.call(document.querySelectorAll(".dnd details.category[data-cat-id]")).filter(function (x) { return x !== drag.el; });
+      place("category", drag.id, "", cats.indexOf(tgt) + (after ? 1 : 0));
+    }
+  });
+  document.addEventListener("dragend", function () {
+    clearMarks();
+    if (drag) { drag.el.classList.remove("dragging"); drag.el.removeAttribute("draggable"); }
+    drag = null;
+  });
+  // Category grips are added client-side (drag is a mouse enhancement).
+  function addCategoryGrips() {
+    document.querySelectorAll(".dnd details.category > summary .cat-name").forEach(function (s) {
+      if (s.querySelector(".grip")) return;
+      var g = document.createElement("span");
+      g.className = "grip"; g.setAttribute("aria-hidden", "true"); g.title = t("drag");
+      g.innerHTML = '<svg class="icon" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><path d="M9 6h.01 M15 6h.01 M9 12h.01 M15 12h.01 M9 18h.01 M15 18h.01"/></svg>';
+      s.prepend(g);
+    });
+  }
+  new MutationObserver(addCategoryGrips).observe(document.documentElement, { childList: true, subtree: true });
 
   // Category collapse state, remembered for the session (spec §14.7).
   document.addEventListener("toggle", function (e) {
@@ -276,19 +397,23 @@
 
   function optimistic(form, op) {
     var badge = '<span class="badge">' + escapeHtml(t("pending")) + "</span>";
+    var dlg = form.closest("dialog"); if (dlg && dlg.open) dlg.close();
     if (op.kind === "create_transaction") {
-      var table = byId("tx-table");
-      var row = document.createElement("tr");
-      row.className = "pending";
-      row.innerHTML = "<td>" + escapeHtml(op.tx.date) + "</td><td>" + escapeHtml(op.tx.payee || "") + " " + badge +
-        "</td><td></td><td></td><td class=\"num\">" + escapeHtml(fmt(op.tx.amount)) + "</td><td></td>";
-      if (table) table.querySelector("tbody").prepend(row);
-      else form.insertAdjacentHTML("afterend", '<table class="table" id="tx-table"><tbody></tbody></table>'), byId("tx-table").querySelector("tbody").append(row);
+      var list = byId("tx-list");
+      if (!list) {
+        list = document.createElement("ul"); list.id = "tx-list"; list.className = "tx-list card";
+        var empty = document.querySelector("section[aria-labelledby=tx-list-h] .empty");
+        if (empty) empty.replaceWith(list); else form.closest("section").after(list);
+      }
+      var li = document.createElement("li");
+      li.className = "tx pending";
+      li.innerHTML = '<span class="tx-date">' + escapeHtml(op.tx.date) + '</span><div class="tx-main"><span class="tx-payee">' +
+        escapeHtml(op.tx.payee || "") + " " + badge + '</span></div><span class="tx-amt num">' + escapeHtml(fmt(op.tx.amount)) + "</span>";
+      list.prepend(li);
       form.reset();
     } else if (op.kind === "update_transaction" || op.kind === "delete_transaction") {
-      var tr = form.closest("tr");
-      if (tr) { tr.classList.add("pending"); tr.cells[1].insertAdjacentHTML("beforeend", " " + badge); }
-      var det = form.closest("details"); if (det) det.open = false;
+      var row = form.closest("li.tx");
+      if (row) { row.classList.add("pending"); var p = row.querySelector(".tx-payee"); if (p) p.insertAdjacentHTML("beforeend", " " + badge); }
     } else if (op.kind === "set_actual") {
       form.insertAdjacentHTML("beforeend", " " + badge);
     }

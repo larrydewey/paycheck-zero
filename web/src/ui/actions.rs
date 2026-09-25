@@ -381,12 +381,12 @@ pub struct SuggestQuery {
 pub async fn income_suggestions(State(st): State<Shared>, Extension(user): Extension<AuthUser>, Path(id): Path<Id>, Query(q): Query<SuggestQuery>) -> Sse {
     let user = user.0;
     let (Ok(loaded), Ok(history)) = (st.load(&user, &id).await, st.income_history(&user).await) else {
-        return Sse::new().patch(html! { div id="income-suggestions" {} });
+        return Sse::new().patch(html! { div id="income-suggestions" data-show="!$_sugoff" {} });
     };
     let list = suggest_income(&q.q, &history, loaded.month.year_month, 4);
     let js_str = |s: &str| serde_json::to_string(s).unwrap_or_else(|_| "\"\"".into());
     Sse::new().patch(html! {
-        div id="income-suggestions" class="suggest-box" {
+        div id="income-suggestions" class="suggest-box" data-show="!$_sugoff" {
             @if !list.is_empty() {
                 p class="hint" { (t("income.suggest_intro")) }
                 ul class="suggest-list" {
@@ -399,7 +399,7 @@ pub async fn income_suggestions(State(st): State<Shared>, Extension(user): Exten
                             Schedule::Recurring { recurrence_rule: Recurrence::Monthly { days } } => ("monthly", String::new(), String::new(), days.iter().map(ToString::to_string).collect::<Vec<_>>().join(", ")),
                         };
                         @let js = format!(
-                            "pz.fillIncome({{name: {}, amount: {}, kind: {}, date: {}, anchor: {}, days: {}}}); $_newkind = {}; el.closest('#income-suggestions').innerHTML = ''",
+                            "pz.fillIncome({{name: {}, amount: {}, kind: {}, date: {}, anchor: {}, days: {}}}); $_newkind = {}; $_sugoff = true",
                             js_str(&s.name), js_str(&crate::money::plain(s.planned_amount)), js_str(kind), js_str(&date), js_str(&anchor), js_str(&days), js_str(kind)
                         );
                         li {
@@ -410,7 +410,7 @@ pub async fn income_suggestions(State(st): State<Shared>, Extension(user): Exten
                         }
                     }
                 }
-                button type="button" class="link small" data-on:click="el.closest('#income-suggestions').innerHTML = ''" { (t("income.suggest_dismiss")) }
+                button type="button" class="link small" data-on:click="$_sugoff = true" { (t("income.suggest_dismiss")) }
             }
         }
     })
@@ -559,6 +559,19 @@ pub async fn delete_category(State(st): State<Shared>, Extension(user): Extensio
     month_action(&st, &user.0, &headers, view, mid, |m| m.delete_category(&id), |_, m| {
         if m.is_zero() { vec![] } else { vec![toast(ToastKind::Warning, &t("impact.deleted_funding"), None)] }
     })
+    .await
+}
+
+/// Drag-and-drop placement of a line or category (overview).
+pub async fn place(State(st): State<Shared>, Extension(user): Extension<AuthUser>, headers: HeaderMap, Path(id): Path<Id>, Form(f): F) -> Sse {
+    let view = view_of(&f, View::Overview { month: id.clone() });
+    let target = Id::new(field(&f, "id"));
+    let category = Id::new(field(&f, "category_id"));
+    let index: usize = field(&f, "index").parse().unwrap_or(0);
+    let kind = field(&f, "kind").to_string();
+    month_action(&st, &user.0, &headers, view, Ok(id), move |m| {
+        if kind == "category" { m.place_category(&target, index) } else { m.place_line(&target, &category, index) }
+    }, no_toasts)
     .await
 }
 

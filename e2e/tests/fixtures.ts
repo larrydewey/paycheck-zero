@@ -147,8 +147,12 @@ export const pz = {
   toast(page: Page) {
     return page.locator("#toasts [data-toast]").last();
   },
+  /** Auto-confirms the app's confirmation dialog (and any native one). */
   acceptDialogs(page: Page) {
     page.on("dialog", (d) => d.accept());
+    void page.addLocatorHandler(page.locator("#pz-confirm[open]"), async () => {
+      await page.locator("#pz-confirm [data-act=ok]").click();
+    });
   },
   async apiToken(server: { url: string }) {
     const r = await fetch(server.url + "/api/v1/auth/login", {

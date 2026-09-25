@@ -120,6 +120,7 @@ test.describe("income lines", () => {
     await card.getByText("Edit or add a paycheck").click();
     await card.getByRole("button", { name: "Delete income line" }).click();
     await expect(page.getByRole("heading", { name: "No income yet" })).toBeVisible();
-    await expect(page.locator("#zero-status")).toContainText("✓");
+    await expect(page.locator("#zero-status")).toContainText("No income yet");
+    await expect(page.getByRole("button", { name: "Lock month" })).toHaveCount(0);
   });
 });

@@ -5,7 +5,7 @@ test.describe("transactions", () => {
     const s = await seed("basic");
     await login();
     await pz.transactions(page, s, "2026-09");
-    await expect(page.locator("#tx-table tbody tr")).toHaveCount(3);
+    await expect(page.locator("#tx-list li.tx")).toHaveCount(3);
   });
 
   test("an expense linked to a line and tagged to a paycheck updates Spent and Safe to Spend", async ({ page, seed, login }) => {
@@ -20,7 +20,8 @@ test.describe("transactions", () => {
     await form.getByLabel("Paycheck").selectOption({ label: "Sep 4 · Acme Payroll" });
     await form.getByRole("button", { name: "Save transaction" }).click();
     await expect(pz.toast(page)).toContainText("Transaction saved.");
-    await expect(page.locator("#tx-table")).toContainText("Farmers market");
+    await expect(page.locator("#tx-list")).toContainText("Farmers market");
+    await expect(page.locator("#tx-list li", { hasText: "Farmers market" })).toContainText("Groceries · Sep 4 paycheck");
     await pz.paycheck(page, s, 0);
     await expect(pz.sts(page)).toHaveText("$282.00");
     await expect(pz.line(page, "Groceries").locator("[data-col=spent]")).toContainText("$106.00");
@@ -45,15 +46,16 @@ test.describe("transactions", () => {
     await login();
     pz.acceptDialogs(page);
     await pz.transactions(page, s);
-    const row = page.locator("#tx-table tr", { hasText: "Shell" });
-    await row.getByText("Edit").click();
-    await row.getByLabel("Amount").fill("55");
-    await row.getByRole("button", { name: "Save" }).click();
-    await expect(page.locator("#tx-table tr", { hasText: "Shell" })).toContainText("-$55.00");
-    const row2 = page.locator("#tx-table tr", { hasText: "Coffee" });
-    await row2.getByText("Edit").click();
-    await row2.getByRole("button", { name: "Delete" }).click();
-    await expect(page.locator("#tx-table tr", { hasText: "Coffee" })).toHaveCount(0);
+    await page.getByRole("button", { name: "Edit Shell on Sep 6" }).click();
+    const dialog = page.getByRole("dialog", { name: "Edit transaction" });
+    await dialog.getByLabel("Amount").fill("55");
+    await dialog.getByRole("radio", { name: "Income" }).check();
+    await dialog.getByRole("button", { name: "Save" }).click();
+    await expect(page.locator("#tx-list li", { hasText: "Shell" })).toContainText("$55.00");
+    await expect(page.locator("#tx-list li", { hasText: "Shell" }).locator(".tx-amt")).toHaveClass(/pos/);
+    await page.getByRole("button", { name: "Edit Coffee on Sep 7" }).click();
+    await page.getByRole("dialog", { name: "Edit transaction" }).getByRole("button", { name: "Delete transaction" }).click();
+    await expect(page.locator("#tx-list li", { hasText: "Coffee" })).toHaveCount(0);
   });
 
   test("transactions still work in a locked month", async ({ page, seed, login }) => {

@@ -529,7 +529,9 @@ fn reports_derive_from_plan_and_transactions() {
     assert_eq!(ytd.figures.category("Housing").unwrap().planned, c(200_000));
 
     let cards = summary_cards(&sep.m);
-    assert_eq!(cards.income_variance, c(101_500 - 200_000));
+    // Only the received paycheck counts: +1,000 over plan, plus a $5 unlinked deposit.
+    assert_eq!(cards.income_variance, c(1_000 + 500));
+    assert_eq!((cards.paychecks_received, cards.paychecks_total), (1, 2));
     assert_eq!(cards.spending, SpendingStatus::Under);
     assert_eq!(cards.remaining_to_zero, c(0));
 }
@@ -558,4 +560,22 @@ fn invariant_check_catches_corruption() {
     let dup = f.m.allocations[0].clone();
     f.m.allocations.push(Allocation { id: Id::generate(), ..dup });
     assert!(f.m.check_invariants().is_err());
+}
+
+#[test]
+fn drag_and_drop_placement() {
+    let mut f = fixture();
+    let util = f.m.add_expense_line(&f.housing, "Utilities").unwrap();
+    f.m.place_line(&util, &f.housing, 0).unwrap();
+    let names: Vec<String> = f.m.lines_of(&f.housing).iter().map(|l| l.name.clone()).collect();
+    assert_eq!(names, vec!["Utilities", "Rent"]);
+    // Across categories.
+    let food_cat = f.m.expense_line(&f.food).unwrap().category_id.clone();
+    f.m.place_line(&f.rent, &food_cat, 0).unwrap();
+    let names: Vec<String> = f.m.lines_of(&food_cat).iter().map(|l| l.name.clone()).collect();
+    assert_eq!(names, vec!["Rent", "Groceries"]);
+    f.m.place_category(&f.housing, 0).unwrap();
+    assert_eq!(f.m.categories_sorted()[0].id, f.housing);
+    f.m.place_category(&f.housing, 99).unwrap();
+    assert_eq!(f.m.categories_sorted().last().unwrap().id, f.housing);
 }

@@ -84,7 +84,7 @@ test.describe("paycheck view (primary)", () => {
     await page.getByLabel("Expense line").selectOption({ label: "Emergency Fund" });
     await page.getByLabel("Amount", { exact: true }).fill("400");
     await page.getByRole("button", { name: "Assign" }).click();
-    await expect(page.locator("#unassigned-nudge")).toHaveText("✓ This paycheck is fully assigned.");
+    await expect(page.locator("#unassigned-nudge")).toContainText("This paycheck is fully assigned.");
     await expect(page.locator(".chip.active")).toContainText("Fully assigned");
   });
 
@@ -135,6 +135,26 @@ test.describe("paycheck view (primary)", () => {
     await waitForContent(page);
     await expect(page.locator(".paycheck-strip .chip:not(.add)")).toHaveCount(1);
     await expect(page.locator("#toasts")).toContainText("Removed paycheck(s): Sep 4.");
+  });
+
+  test("destructive actions ask first and can be cancelled", async ({ page }) => {
+    await page.getByText("Paycheck details").click();
+    await page.getByRole("button", { name: "Delete paycheck" }).click();
+    const dialog = page.getByRole("dialog");
+    await expect(dialog).toContainText("Delete this paycheck? All money it funds will be un-assigned.");
+    await expect(dialog.getByRole("button", { name: "Cancel" })).toBeFocused();
+    await dialog.getByRole("button", { name: "Cancel" }).click();
+    await expect(dialog).toBeHidden();
+    await expect(page.locator(".paycheck-strip .chip:not(.add)")).toHaveCount(2);
+  });
+
+  test("the assign form is replaced by guidance once a paycheck is fully assigned", async ({ page }) => {
+    await page.getByRole("button", { name: "Use all $400.00" }).click();
+    await expect(page.getByLabel("Amount", { exact: true })).toHaveValue("400.00");
+    await page.getByLabel("Expense line").selectOption({ label: "Emergency Fund" });
+    await page.getByRole("button", { name: "Assign" }).click();
+    await expect(page.getByRole("heading", { name: "Assign money from this paycheck" })).toHaveCount(0);
+    await expect(page.locator("#unassigned-nudge")).toContainText("To fund something else, lower another line first.");
   });
 
   test("navigating between paychecks", async ({ page }) => {

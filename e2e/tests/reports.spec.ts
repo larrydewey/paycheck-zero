@@ -11,12 +11,18 @@ test.describe("reports (seeded history)", () => {
 
   test("quick-win summary cards", async ({ page }) => {
     await expect(page.locator('[data-card="income"]')).toContainText("$4,000.00");
-    await expect(page.locator('[data-card="income"]')).toContainText("Actual $0.00");
-    await expect(page.locator('[data-card="expenses"]')).toContainText("Spent $137.20");
+    await expect(page.locator('[data-card="income"]')).toContainText("Received $0.00 · 0 of 2 paychecks");
+    await expect(page.locator('[data-card="expenses"]')).toContainText("Spent $137.20 (3%)");
     await expect(page.locator('[data-card="remaining"]')).toContainText("$0.00");
-    await expect(page.locator('[data-card="variance"]')).toContainText("Income -$4,000.00");
-    await expect(page.locator('[data-card="variance"]')).toContainText("Spending -$3,862.80");
+    await expect(page.locator('[data-card="variance"]')).toContainText("No paychecks received yet");
     await expect(page.locator('[data-card="trend"]')).toContainText("Under plan");
+    await expect(page.locator('[data-card="trend"]')).toContainText("$3,862.80 left to spend");
+  });
+
+  test("planned vs spent chart", async ({ page }) => {
+    await expect(page.locator('[data-bar="Food"]')).toContainText("$85.20 of $600.00");
+    await expect(page.locator('[data-bar="Uncategorized"]')).toHaveClass(/over/);
+    await expect(page.locator('[data-bar="Giving"]')).toHaveCount(0);
   });
 
   test("month over month compares with August", async ({ page }) => {
@@ -37,6 +43,7 @@ test.describe("reports (seeded history)", () => {
     await expect(row(page, "yoy", "income")).toContainText("$3,000.00");
     await expect(row(page, "yoy", "cat:Food")).toContainText("$450.00");
     await expect(row(page, "yoy", "cat:Other")).toContainText("$1,500.00");
+    await expect(row(page, "yoy", "cat:Giving")).toHaveCount(0);
   });
 });
 
@@ -44,7 +51,7 @@ test("reports for a future month show plan and zero actuals", async ({ page, see
   const s = await seed("basic", { today: "2026-01-15" });
   await login();
   await pz.reports(page, s);
-  await expect(page.locator('[data-card="income"]')).toContainText("Actual $0.00");
+  await expect(page.locator('[data-card="income"]')).toContainText("Received $0.00");
   await expect(page.getByText("No budget exists for August 2026")).toBeVisible();
   await expect(page.getByText("No budget exists for September 2025")).toBeVisible();
 });

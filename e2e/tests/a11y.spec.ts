@@ -50,6 +50,19 @@ test.describe("accessibility (WCAG 2.1 AA via axe)", () => {
     await audit(page);
   });
 
+  test("dark mode", async ({ page, seed, login }) => {
+    const s = await seed("basic");
+    await page.emulateMedia({ colorScheme: "dark" });
+    await login();
+    await audit(page);
+    await pz.overview(page, s);
+    await audit(page);
+    await pz.transactions(page, s);
+    await audit(page);
+    await pz.reports(page, s);
+    await audit(page);
+  });
+
   test("error toast and keyboard navigation", async ({ page, seed, login }) => {
     await seed("basic");
     await login();
