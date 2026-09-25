@@ -418,12 +418,12 @@ pub struct SuggestQuery {
 pub async fn income_suggestions(State(st): State<Shared>, Extension(user): Extension<AuthUser>, Path(id): Path<Id>, Query(q): Query<SuggestQuery>) -> Sse {
     let user = user.0;
     let (Ok(loaded), Ok(history)) = (st.load(&user, &id).await, st.income_history(&user).await) else {
-        return Sse::new().patch(html! { div id="income-suggestions" data-show="!$_sugoff" {} });
+        return Sse::new().patch(html! { div id="income-suggestions" data-show="$_sugoff === false" {} });
     };
     let list = suggest_income(&q.q, &history, loaded.month.year_month, 4);
     let js_str = |s: &str| serde_json::to_string(s).unwrap_or_else(|_| "\"\"".into());
     Sse::new().patch(html! {
-        div id="income-suggestions" class="suggest-box" data-show="!$_sugoff" {
+        div id="income-suggestions" class="suggest-box" data-show="$_sugoff === false" {
             @if !list.is_empty() {
                 p class="hint" { (t("income.suggest_intro")) }
                 ul class="suggest-list" {
@@ -436,7 +436,7 @@ pub async fn income_suggestions(State(st): State<Shared>, Extension(user): Exten
                             Schedule::Recurring { recurrence_rule: Recurrence::Monthly { days } } => ("monthly", String::new(), String::new(), days.iter().map(ToString::to_string).collect::<Vec<_>>().join(", ")),
                         };
                         @let js = format!(
-                            "pz.fillIncome({{name: {}, amount: {}, kind: {}, date: {}, anchor: {}, days: {}}}); $_newkind = {}; $_sugoff = true",
+                            "pz.fillIncome({{name: {}, amount: {}, kind: {}, date: {}, anchor: {}, days: {}}}); $_newkind = {}; $_sugoff = document.getElementById('new-name').value",
                             js_str(&s.name), js_str(&crate::money::plain(s.planned_amount)), js_str(kind), js_str(&date), js_str(&anchor), js_str(&days), js_str(kind)
                         );
                         li {
@@ -447,7 +447,7 @@ pub async fn income_suggestions(State(st): State<Shared>, Extension(user): Exten
                         }
                     }
                 }
-                button type="button" class="link small" data-on:click="$_sugoff = true" { (t("income.suggest_dismiss")) }
+                button type="button" class="link small" data-on:click="$_sugoff = document.getElementById('new-name').value" { (t("income.suggest_dismiss")) }
             }
         }
     })

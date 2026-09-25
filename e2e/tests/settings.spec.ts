@@ -15,7 +15,7 @@ test("changing currency converts every amount with the given rate", async ({ pag
   await expect(page.getByText("Your currency is EUR.")).toBeVisible();
   await pz.paycheck(page, s, 0);
   await expect(page.locator('[data-stat="planned"]')).toHaveText("€1,000.00");
-  await expect(pz.sts(page)).toHaveText("-€48.60");
+  await expect(pz.sts(page)).toHaveText("-€6.00");
   await expect(page.locator("#zero-status")).toContainText("Every dollar has a job");
 });
 

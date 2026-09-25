@@ -24,7 +24,7 @@ test.describe("overspending warnings", () => {
   test("negative Safe to Spend is called out", async ({ page, seed, login }) => {
     await seed("balanced");
     await login();
-    await expect(pz.sts(page)).toHaveText("-$97.20");
-    await expect(page.locator(".hero-warn")).toContainText("You've spent $97.20 more than this paycheck had left.");
+    await expect(pz.sts(page)).toHaveText("-$12.00");
+    await expect(page.locator(".hero-warn")).toContainText("$12.00 of spending from this paycheck wasn't in its plan.");
   });
 });

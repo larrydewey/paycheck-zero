@@ -23,7 +23,7 @@ test.describe("transactions", () => {
     await expect(page.locator("#tx-list")).toContainText("Farmers market");
     await expect(page.locator("#tx-list li", { hasText: "Farmers market" })).toContainText("Groceries · Sep 4 paycheck");
     await pz.paycheck(page, s, 0);
-    await expect(pz.sts(page)).toHaveText("$282.00");
+    await expect(pz.sts(page)).toHaveText("$388.00");
     await expect(pz.line(page, "Groceries").locator("[data-col=spent]")).toContainText("$106.00");
   });
 
@@ -37,7 +37,7 @@ test.describe("transactions", () => {
     await form.getByRole("button", { name: "Save transaction" }).click();
     await expect(pz.toast(page)).toContainText("Transaction saved.");
     await pz.paycheck(page, s, 0);
-    await expect(pz.sts(page)).toHaveText("$302.80");
+    await expect(pz.sts(page)).toHaveText("$388.00");
     await expect(pz.line(page, "Gas").locator("[data-col=spent]")).toContainText("$50.00");
   });
 

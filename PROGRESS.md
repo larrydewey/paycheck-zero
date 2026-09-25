@@ -73,9 +73,11 @@ Bugs this caught:
 | 11 | Granular reports, exporting | Report tabs: Summary (category → line drill-down), Trends (3/6/12 months, categories or lines, actual or planned), Payees (any date range), Export (month CSV/JSON, transactions for any date range, every report as CSV) |
 | 12 | Android doesn't log in | Not reproducible (login works in Android emulation, including over a LAN IP). Hardened: sign-in works without JavaScript, explains dropped cookies and script failures, and the server logs each attempt with the user agent. Needs a retry on the device |
 
-## Open question for the product owner
+## Safe-to-Spend decision (2026-09-25)
 
-- **Safe-to-Spend (§2.7):** the formula is `planned − allocations − tagged spending`. A properly fully-assigned paycheck therefore always shows `$0 − spending`, i.e. a negative number as soon as anything is tagged. Implemented literally (the spec is frozen). The likely intent is `planned − tagged spending` (or `allocations − tagged spending`); it needs a decision.
+The owner asked for "whatever makes the best user experience". Safe-to-Spend is now `planned − allocations − unplanned spending`. Spending tagged to a paycheck on a line that paycheck funds draws from that allocation first. Only spending beyond it, or on unfunded or unlinked lines, lowers Safe-to-Spend.
+
+This removes the literal §2.7 double count, where every fully assigned paycheck went negative. A new "Left in its lines" stat shows what the paycheck still has budgeted and unspent.
 
 ## Known limitations
 

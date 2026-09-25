@@ -285,13 +285,62 @@ impl Month {
             .sum()
     }
 
-    /// Per-paycheck Safe-to-Spend (spec §2.7). Skipped paychecks bring in no
-    /// money and have none to spend.
+    /// Tagged spending per line for a paycheck: (line or None, amount spent).
+    fn tagged_by_line(&self, paycheck: &Id) -> Vec<(Option<Id>, Cents)> {
+        let mut out: Vec<(Option<Id>, Cents)> = Vec::new();
+        for t in self.transactions.iter().filter(|t| t.paycheck_id.as_ref() == Some(paycheck) && t.amount.is_negative()) {
+            match out.iter_mut().find(|(l, _)| *l == t.expense_line_id) {
+                Some((_, v)) => *v += t.amount.abs(),
+                None => out.push((t.expense_line_id.clone(), t.amount.abs())),
+            }
+        }
+        out
+    }
+
+    /// Spending tagged to a paycheck that its plan didn't cover: spending on a
+    /// line beyond what this paycheck put into that line, plus spending on
+    /// lines it doesn't fund (or on no line at all).
+    #[must_use]
+    pub fn paycheck_unplanned_spending(&self, paycheck: &Id) -> Cents {
+        self.tagged_by_line(paycheck)
+            .into_iter()
+            .map(|(line, spent)| {
+                let alloc = line.as_ref().and_then(|l| self.allocation_for(paycheck, l)).map_or(Cents::ZERO, |a| a.amount);
+                let over = spent - alloc;
+                if over.is_positive() { over } else { Cents::ZERO }
+            })
+            .sum()
+    }
+
+    /// What this paycheck still has budgeted in the lines it funds, after
+    /// spending tagged to it on those lines.
+    #[must_use]
+    pub fn paycheck_budget_left(&self, paycheck: &Id) -> Cents {
+        let tagged = self.tagged_by_line(paycheck);
+        self.allocations
+            .iter()
+            .filter(|a| &a.paycheck_id == paycheck)
+            .map(|a| {
+                let spent = tagged.iter().find(|(l, _)| l.as_ref() == Some(&a.expense_line_id)).map_or(Cents::ZERO, |(_, v)| *v);
+                let left = a.amount - spent;
+                if left.is_positive() { left } else { Cents::ZERO }
+            })
+            .sum()
+    }
+
+    /// Per-paycheck Safe-to-Spend (spec §2.7): money on the paycheck that has
+    /// no job yet, minus spending tagged to it that the plan didn't cover.
+    ///
+    /// Owner decision (2026-09-25): the spec's literal formula subtracted all
+    /// tagged spending on top of allocations, which double-counted spending
+    /// on lines the paycheck already funds and made every fully assigned
+    /// paycheck negative. Spending on a funded line now draws from that
+    /// line's allocation first. Skipped paychecks have nothing to spend.
     #[must_use]
     pub fn safe_to_spend(&self, paycheck: &Id) -> Cents {
         match self.paycheck(paycheck) {
             Some(p) if p.status != PaycheckStatus::Skipped => {
-                p.planned_amount - self.paycheck_allocated(paycheck) - self.paycheck_tagged_expense(paycheck)
+                p.planned_amount - self.paycheck_allocated(paycheck) - self.paycheck_unplanned_spending(paycheck)
             }
             _ => Cents::ZERO,
         }

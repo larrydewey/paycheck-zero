@@ -31,7 +31,7 @@ test.describe("split transactions", () => {
     // Spent and Safe to Spend follow each part.
     await pz.paycheck(page, s, 0);
     await expect(pz.line(page, "Groceries").locator("[data-col=spent]")).toContainText("$165.20");
-    await expect(pz.sts(page)).toHaveText("$222.80");
+    await expect(pz.sts(page)).toHaveText("$388.00"); // Groceries spending is covered by its allocation
     // Edit: drop a part.
     await pz.transactions(page, s);
     await page.getByRole("button", { name: "Edit Target on Sep 10" }).click();

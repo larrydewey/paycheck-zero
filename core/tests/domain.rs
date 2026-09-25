@@ -320,6 +320,22 @@ fn safe_to_spend_counts_only_explicitly_tagged_expenses() {
 }
 
 #[test]
+fn spending_on_a_funded_line_draws_from_its_allocation_not_safe_to_spend() {
+    let mut f = fixture();
+    f.m.set_allocation(&f.p1, &f.food, c(30_000)).unwrap();
+    assert_eq!(f.m.safe_to_spend(&f.p1), c(70_000));
+    assert_eq!(f.m.paycheck_budget_left(&f.p1), c(30_000));
+    f.m.add_transaction(tx(-8_000, Some(&f.food), Some(&f.p1))).unwrap();
+    assert_eq!(f.m.safe_to_spend(&f.p1), c(70_000), "covered by the Food allocation");
+    assert_eq!(f.m.paycheck_budget_left(&f.p1), c(22_000));
+    f.m.add_transaction(tx(-25_000, Some(&f.food), Some(&f.p1))).unwrap();
+    assert_eq!(f.m.safe_to_spend(&f.p1), c(67_000), "only the $30 over the allocation counts");
+    assert_eq!(f.m.paycheck_budget_left(&f.p1), c(0));
+    f.m.add_transaction(tx(-1_000, None, Some(&f.p1))).unwrap();
+    assert_eq!(f.m.safe_to_spend(&f.p1), c(66_000), "unplanned spending counts in full");
+}
+
+#[test]
 fn rolling_available_sums_paychecks_from_today() {
     let mut f = fixture();
     f.m.set_allocation(&f.p1, &f.rent, c(60_000)).unwrap();

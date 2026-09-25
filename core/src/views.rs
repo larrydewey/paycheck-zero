@@ -64,6 +64,8 @@ pub struct PaycheckView {
     pub unallocated: Cents,
     pub fully_allocated: bool,
     pub tagged_expense: Cents,
+    /// Budgeted in this paycheck's lines and not yet spent.
+    pub budget_left: Cents,
     pub safe_to_spend: Cents,
     pub variance: Option<Cents>,
 }
@@ -182,6 +184,7 @@ impl Month {
             unallocated: self.paycheck_unallocated(&p.id),
             fully_allocated: self.is_paycheck_fully_allocated(&p.id),
             tagged_expense: self.paycheck_tagged_expense(&p.id),
+            budget_left: self.paycheck_budget_left(&p.id),
             safe_to_spend: self.safe_to_spend(&p.id),
             variance: p.variance(),
         }

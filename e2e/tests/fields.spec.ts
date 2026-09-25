@@ -31,7 +31,7 @@ test.describe("field behaviour", () => {
     await input.click();
     await input.fill("75");
     await page.getByRole("heading", { name: "This paycheck funds" }).hover();
-    await expect(pz.sts(page)).toHaveText("$327.80");
+    await expect(pz.sts(page)).toHaveText("$413.00");
   });
 
   test("add forms clear after a successful submit", async ({ page }) => {

@@ -180,7 +180,8 @@ async fn allocations_and_invariants() {
     }))).await;
     assert_eq!(tx.status, StatusCode::CREATED, "{}", tx.text);
     let sts = call(&app, "GET", &format!("/api/v1/paychecks/{p1}/safe-to-spend"), Some(&tok), None).await;
-    assert_eq!(sts.json["safe_to_spend"], -2_500);
+    // Spending on Rent is covered by the Rent allocation from this paycheck.
+    assert_eq!(sts.json["safe_to_spend"], 0);
 
     // Variance flow.
     call(&app, "PATCH", &format!("/api/v1/paychecks/{p1}"), Some(&tok), Some(json!({"actual_amount": 95_000}))).await;

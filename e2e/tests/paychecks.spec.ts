@@ -7,9 +7,10 @@ test.describe("paycheck view (primary)", () => {
   });
 
   test("shows Safe to Spend prominently with what the paycheck funds", async ({ page }) => {
-    await expect(pz.sts(page)).toHaveText("$302.80");
+    await expect(pz.sts(page)).toHaveText("$388.00");
     await expect(page.locator('[data-stat="unassigned"]')).toHaveText("$400.00");
     await expect(page.locator('[data-stat="tagged"]')).toHaveText("$97.20");
+    await expect(page.locator('[data-stat="budget-left"]')).toHaveText("$1,514.80");
     await expect(page.locator('[data-stat="rolling"]')).toHaveText("$1,475.00");
     await expect(page.locator("#zero-status")).toContainText("$1,875.00 left to assign this month");
     await expect(pz.line(page, "Rent")).toBeVisible();
@@ -25,7 +26,7 @@ test.describe("paycheck view (primary)", () => {
     const input = page.getByLabel("Planned for Rent from this paycheck");
     await input.fill("1,000.50");
     await input.press("Enter");
-    await expect(pz.sts(page)).toHaveText("$502.30");
+    await expect(pz.sts(page)).toHaveText("$587.50");
     await expect(pz.category(page, "Housing").locator("summary [data-col=planned]")).toContainText("$1,000.50");
     await expect(page.locator("#zero-status")).toContainText("$2,074.50 left");
     await expect(input).toHaveValue("1000.50");
@@ -36,7 +37,7 @@ test.describe("paycheck view (primary)", () => {
     await input.fill("0");
     await input.press("Enter");
     await expect(pz.line(page, "Gas")).toHaveCount(0);
-    await expect(pz.sts(page)).toHaveText("$402.80");
+    await expect(pz.sts(page)).toHaveText("$488.00");
   });
 
   test("over-allocation is blocked in the browser before sending", async ({ page }) => {
@@ -45,7 +46,7 @@ test.describe("paycheck view (primary)", () => {
     await input.press("Enter");
     await expect(pz.line(page, "Rent").locator(".field-error")).toHaveText("That's $12.50 more than this paycheck has left.");
     await expect(input).toHaveAttribute("aria-invalid", "true");
-    await expect(pz.sts(page)).toHaveText("$302.80");
+    await expect(pz.sts(page)).toHaveText("$388.00");
   });
 
   test("over-allocation is also rejected by the server with a human message", async ({ page }) => {
@@ -59,7 +60,7 @@ test.describe("paycheck view (primary)", () => {
     await toast.getByText("Technical details").click();
     await expect(toast.locator("code")).toContainText("INVARIANT_VIOLATION");
     await expect(input).toHaveValue("1200.00");
-    await expect(pz.sts(page)).toHaveText("$302.80");
+    await expect(pz.sts(page)).toHaveText("$388.00");
   });
 
   test("create a new line on the fly and fund it from this paycheck", async ({ page }) => {
@@ -70,7 +71,7 @@ test.describe("paycheck view (primary)", () => {
     await page.getByRole("button", { name: "Assign" }).click();
     await expect(pz.toast(page)).toContainText("Assigned to Phone.");
     await expect(pz.line(page, "Phone")).toBeVisible();
-    await expect(pz.sts(page)).toHaveText("$257.80");
+    await expect(pz.sts(page)).toHaveText("$343.00");
   });
 
   test("assign blocks amounts above what's left", async ({ page }) => {
@@ -163,7 +164,7 @@ test.describe("paycheck view (primary)", () => {
     await expect(pz.line(page, "Tithe")).toBeVisible();
     await expect(pz.category(page, "Giving").locator("summary [data-col=this]")).toContainText("$200.00");
     await expect(page.getByText("10% given ($200.00)")).toBeVisible();
-    await expect(pz.sts(page)).toHaveText("$102.80");
+    await expect(pz.sts(page)).toHaveText("$188.00");
   });
 
   test("navigating between paychecks", async ({ page }) => {

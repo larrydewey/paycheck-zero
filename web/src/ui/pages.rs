@@ -564,6 +564,7 @@ pub fn render_paycheck(c: &Ctx, m: &Month, archived: bool, pid: &Id) -> Markup {
                 div { dt { (t("paycheck.assigned")) } dd data-stat="assigned" { (c.money(v.allocated)) } }
                 div { dt { (t("paycheck.unassigned")) } dd data-stat="unassigned" { (c.money(v.unallocated)) } }
                 div { dt { (t("paycheck.tagged")) } dd data-stat="tagged" { (c.money(v.tagged_expense)) } }
+                div { dt { (t("paycheck.budget_left")) } dd data-stat="budget-left" { (c.money(v.budget_left)) } }
                 div { dt { (t("paycheck.rolling")) } dd data-stat="rolling" { (c.money(m.rolling_available(c.today))) } }
             }
         }
@@ -1180,11 +1181,11 @@ fn income_form(view: &View, url: &str, prefix: &str, line: Option<&IncomeLine>, 
                 label for=(id("name")) { (t("income.name")) }
                 input id=(id("name")) type="text" name="name" required maxlength="100" autocomplete="off"
                     value=[line.map(|l| l.name.clone())]
-                    "data-on:input__debounce.250ms"=[is_new.then(|| format!("$_sugoff = false; @get('{suggest_url}?q=' + encodeURIComponent(el.value))"))]
-                    data-on:focus=[is_new.then(|| format!("@get('{suggest_url}?q=' + encodeURIComponent(el.value))"))];
+                    "data-on:input__debounce.250ms"=[is_new.then(|| format!("if ($_sugoff !== el.value) {{ $_sugoff = false; @get('{suggest_url}?q=' + encodeURIComponent(el.value)) }}"))]
+                    data-on:focus=[is_new.then(|| format!("$_sugoff === false && @get('{suggest_url}?q=' + encodeURIComponent(el.value))"))];
             }
             @if is_new {
-                div id="income-suggestions" class="suggest-box" data-show="!$_sugoff" {}
+                div id="income-suggestions" class="suggest-box" data-show="$_sugoff === false" {}
             }
             div class="field" {
                 label for=(id("amount")) { (t("income.amount")) }
