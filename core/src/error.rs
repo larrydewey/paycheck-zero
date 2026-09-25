@@ -50,6 +50,9 @@ pub enum DomainError {
 
     #[error("name cannot be empty")]
     EmptyName,
+
+    #[error("invalid date: {0}")]
+    InvalidDate(String),
 }
 
 impl DomainError {
@@ -72,6 +75,7 @@ impl DomainError {
             DomainError::AllocationNotFound(_) => "NOT_FOUND",
             DomainError::TransactionNotFound(_) => "NOT_FOUND",
             DomainError::EmptyName => "EMPTY_NAME",
+            DomainError::InvalidDate(_) => "INVALID_DATE",
         }
     }
 }

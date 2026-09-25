@@ -1,12 +1,13 @@
 //! Export routes (CSV).
 
 use axum::{
-    extract::Path,
+    extract::{Path, State},
     http::StatusCode,
     routing::get,
     Router,
     response::IntoResponse,
 };
+use paycheckzero_storage::Repository;
 
 use crate::AppState;
 
@@ -19,7 +20,7 @@ pub async fn csv_export(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> impl IntoResponse {
-    let m = match state.db.load_month(&paycheckzero_core::Id::new(&id)) {
+    let m = match state.db.lock().unwrap().load_month(&paycheckzero_core::Id::new(&id)) {
         Ok(Some(m)) => m,
         Ok(None) | Err(_) => {
             return (
@@ -30,7 +31,7 @@ pub async fn csv_export(
         }
     };
 
-    let summary = m.summary();
+    let summary = m.summary(chrono::Utc::now().date_naive());
 
     let mut csv = String::from("Category,Line,Planned,Spent,Remaining\n");
     for cat in &summary.categories {

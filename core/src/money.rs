@@ -56,6 +56,11 @@ impl Cents {
     pub fn saturating_add(self, other: Cents) -> Cents {
         Cents(self.0.saturating_add(other.0))
     }
+
+    #[must_use]
+    pub fn saturating_sub(self, other: Cents) -> Cents {
+        Cents(self.0.saturating_sub(other.0))
+    }
 }
 
 impl Add for Cents {

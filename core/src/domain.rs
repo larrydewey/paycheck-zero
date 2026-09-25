@@ -17,7 +17,7 @@ pub const STARTER_CATEGORIES: &[&str] = &[
 ];
 
 /// A full month budget: the paycheck-first zero-based aggregate (spec §2.1).
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Month {
     pub id: Id,
     /// First day of the budgeted month, e.g. `2026-09-01`.
@@ -384,6 +384,110 @@ impl Month {
         self.paychecks.retain(|p| &p.income_line_id != id);
         self.income_lines.retain(|l| &l.id != id);
         Ok(())
+    }
+
+    // ------------------------------------------------------------------
+    // Updates (draft-only unless noted; spec §2.4, §2.2)
+    // ------------------------------------------------------------------
+
+    /// Rename a category (spec §2.4). Rejects empty names and duplicates.
+    pub fn rename_category(&mut self, id: &Id, name: &str) -> Result<&ExpenseCategory, DomainError> {
+        self.require_draft()?;
+        if name.trim().is_empty() {
+            return Err(DomainError::EmptyName);
+        }
+        if self.categories.iter().any(|c| &c.id != id && c.name == name) {
+            return Err(DomainError::DuplicateCategory(name.to_string()));
+        }
+        let idx = self
+            .categories
+            .iter()
+            .position(|c| &c.id == id)
+            .ok_or(DomainError::CategoryNotFound(id.clone()))?;
+        self.categories[idx].name = name.to_string();
+        Ok(&self.categories[idx])
+    }
+
+    /// Change a category's sort order (spec §2.4).
+    pub fn set_category_order(&mut self, id: &Id, order: i32) -> Result<&ExpenseCategory, DomainError> {
+        self.require_draft()?;
+        let idx = self
+            .categories
+            .iter()
+            .position(|c| &c.id == id)
+            .ok_or(DomainError::CategoryNotFound(id.clone()))?;
+        self.categories[idx].sort_order = order;
+        Ok(&self.categories[idx])
+    }
+
+    /// Update an expense line. `None` leaves a field unchanged; `Some(None)`
+    /// clears a debt-only balance field (spec §2.5).
+    pub fn update_expense_line(
+        &mut self,
+        id: &Id,
+        name: Option<&str>,
+        current_balance: Option<Option<Cents>>,
+        minimum_payment: Option<Option<Cents>>,
+    ) -> Result<&ExpenseLine, DomainError> {
+        self.require_draft()?;
+        let idx = self
+            .expense_lines
+            .iter()
+            .position(|l| &l.id == id)
+            .ok_or(DomainError::ExpenseLineNotFound(id.clone()))?;
+        if let Some(name) = name {
+            if name.trim().is_empty() {
+                return Err(DomainError::EmptyName);
+            }
+            self.expense_lines[idx].name = name.to_string();
+        }
+        if let Some(b) = current_balance {
+            self.expense_lines[idx].current_balance = b;
+        }
+        if let Some(m) = minimum_payment {
+            self.expense_lines[idx].minimum_payment = m;
+        }
+        Ok(&self.expense_lines[idx])
+    }
+
+    /// Update an income line (spec §2.2). `None` leaves a field unchanged;
+    /// `Some(None)` clears the recurrence rule.
+    pub fn update_income_line(
+        &mut self,
+        id: &Id,
+        name: Option<&str>,
+        planned_amount: Option<Cents>,
+        schedule_type: Option<ScheduleType>,
+        recurrence_rule: Option<Option<String>>,
+    ) -> Result<&IncomeLine, DomainError> {
+        self.require_draft()?;
+        let idx = self
+            .income_lines
+            .iter()
+            .position(|l| &l.id == id)
+            .ok_or(DomainError::IncomeLineNotFound(id.clone()))?;
+        if let Some(name) = name {
+            if name.trim().is_empty() {
+                return Err(DomainError::EmptyName);
+            }
+            if self.income_lines.iter().any(|l| &l.id != id && l.name == name) {
+                return Err(DomainError::DuplicateIncomeLine(name.to_string()));
+            }
+            self.income_lines[idx].name = name.to_string();
+        }
+        if let Some(pa) = planned_amount {
+            if pa.is_negative() {
+                return Err(DomainError::NegativeAmount);
+            }
+            self.income_lines[idx].planned_amount = pa;
+        }
+        if let Some(s) = schedule_type {
+            self.income_lines[idx].schedule_type = s;
+        }
+        if let Some(r) = recurrence_rule {
+            self.income_lines[idx].recurrence_rule = r;
+        }
+        Ok(&self.income_lines[idx])
     }
 
     // ------------------------------------------------------------------
@@ -1012,5 +1116,88 @@ mod tests {
         let to: i64 = m.allocations.iter().filter(|a| a.paycheck_id == pc2).map(|a| a.amount.as_cents()).sum();
         assert_eq!(from, 300);
         assert_eq!(to, 200);
+    }
+
+    #[test]
+    fn rename_category_works_and_rejects_duplicates() {
+        let f = fix(1000);
+        let mut m = f.m;
+        m.rename_category(&f.cat, "Shelter").unwrap();
+        assert_eq!(m.category(&f.cat).unwrap().name, "Shelter");
+        let _other = m.categories.iter().find(|c| c.name == "Food").unwrap().id.clone();
+        assert_eq!(
+            m.rename_category(&f.cat, "Food").unwrap_err(),
+            DomainError::DuplicateCategory("Food".into())
+        );
+        assert_eq!(
+            m.rename_category(&f.cat, "   ").unwrap_err(),
+            DomainError::EmptyName
+        );
+    }
+
+    #[test]
+    fn set_category_order_reorders() {
+        let f = fix(1000);
+        let mut m = f.m;
+        m.set_category_order(&f.cat, 500).unwrap();
+        assert_eq!(m.category(&f.cat).unwrap().sort_order, 500);
+    }
+
+    #[test]
+    fn update_expense_line_fields_and_clear() {
+        let f = fix(1000);
+        let mut m = f.m;
+        m.update_expense_line(&f.line, Some("Rent 2b"), Some(Some(c(120000))), None).unwrap();
+        let l = m.expense_line(&f.line).unwrap();
+        assert_eq!(l.name, "Rent 2b");
+        assert_eq!(l.current_balance, Some(c(120000)));
+        m.update_expense_line(&f.line, None, Some(None), Some(Some(c(500)))).unwrap();
+        let l = m.expense_line(&f.line).unwrap();
+        assert_eq!(l.current_balance, None);
+        assert_eq!(l.minimum_payment, Some(c(500)));
+        assert_eq!(
+            m.update_expense_line(&f.line, Some(""), None, None).unwrap_err(),
+            DomainError::EmptyName
+        );
+    }
+
+    #[test]
+    fn update_income_line_fields() {
+        let f = fix(1000);
+        let mut m = f.m;
+        m.update_income_line(
+            &f.il,
+            Some("Job 2"),
+            Some(c(1200)),
+            Some(ScheduleType::Recurring),
+            Some(Some("FREQ=BIWEEKLY".into())),
+        )
+        .unwrap();
+        let il = m.income_line(&f.il).unwrap();
+        assert_eq!(il.name, "Job 2");
+        assert_eq!(il.planned_amount, c(1200));
+        assert_eq!(il.schedule_type, ScheduleType::Recurring);
+        assert_eq!(il.recurrence_rule.as_deref(), Some("FREQ=BIWEEKLY"));
+        m.update_income_line(&f.il, None, None, None, Some(None)).unwrap();
+        assert!(m.income_line(&f.il).unwrap().recurrence_rule.is_none());
+        assert_eq!(
+            m.update_income_line(&f.il, Some(""), None, None, None).unwrap_err(),
+            DomainError::EmptyName
+        );
+        assert_eq!(
+            m.update_income_line(&f.il, None, Some(c(-1)), None, None).unwrap_err(),
+            DomainError::NegativeAmount
+        );
+    }
+
+    #[test]
+    fn updates_blocked_when_locked() {
+        let f = fix(1000);
+        let mut m = f.m;
+        m.allocate(&f.pc, &f.line, c(1000)).unwrap();
+        m.lock().unwrap();
+        assert!(matches!(m.rename_category(&f.cat, "X"), Err(DomainError::Locked)));
+        assert!(matches!(m.update_expense_line(&f.line, Some("X"), None, None), Err(DomainError::Locked)));
+        assert!(matches!(m.update_income_line(&f.il, Some("X"), None, None, None), Err(DomainError::Locked)));
     }
 }

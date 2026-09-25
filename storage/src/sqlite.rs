@@ -6,9 +6,26 @@ use paycheckzero_core::{
 };
 use rusqlite::{params, Connection, OptionalExtension, Result as SqlResult};
 
-use super::repo::{MonthListItem, Repository, StorageResult};
+use super::repo::{
+    AuthRepository, MonthListItem, RefreshTokenRecord, Repository, StorageResult, UserRecord,
+};
 
 const SCHEMA: &str = "
+CREATE TABLE IF NOT EXISTS users (
+    id            TEXT PRIMARY KEY,
+    email         TEXT NOT NULL UNIQUE,
+    password_hash TEXT NOT NULL,
+    created_at    TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS refresh_tokens (
+    token_hash TEXT PRIMARY KEY,
+    user_id    TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    device     TEXT NOT NULL DEFAULT '',
+    expires_at TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS months (
     id         TEXT PRIMARY KEY,
     year_month TEXT NOT NULL,
@@ -357,5 +374,92 @@ impl Repository for SqliteRepository {
             }))?
             .collect::<Result<Vec<_>, _>>()?;
         Ok(rows)
+    }
+}
+
+impl AuthRepository for SqliteRepository {
+    fn register_user(&mut self, id: &Id, email: &str, password_hash: &str) -> StorageResult<()> {
+        let created_at = chrono::Utc::now().to_rfc3339();
+        self.conn.execute(
+            "INSERT INTO users (id, email, password_hash, created_at) VALUES (?1, ?2, ?3, ?4)",
+            params![id.as_str(), email, password_hash, created_at],
+        )?;
+        Ok(())
+    }
+
+    fn user_by_email(&self, email: &str) -> StorageResult<Option<UserRecord>> {
+        let row = self.conn.query_row(
+            "SELECT id, email, password_hash, created_at FROM users WHERE email = ?1",
+            params![email],
+            |row| {
+                Ok(UserRecord {
+                    id: Id::new(row.get::<_, String>(0)?),
+                    email: row.get::<_, String>(1)?,
+                    password_hash: row.get::<_, String>(2)?,
+                    created_at: row.get::<_, String>(3)?,
+                })
+            },
+        );
+        Ok(row.optional()?)
+    }
+
+    fn user_by_id(&self, id: &Id) -> StorageResult<Option<UserRecord>> {
+        let row = self.conn.query_row(
+            "SELECT id, email, password_hash, created_at FROM users WHERE id = ?1",
+            params![id.as_str()],
+            |row| {
+                Ok(UserRecord {
+                    id: Id::new(row.get::<_, String>(0)?),
+                    email: row.get::<_, String>(1)?,
+                    password_hash: row.get::<_, String>(2)?,
+                    created_at: row.get::<_, String>(3)?,
+                })
+            },
+        );
+        Ok(row.optional()?)
+    }
+
+    fn save_refresh_token(
+        &mut self,
+        token_hash: &str,
+        user_id: &Id,
+        device: &str,
+        expires_at: &str,
+        created_at: &str,
+    ) -> StorageResult<()> {
+        self.conn.execute(
+            "INSERT OR REPLACE INTO refresh_tokens (token_hash, user_id, device, expires_at, created_at) VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![token_hash, user_id.as_str(), device, expires_at, created_at],
+        )?;
+        Ok(())
+    }
+
+    fn refresh_token(&self, token_hash: &str) -> StorageResult<Option<RefreshTokenRecord>> {
+        let row = self.conn.query_row(
+            "SELECT token_hash, user_id, device, expires_at, created_at FROM refresh_tokens WHERE token_hash = ?1",
+            params![token_hash],
+            |row| {
+                Ok(RefreshTokenRecord {
+                    token_hash: row.get::<_, String>(0)?,
+                    user_id: Id::new(row.get::<_, String>(1)?),
+                    device: row.get::<_, String>(2)?,
+                    expires_at: row.get::<_, String>(3)?,
+                    created_at: row.get::<_, String>(4)?,
+                })
+            },
+        );
+        Ok(row.optional()?)
+    }
+
+    fn delete_refresh_token(&mut self, token_hash: &str) -> StorageResult<()> {
+        self.conn
+            .execute("DELETE FROM refresh_tokens WHERE token_hash = ?1", params![token_hash])?;
+        Ok(())
+    }
+
+    fn delete_all_refresh_tokens(&mut self, user_id: &Id) -> StorageResult<()> {
+        self.conn
+            .execute("DELETE FROM refresh_tokens WHERE user_id = ?1", params![user_id.as_str()])?;
+        Ok(())
     }
 }

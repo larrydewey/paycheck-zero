@@ -16,13 +16,19 @@ pub enum ServiceError {
 
     #[error("conflict: {0}")]
     Conflict(String),
+
+    #[error("unauthorized: {0}")]
+    Unauthorized(String),
+
+    #[error("internal error: {0}")]
+    Internal(String),
 }
 
 impl axum::response::IntoResponse for ServiceError {
     fn into_response(self) -> axum::response::Response {
         let (status, error_code, message) = match &self {
             ServiceError::Domain(d) => {
-                let code = d.error_code();
+                let code = d.code();
                 let msg = d.to_string();
                 if code.starts_with("INVARIANT_") {
                     (axum::http::StatusCode::CONFLICT, code.to_string(), msg)
@@ -38,6 +44,12 @@ impl axum::response::IntoResponse for ServiceError {
             }
             ServiceError::Conflict(msg) => {
                 (axum::http::StatusCode::CONFLICT, "CONFLICT".into(), msg.clone())
+            }
+            ServiceError::Unauthorized(msg) => {
+                (axum::http::StatusCode::UNAUTHORIZED, "UNAUTHORIZED".into(), msg.clone())
+            }
+            ServiceError::Internal(msg) => {
+                (axum::http::StatusCode::INTERNAL_SERVER_ERROR, "INTERNAL_ERROR".into(), msg.clone())
             }
         };
 

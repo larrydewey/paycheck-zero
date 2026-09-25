@@ -5,5 +5,8 @@
 mod repo;
 mod sqlite;
 
-pub use repo::{Repository, StorageError, StorageResult};
+pub use repo::{
+    AuthRepository, MonthListItem, RefreshTokenRecord, Repository, StorageError, StorageResult,
+    UserRecord,
+};
 pub use sqlite::SqliteRepository;
