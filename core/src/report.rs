@@ -4,7 +4,8 @@
 //! Definitions used throughout:
 //! - planned income  = non-skipped paychecks' planned amounts
 //! - actual income   = recorded paycheck actuals + positive transactions not
-//!   linked to any line
+//!   linked to any line and not tagged to a paycheck (tagged deposits are
+//!   already reflected in that paycheck's actual)
 //! - planned expense = sum of allocations
 //! - actual expense  = Spent of every line (spec §2.10) + absolute value of
 //!   expense transactions not linked to any line ("Uncategorized")
@@ -91,7 +92,7 @@ pub fn month_figures(m: &Month) -> Figures {
         .sum::<Cents>()
         + m.transactions
             .iter()
-            .filter(|t| t.expense_line_id.is_none() && t.amount.is_positive())
+            .filter(|t| t.expense_line_id.is_none() && t.paycheck_id.is_none() && t.amount.is_positive())
             .map(|t| t.amount)
             .sum::<Cents>();
     Figures {
@@ -220,7 +221,7 @@ pub fn summary_cards(m: &Month) -> SummaryCards {
     let unlinked_income: Cents = m
         .transactions
         .iter()
-        .filter(|t| t.expense_line_id.is_none() && t.amount.is_positive())
+        .filter(|t| t.expense_line_id.is_none() && t.paycheck_id.is_none() && t.amount.is_positive())
         .map(|t| t.amount)
         .sum();
     let income_variance =

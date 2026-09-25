@@ -602,3 +602,34 @@ fn one_click_ten_percent_giving() {
     assert!(matches!(f.m.give_percent(&f.p1, 10), Err(DomainError::OverAllocated { .. })));
     f.m.check_invariants().unwrap();
 }
+
+#[test]
+fn tagged_deposits_reconcile_the_paycheck_actual() {
+    let mut f = fixture();
+    let dep = f.m.add_transaction(tx(60_000, None, Some(&f.p1))).unwrap();
+    assert_eq!(f.m.paycheck(&f.p1).unwrap().actual_amount, Some(c(60_000)));
+    assert_eq!(f.m.paycheck(&f.p1).unwrap().status, PaycheckStatus::Received);
+    f.m.add_transaction(tx(39_500, None, Some(&f.p1))).unwrap();
+    assert_eq!(f.m.paycheck(&f.p1).unwrap().variance(), Some(c(-500)));
+    // Expenses tagged to the paycheck don't count as deposits.
+    f.m.add_transaction(tx(-1_000, Some(&f.food), Some(&f.p1))).unwrap();
+    assert_eq!(f.m.paycheck(&f.p1).unwrap().actual_amount, Some(c(99_500)));
+    // Moving a deposit to another paycheck reconciles both.
+    let mut moved = f.m.transaction(&dep).unwrap().clone();
+    moved.paycheck_id = Some(f.p2.clone());
+    f.m.update_transaction(moved).unwrap();
+    assert_eq!(f.m.paycheck(&f.p1).unwrap().actual_amount, Some(c(39_500)));
+    assert_eq!(f.m.paycheck(&f.p2).unwrap().actual_amount, Some(c(60_000)));
+    // Removing the last deposit clears an actual that came from deposits.
+    f.m.delete_transaction(&dep).unwrap();
+    assert_eq!(f.m.paycheck(&f.p2).unwrap().actual_amount, None);
+    assert_eq!(f.m.paycheck(&f.p2).unwrap().status, PaycheckStatus::Planned);
+    // A manual actual survives deposits going to zero on another paycheck.
+    f.m.set_paycheck_actual(&f.p2, Some(c(100_000))).unwrap();
+    let d2 = f.m.add_transaction(tx(10, None, Some(&f.p1))).unwrap();
+    f.m.delete_transaction(&d2).unwrap();
+    assert_eq!(f.m.paycheck(&f.p2).unwrap().actual_amount, Some(c(100_000)));
+    // Reports don't double-count tagged deposits.
+    let fig = paycheckzero_core::report::month_figures(&f.m);
+    assert_eq!(fig.actual_income, c(39_500 + 100_000));
+}

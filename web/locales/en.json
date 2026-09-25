@@ -259,7 +259,7 @@
   "tx.payee": "Payee",
   "tx.line": "Expense line",
   "tx.paycheck": "Paycheck",
-  "tx.paycheck_hint": "Tag a paycheck to count this spending against its Safe to Spend.",
+  "tx.paycheck_hint": "Tag a paycheck: spending counts against its Safe to Spend; income is recorded as that paycheck actually received.",
   "tx.notes": "Notes",
   "tx.no_line": "Not linked to a line",
   "tx.no_paycheck": "Not tagged to a paycheck",

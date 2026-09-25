@@ -58,6 +58,25 @@ test.describe("transactions", () => {
     await expect(page.locator("#tx-list li", { hasText: "Coffee" })).toHaveCount(0);
   });
 
+  test("income tagged to a paycheck reconciles what was actually received", async ({ page, seed, login }) => {
+    const s = await seed("basic");
+    await login();
+    await pz.transactions(page, s);
+    const form = page.locator("#add-tx");
+    await form.getByRole("radio", { name: "Income" }).check();
+    await form.getByLabel("Amount").fill("1,950");
+    await form.getByLabel("Payee").fill("Acme deposit");
+    await form.getByLabel("Paycheck").selectOption({ label: "Sep 4 · Acme Payroll" });
+    await form.getByRole("button", { name: "Save transaction" }).click();
+    await expect(pz.toast(page)).toContainText("Transaction saved.");
+    await pz.income(page, s);
+    const row = page.locator("section.income-line tbody tr", { hasText: "Sep 4" });
+    await expect(row).toContainText("$1,950.00");
+    await expect(row).toContainText("Received");
+    await pz.paycheck(page, s, 0);
+    await expect(page.locator("#variance-panel")).toContainText("Sep 4: planned $2,000.00, received $1,950.00.");
+  });
+
   test("transactions still work in a locked month", async ({ page, seed, login }) => {
     const s = await seed("locked");
     await login();

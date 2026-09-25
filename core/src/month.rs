@@ -1084,6 +1084,44 @@ impl Month {
         Ok(())
     }
 
+    /// Income transactions explicitly tagged to a paycheck (deposits).
+    #[must_use]
+    pub fn paycheck_deposits(&self, paycheck: &Id) -> Cents {
+        self.transactions
+            .iter()
+            .filter(|t| t.paycheck_id.as_ref() == Some(paycheck) && t.amount.is_positive())
+            .map(|t| t.amount)
+            .sum()
+    }
+
+    /// Reconciles a paycheck with its deposits: when income transactions are
+    /// tagged to it, their sum becomes the amount actually received. If the
+    /// last deposit goes away, an actual that came from deposits is cleared
+    /// (a manually entered actual is left alone).
+    fn reconcile(&mut self, paycheck: &Id, deposits_before: Cents) {
+        let after = self.paycheck_deposits(paycheck);
+        let Ok(p) = self.paycheck_mut(paycheck) else { return };
+        if p.status == PaycheckStatus::Skipped {
+            return;
+        }
+        if after.is_positive() {
+            p.actual_amount = Some(after);
+            p.status = PaycheckStatus::Received;
+        } else if deposits_before.is_positive() && p.actual_amount == Some(deposits_before) {
+            p.actual_amount = None;
+            p.status = PaycheckStatus::Planned;
+        }
+    }
+
+    fn with_reconcile<T>(&mut self, touched: &[Option<Id>], f: impl FnOnce(&mut Self) -> Result<T, DomainError>) -> Result<T, DomainError> {
+        let before: Vec<(Id, Cents)> = touched.iter().flatten().map(|p| (p.clone(), self.paycheck_deposits(p))).collect();
+        let out = f(self)?;
+        for (p, b) in before {
+            self.reconcile(&p, b);
+        }
+        Ok(out)
+    }
+
     pub fn add_transaction(&mut self, mut t: Transaction) -> Result<Id, DomainError> {
         t.payee = clean_opt(t.payee);
         t.notes = clean_opt(t.notes);
@@ -1091,30 +1129,34 @@ impl Month {
         if self.transaction(&t.id).is_some() {
             return Err(DomainError::Invariant(format!("transaction {} already exists", t.id)));
         }
-        let id = t.id.clone();
-        self.transactions.push(t);
-        Ok(id)
+        let touched = [t.paycheck_id.clone()];
+        self.with_reconcile(&touched, |m| {
+            let id = t.id.clone();
+            m.transactions.push(t);
+            Ok(id)
+        })
     }
 
     pub fn update_transaction(&mut self, mut t: Transaction) -> Result<(), DomainError> {
         t.payee = clean_opt(t.payee);
         t.notes = clean_opt(t.notes);
         self.validate_transaction(&t)?;
-        let slot = self
-            .transactions
-            .iter_mut()
-            .find(|x| x.id == t.id)
-            .ok_or_else(|| DomainError::not_found("transaction", &t.id))?;
-        *slot = t;
-        Ok(())
+        let old = self.transaction(&t.id).ok_or_else(|| DomainError::not_found("transaction", &t.id))?.paycheck_id.clone();
+        let touched = [old, t.paycheck_id.clone()];
+        self.with_reconcile(&touched, |m| {
+            if let Some(slot) = m.transactions.iter_mut().find(|x| x.id == t.id) {
+                *slot = t;
+            }
+            Ok(())
+        })
     }
 
     pub fn delete_transaction(&mut self, id: &Id) -> Result<(), DomainError> {
-        if self.transaction(id).is_none() {
-            return Err(DomainError::not_found("transaction", id));
-        }
-        self.transactions.retain(|x| &x.id != id);
-        Ok(())
+        let old = self.transaction(id).ok_or_else(|| DomainError::not_found("transaction", id))?.paycheck_id.clone();
+        self.with_reconcile(&[old], |m| {
+            m.transactions.retain(|x| &x.id != id);
+            Ok(())
+        })
     }
 
     // ------------------------------------------------------------------
