@@ -496,3 +496,16 @@ dialog .tx-form { margin-top: 0.5rem; }
 
 .quick-actions { display: flex; gap: 0.5rem; flex-wrap: wrap; margin: 0 0 0.75rem; }
 .pill.ok { background: var(--ok-soft); color: var(--ok); display: inline-flex; align-items: center; gap: 0.3rem; }
+
+/* Per-paycheck funding on the overview */
+.line-funding { grid-column: 1 / -1; font-size: 0.9rem; }
+.line-funding > summary { cursor: pointer; color: var(--primary-dark); font-weight: 600; padding: 0.15rem 0.3rem; width: fit-content; }
+.funding-list { list-style: none; margin: 0.35rem 0 0.25rem; padding: 0.5rem 0.75rem; display: grid; gap: 0.4rem; background: var(--subtle); border-radius: 8px; }
+.funding-list li { display: grid; grid-template-columns: minmax(0, 1fr) 8.5rem 7rem; gap: 0.5rem; align-items: center; }
+.funding-list form { margin: 0; }
+@media (max-width: 640px) { .funding-list li { grid-template-columns: 1fr 7.5rem; } .funding-list li .muted { grid-column: 1 / -1; } }
+.add-extra { display: none; gap: 0.5rem; }
+.add-line:focus-within .add-extra, .add-line input[name=name]:not(:placeholder-shown) ~ .add-extra { display: inline-flex; }
+.add-extra input { width: 7rem; }
+.add-extra select { width: auto; }
+@media (max-width: 640px) { .add-line { flex-wrap: wrap; } .add-extra { flex-basis: 100%; } }

@@ -627,7 +627,19 @@ pub async fn place(State(st): State<Shared>, Extension(user): Extension<AuthUser
 pub async fn add_line(State(st): State<Shared>, Extension(user): Extension<AuthUser>, headers: HeaderMap, Path(id): Path<Id>, Form(f): F) -> Sse {
     let view = view_of(&f, View::Overview { month: id.clone() });
     let cat = Id::new(field(&f, "category_id"));
-    month_action(&st, &user.0, &headers, view, Ok(id), |m| m.add_expense_line(&cat, field(&f, "name")), no_toasts).await
+    let amount = match opt_money_field(&f, "amount") {
+        Ok(a) => a.filter(|a| a.is_positive()),
+        Err(e) => return failed(&st, &user.0, &headers, &view, &e).await,
+    };
+    let paycheck = opt_id(&f, "paycheck_id");
+    month_action(&st, &user.0, &headers, view, Ok(id), |m| {
+        let lid = m.add_expense_line(&cat, field(&f, "name"))?;
+        if let (Some(a), Some(p)) = (amount, paycheck.as_ref()) {
+            m.set_allocation(p, &lid, a)?;
+        }
+        Ok(lid)
+    }, no_toasts)
+    .await
 }
 
 pub async fn rename_line(State(st): State<Shared>, Extension(user): Extension<AuthUser>, headers: HeaderMap, Path(id): Path<Id>, Form(f): F) -> Sse {

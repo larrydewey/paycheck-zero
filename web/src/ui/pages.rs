@@ -814,6 +814,12 @@ pub fn render_overview(c: &Ctx, m: &Month, archived: bool) -> Markup {
     let alloc = m.allocations_editable() && !archived;
     let cats = m.category_views();
     let free: Cents = m.paychecks.iter().map(|p| m.paycheck_unallocated(&p.id)).sum();
+    let default_fund_pc = m
+        .paychecks_by_date()
+        .into_iter()
+        .find(|p| m.paycheck_unallocated(&p.id).is_positive())
+        .or_else(|| m.paychecks_by_date().into_iter().find(|p| p.status != PaycheckStatus::Skipped))
+        .map(|p| p.id.clone());
     let move_btn = |url: String, dir: &str, label: String| {
         html! {
             form class="inline" data-on:submit__prevent=(post_form(&url)) {
@@ -921,6 +927,32 @@ pub fn render_overview(c: &Ctx, m: &Month, archived: bool) -> Markup {
                                         }
                                     }
                                 }
+                                @if !m.paychecks.is_empty() {
+                                    details class="line-funding" data-line-funding=(l.id) {
+                                        summary { (tf("line.by_paycheck", &[("count", &l.funders.len().to_string())])) }
+                                        ul class="funding-list" {
+                                            @for p in m.paychecks_by_date() {
+                                                @let this = m.allocation_for(&p.id, &l.id).map_or(Cents::ZERO, |a| a.amount);
+                                                @let free = m.paycheck_unallocated(&p.id);
+                                                @let pname = m.income_line(&p.income_line_id).map(|x| x.name.clone()).unwrap_or_default();
+                                                li {
+                                                    span class="fund-pc" { strong { (short_date(p.date)) } " · " (pname)
+                                                        @if p.status == PaycheckStatus::Skipped { " · " (t("paycheck.skipped")) } }
+                                                    @if alloc && p.status != PaycheckStatus::Skipped {
+                                                        form data-on:submit__prevent=(post_form_guarded(&format!("/ui/paychecks/{}/lines/{}", p.id, l.id))) {
+                                                            (view_input(&view))
+                                                            (money_input("amount", Some(this), &tf("line.from_paycheck_label", &[("name", &l.name), ("date", &short_date(p.date))]), Some((this + free).get())))
+                                                            span class="field-error" aria-live="polite" {}
+                                                        }
+                                                        span class="muted small" { (tf("line.paycheck_left", &[("amount", &c.money(free))])) }
+                                                    } @else {
+                                                        span class="num" { (c.money(this)) }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
                                 @if l.is_debt {
                                     div class="debt" {
                                         @if structure {
@@ -944,11 +976,25 @@ pub fn render_overview(c: &Ctx, m: &Month, archived: bool) -> Markup {
                         }
                     }
                     @if structure {
-                        form class="add-line" id=(format!("add-line-{}", cat.id)) data-clear data-on:submit__prevent=(post_form(&format!("/ui/months/{}/lines", m.id))) {
+                        form class="add-line" id=(format!("add-line-{}", cat.id)) data-clear data-on:submit__prevent=(post_form_guarded(&format!("/ui/months/{}/lines", m.id))) {
                             (view_input(&view))
                             input type="hidden" name="category_id" value=(cat.id);
                             span class="add-icon" aria-hidden="true" { (icon("plus")) }
                             input type="text" name="name" required maxlength="100" placeholder=(t("line.add_placeholder")) aria-label=(tf("line.add_label", &[("category", &cat.name)]));
+                            @if alloc && !m.paychecks.is_empty() {
+                                span class="add-extra" {
+                                    input type="text" inputmode="decimal" class="money" name="amount" placeholder="0.00" autocomplete="off"
+                                        aria-label=(tf("line.add_amount_label", &[("category", &cat.name)]));
+                                    select name="paycheck_id" aria-label=(tf("line.add_paycheck_label", &[("category", &cat.name)])) {
+                                        @for p in m.paychecks_by_date().into_iter().filter(|p| p.status != PaycheckStatus::Skipped) {
+                                            @let free = m.paycheck_unallocated(&p.id);
+                                            option value=(p.id) selected[Some(&p.id) == default_fund_pc.as_ref()] {
+                                                (tf("line.fund_option", &[("date", &short_date(p.date)), ("amount", &c.money(free))]))
+                                            }
+                                        }
+                                    }
+                                }
+                            }
                             button type="submit" class="btn small" { (t("line.add")) }
                         }
                     }

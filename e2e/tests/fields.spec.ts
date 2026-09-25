@@ -36,7 +36,7 @@ test.describe("field behaviour", () => {
 
   test("add forms clear after a successful submit", async ({ page }) => {
     await page.getByRole("link", { name: "Month overview" }).click();
-    const input = page.getByLabel("New line in Food");
+    const input = page.getByLabel("New line in Food", { exact: true });
     await input.fill("Snacks");
     await input.press("Enter");
     await expect(pz.line(page, "Snacks")).toBeVisible();

@@ -27,6 +27,31 @@ test.describe("monthly overview", () => {
     await expect(page.locator("#zero-status")).toContainText("$1,375.00 left");
   });
 
+  test("each line expands to edit what every paycheck puts in (zeros included)", async ({ page }) => {
+    const rent = pz.line(page, "Rent");
+    await rent.getByText("By paycheck (1 funding)").click();
+    const sep4 = page.getByLabel("Rent from the Sep 4 paycheck");
+    const sep18 = page.getByLabel("Rent from the Sep 18 paycheck");
+    await expect(sep4).toHaveValue("1200.00");
+    await expect(sep18).toHaveValue("0.00");
+    await sep18.fill("100");
+    await sep18.press("Enter");
+    await expect(pz.category(page, "Housing").locator(":scope > summary [data-col=planned]")).toContainText("$1,450.00");
+    // The panel stays open after the re-render.
+    await expect(page.getByLabel("Rent from the Sep 18 paycheck")).toHaveValue("100.00");
+    await expect(rent).toContainText("Sep 4: $1,200.00 · Sep 18: $100.00");
+  });
+
+  test("adding a line from the month view can fund it from a chosen paycheck", async ({ page }) => {
+    const input = page.getByLabel("New line in Food", { exact: true });
+    await input.fill("Dining out");
+    await page.getByLabel("Amount for the new line in Food").fill("60");
+    await page.getByLabel("Paycheck that funds the new line in Food").selectOption({ label: "from Sep 18 ($1,475.00 left)" });
+    await pz.category(page, "Food").getByRole("button", { name: "Add line" }).click();
+    await expect(pz.line(page, "Dining out")).toContainText("Sep 18: $60.00");
+    await expect(input).toHaveValue("");
+  });
+
   test("asking for more than all paychecks have is refused", async ({ page }) => {
     const input = page.getByLabel("Total planned for Rent");
     await page.evaluate(() => document.querySelectorAll("[data-max-cents]").forEach((e) => e.removeAttribute("data-max-cents")));
@@ -42,7 +67,7 @@ test.describe("monthly overview", () => {
     await page.getByRole("button", { name: "Add category" }).click();
     const pets = pz.category(page, "Pets");
     await expect(pets).toBeVisible();
-    await pets.getByLabel("New line in Pets").fill("Vet");
+    await pets.getByLabel("New line in Pets", { exact: true }).fill("Vet");
     await pets.getByRole("button", { name: "Add line" }).click();
     await expect(pz.line(page, "Vet")).toBeVisible();
     await pets.getByText("Edit Pets").click();
@@ -79,6 +104,10 @@ test.describe("monthly overview", () => {
     const order = (cat: string) => pz.category(page, cat).locator("li.line").evaluateAll((els) => els.map((e) => e.getAttribute("data-line")));
     await pz.line(page, "Electric").locator(".grip").dragTo(pz.line(page, "Rent"), { targetPosition: { x: 10, y: 2 } });
     await expect.poll(() => order("Housing")).toEqual(["Electric", "Rent"]);
+    // Playwright's synthetic drag can't start a second drag in the same page
+    // session after a re-render, so reload between drags.
+    await page.reload();
+    await pz.line(page, "Gas").waitFor();
     await pz.line(page, "Gas").locator(".grip").dragTo(pz.category(page, "Food").locator(":scope > summary"));
     await expect.poll(() => order("Food")).toEqual(["Gas", "Groceries"]);
     await expect(pz.category(page, "Transportation").locator("li.line")).toHaveCount(0);

@@ -178,6 +178,24 @@
     });
   }
 
+  // Keep per-paycheck funding panels open across re-renders (a morph would
+  // otherwise close them after every edit).
+  var openFunding = {};
+  try { openFunding = JSON.parse(sessionStorage.getItem("pz-funding-open") || "{}"); } catch (_) { openFunding = {}; }
+  document.addEventListener("click", function (e) {
+    var sum = e.target instanceof Element ? e.target.closest("details[data-line-funding] > summary") : null;
+    if (!sum) return;
+    var d = sum.parentElement, id = d.dataset.lineFunding;
+    if (d.open) delete openFunding[id]; else openFunding[id] = true;
+    try { sessionStorage.setItem("pz-funding-open", JSON.stringify(openFunding)); } catch (_) {}
+  });
+  function reopenFunding() {
+    document.querySelectorAll("details[data-line-funding]").forEach(function (d) {
+      if (openFunding[d.dataset.lineFunding] && !d.open) d.open = true;
+    });
+  }
+  new MutationObserver(reopenFunding).observe(document.documentElement, { childList: true, subtree: true, attributes: true, attributeFilter: ["open"] });
+
   // Inline edits also save when the pointer leaves the row with a changed value.
   document.addEventListener("mouseout", function (e) {
     var from = e.target instanceof Element ? e.target.closest("li.line, .cat-tools, .debt-form") : null;

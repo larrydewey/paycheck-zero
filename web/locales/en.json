@@ -168,6 +168,12 @@
   "line.add": "Add line",
   "line.add_placeholder": "Add a line…",
   "line.drag": "Drag to reorder",
+  "line.by_paycheck": "By paycheck ({count} funding)",
+  "line.from_paycheck_label": "{name} from the {date} paycheck",
+  "line.paycheck_left": "{amount} left",
+  "line.add_amount_label": "Amount for the new line in {category}",
+  "line.add_paycheck_label": "Paycheck that funds the new line in {category}",
+  "line.fund_option": "from {date} ({amount} left)",
   "line.add_label": "New line in {category}",
 
   "category.name_label": "Name of category {name}",
