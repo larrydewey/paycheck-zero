@@ -57,6 +57,13 @@
 
   "status.label": "Month status",
   "status.zero": "Every dollar has a job. This month is at zero.",
+  "over.banner": "{n} line(s) over plan:",
+  "over.item": "{name} ({amount} over)",
+  "over.review": "Review in Month overview",
+  "over.line": "Over by {amount}",
+  "over.category": "A line in this category is over plan",
+  "over.sts": "You've spent {amount} more than this paycheck had left.",
+  "over.toast": "{name} is now {amount} over plan.",
   "status.no_income": "No income yet — add a paycheck to start planning this month.",
   "status.zero_with_variance": "At zero on plan, but a paycheck came in different — see below.",
   "status.left_to_assign": "{amount} left to assign this month",

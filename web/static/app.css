@@ -509,3 +509,11 @@ dialog .tx-form { margin-top: 0.5rem; }
 .add-extra input { width: 7rem; }
 .add-extra select { width: auto; }
 @media (max-width: 640px) { .add-line { flex-wrap: wrap; } .add-extra { flex-basis: 100%; } }
+
+/* Overspending */
+.notice.over { background: var(--danger-soft); color: var(--danger); }
+.notice.over a { color: var(--danger); font-weight: 700; }
+li.line.over { background: color-mix(in srgb, var(--danger-soft) 55%, transparent); box-shadow: inset 3px 0 0 var(--danger); }
+.over-badge { display: inline-flex; align-items: center; gap: 0.25rem; color: var(--danger); font-size: 0.8rem; font-weight: 700; padding-left: 0.3rem; }
+.cat-over { color: var(--danger); display: inline-flex; margin-left: 0.35rem; }
+.hero-warn { margin: 0 0 0.75rem; background: rgb(0 0 0 / 22%); border-radius: 8px; padding: 0.4rem 0.6rem; font-weight: 600; display: inline-flex; gap: 0.35rem; align-items: center; }

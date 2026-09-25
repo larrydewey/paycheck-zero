@@ -352,9 +352,53 @@ fn month_status(c: &Ctx, m: &Month, archived: bool, view: &View) -> Markup {
                     }
                 }
             }
+            (overspent_banner(c, m, view))
             @if (m.has_variance() || m.reassigning) && !archived {
                 (variance_panel(c, m, view))
             }
+        }
+    }
+}
+
+/// Month-level banner listing every overspent line.
+fn overspent_banner(c: &Ctx, m: &Month, view: &View) -> Markup {
+    let overs = overspent_lines(m);
+    html! {
+        @if !overs.is_empty() {
+            div class="notice over" id="overspent-banner" role="status" {
+                (icon("alert")) " "
+                strong { (tf("over.banner", &[("n", &overs.len().to_string())])) } " "
+                @for (i, (name, amt)) in overs.iter().enumerate() {
+                    @if i > 0 { ", " }
+                    (tf("over.item", &[("name", name), ("amount", &c.money(*amt))]))
+                }
+                @if !matches!(view, View::Overview { .. }) {
+                    " " a href=(format!("/months/{}/overview", m.id)) { (t("over.review")) }
+                }
+            }
+        }
+    }
+}
+
+/// Lines whose Spent exceeds Planned, worst first.
+fn overspent_lines(m: &Month) -> Vec<(String, Cents)> {
+    let mut v: Vec<(String, Cents)> = m
+        .expense_lines
+        .iter()
+        .filter_map(|l| {
+            let over = m.line_spent(&l.id) - m.line_planned(&l.id);
+            over.is_positive().then(|| (l.name.clone(), over))
+        })
+        .collect();
+    v.sort_by(|a, b| b.1.cmp(&a.1));
+    v
+}
+
+fn over_badge(c: &Ctx, l: &LineView) -> Markup {
+    let over = l.spent - l.planned;
+    html! {
+        @if over.is_positive() {
+            span class="over-badge" { (icon("alert")) " " (tf("over.line", &[("amount", &c.money(over))])) }
         }
     }
 }
@@ -444,7 +488,11 @@ fn category_details(c: &Ctx, cat: &CategoryView, summary_right: Markup, body: Ma
     html! {
         details class="category" data-category=(cat.name) data-cat-id=(cat.id) open[c.is_open(&cat.name)] {
             summary {
-                span class="cat-name" { (cat.name) }
+                span class="cat-name" { (cat.name)
+                    @if cat.lines.iter().any(|l| l.spent > l.planned) {
+                        span class="cat-over" title=(t("over.category")) { (icon("alert")) span class="visually-hidden" { (t("over.category")) } }
+                    }
+                }
                 (summary_right)
             }
             (body)
@@ -508,6 +556,9 @@ pub fn render_paycheck(c: &Ctx, m: &Month, archived: bool, pid: &Id) -> Markup {
                 (c.money(v.safe_to_spend))
             }
             p class="hero-sub" { (tf("paycheck.hero_sub", &[("date", &short_date(p.date)), ("name", &v.income_line_name)])) }
+            @if v.safe_to_spend.is_negative() {
+                p class="hero-warn" role="status" { (icon("alert")) " " (tf("over.sts", &[("amount", &c.money(v.safe_to_spend.abs()))])) }
+            }
             dl class="stats" {
                 div { dt { (t("paycheck.planned")) } dd data-stat="planned" { (c.money(v.planned_amount)) } }
                 div { dt { (t("paycheck.assigned")) } dd data-stat="assigned" { (c.money(v.allocated)) } }
@@ -584,7 +635,7 @@ pub fn render_paycheck(c: &Ctx, m: &Month, archived: bool, pid: &Id) -> Markup {
                     }, html! {
                         ul class="lines" {
                             @for l in &cat.lines {
-                                li class="line" data-line=(l.name) {
+                                li class={ "line" @if l.spent > l.planned { " over" } } id=(format!("line-{}", l.id)) data-line=(l.name) {
                                     div class="cell name" {
                                         @if structure {
                                             form data-on:submit__prevent=(post_form(&format!("/ui/lines/{}/rename", l.id))) {
@@ -597,6 +648,7 @@ pub fn render_paycheck(c: &Ctx, m: &Month, archived: bool, pid: &Id) -> Markup {
                                         @if l.funders.len() > 1 {
                                             span class="split-note" { (tf("line.split_note", &[("count", &l.funders.len().to_string())])) }
                                         }
+                                        (over_badge(c, l))
                                     }
                                     div class="cell num" data-col="this" {
                                        
@@ -878,7 +930,7 @@ pub fn render_overview(c: &Ctx, m: &Month, archived: bool) -> Markup {
                     }
                     ul class="lines" {
                         @for l in &cat.lines {
-                            li class="line" data-line=(l.name) data-line-id=[structure.then_some(&l.id)] data-cat-id=(cat.id) {
+                            li class={ "line" @if l.spent > l.planned { " over" } } id=(format!("line-{}", l.id)) data-line=(l.name) data-line-id=[structure.then_some(&l.id)] data-cat-id=(cat.id) {
                                 div class="cell name" {
                                     @if structure {
                                         span class="grip" title=(t("line.drag")) aria-hidden="true" { (icon("grip")) }
@@ -889,6 +941,7 @@ pub fn render_overview(c: &Ctx, m: &Month, archived: bool) -> Markup {
                                     } @else {
                                         span class="name-text" { (l.name) }
                                     }
+                                    (over_badge(c, l))
                                     @if !l.funders.is_empty() {
                                         span class="split-note" {
                                             @for (i, f) in l.funders.iter().enumerate() {
@@ -1243,6 +1296,7 @@ pub fn render_transactions(c: &Ctx, m: &Month, archived: bool) -> Markup {
     let line_name = |id: &Option<Id>| id.as_ref().and_then(|l| m.expense_line(l)).map(|l| l.name.clone());
     html! {
         h1 { (tf("tx.title", &[("month", &month_label(m.year_month))])) }
+        (overspent_banner(c, m, &view))
         @if m.is_locked() {
             p class="notice info" { (t("tx.locked_ok")) }
         }

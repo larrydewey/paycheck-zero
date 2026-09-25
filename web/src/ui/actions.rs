@@ -704,6 +704,24 @@ fn tx_from_form(f: &HashMap<String, String>, id: Id) -> AppResult<Transaction> {
     })
 }
 
+/// Warning toasts for lines a transaction change pushed (further) over plan.
+fn overspend_toasts(user: &UserRecord, before: &[(Id, Cents)], m: &Month) -> Vec<Markup> {
+    m.expense_lines
+        .iter()
+        .filter_map(|l| {
+            let over = m.line_spent(&l.id) - m.line_planned(&l.id);
+            let was = before.iter().find(|(id, _)| id == &l.id).map_or(Cents::ZERO, |(_, o)| *o);
+            (over.is_positive() && over > was).then(|| {
+                toast(ToastKind::Warning, &tf("over.toast", &[("name", &l.name), ("amount", &crate::money::format(over, &user.currency))]), None)
+            })
+        })
+        .collect()
+}
+
+fn overs(m: &Month) -> Vec<(Id, Cents)> {
+    m.expense_lines.iter().map(|l| (l.id.clone(), m.line_spent(&l.id) - m.line_planned(&l.id))).collect()
+}
+
 pub async fn add_transaction(State(st): State<Shared>, Extension(user): Extension<AuthUser>, headers: HeaderMap, Path(id): Path<Id>, Form(f): F) -> Sse {
     let user = user.0;
     let view = view_of(&f, View::Transactions { month: id.clone() });
@@ -711,7 +729,12 @@ pub async fn add_transaction(State(st): State<Shared>, Extension(user): Extensio
         Ok(t) => t,
         Err(e) => return failed(&st, &user, &headers, &view, &e).await,
     };
-    month_action(&st, &user, &headers, view, Ok(id), |m| m.add_transaction(tx), |_, _| vec![toast(ToastKind::Success, &t("tx.saved"), None)]).await
+    let u = user.clone();
+    month_action(&st, &user, &headers, view, Ok(id), |m| { let b = overs(m); m.add_transaction(tx).map(|_| b) }, move |b, m| {
+        let mut v = vec![toast(ToastKind::Success, &t("tx.saved"), None)];
+        v.extend(overspend_toasts(&u, b, m));
+        v
+    }).await
 }
 
 pub async fn update_transaction(State(st): State<Shared>, Extension(user): Extension<AuthUser>, headers: HeaderMap, Path(id): Path<Id>, Form(f): F) -> Sse {
@@ -722,7 +745,12 @@ pub async fn update_transaction(State(st): State<Shared>, Extension(user): Exten
         Ok(t) => t,
         Err(e) => return failed(&st, &user, &headers, &view, &e).await,
     };
-    month_action(&st, &user, &headers, view, mid, |m| m.update_transaction(tx), |_, _| vec![toast(ToastKind::Success, &t("tx.saved"), None)]).await
+    let u = user.clone();
+    month_action(&st, &user, &headers, view, mid, |m| { let b = overs(m); m.update_transaction(tx).map(|()| b) }, move |b, m| {
+        let mut v = vec![toast(ToastKind::Success, &t("tx.saved"), None)];
+        v.extend(overspend_toasts(&u, b, m));
+        v
+    }).await
 }
 
 pub async fn delete_transaction(State(st): State<Shared>, Extension(user): Extension<AuthUser>, headers: HeaderMap, Path(id): Path<Id>, Form(f): F) -> Sse {
