@@ -95,6 +95,7 @@ async fn failed(st: &Shared, user: &UserRecord, headers: &HeaderMap, view: &View
     content_sse(st, user, headers, view)
         .await
         .patch_into("#toasts", "append", toast(ToastKind::Error, &msg, Some(&err.technical())))
+        .script("pz.resetInline()")
 }
 
 async fn finish<T>(st: &Shared, user: &UserRecord, headers: &HeaderMap, view: &View, r: AppResult<T>, ok_toasts: impl FnOnce(T) -> Vec<Markup>) -> Sse {

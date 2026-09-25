@@ -132,8 +132,14 @@ form.inline.grow { flex: 1; }
 details.category { background: var(--card); border-radius: var(--radius); box-shadow: var(--shadow); margin: 0 0 0.75rem; overflow: hidden; }
 details.category > summary { display: grid; grid-template-columns: var(--cols); gap: 0.5rem; align-items: center; padding: 0.75rem 1rem; cursor: pointer; list-style: none; font-weight: 700; background: #f9fafb; border-bottom: 1px solid var(--line); }
 details.category > summary::-webkit-details-marker { display: none; }
-details.category > summary .cat-name::before { content: "▸"; display: inline-block; width: 1.1rem; transition: transform 0.15s; }
-details.category[open] > summary .cat-name::before { transform: rotate(90deg); }
+details.category > summary .cat-name::before { content: ""; display: inline-block; width: 0.45rem; height: 0.45rem; margin: 0 0.6rem 0.12rem 0.1rem; border-right: 2px solid currentColor; border-bottom: 2px solid currentColor; transform: rotate(-45deg); transition: transform 0.15s; }
+details.category[open] > summary .cat-name::before { transform: rotate(45deg); }
+.five { --cols: minmax(0, 1fr) 8.5rem 7rem 7rem 7rem; }
+.overview.five { --cols: minmax(0, 1fr) 8.5rem 7rem 7rem 6.5rem; }
+.five .line-tools { grid-column: auto; }
+.cat-tools { padding: 0.35rem 1rem; border-bottom: 1px solid #eef0f3; font-size: 0.9rem; }
+.cat-tools summary { cursor: pointer; color: var(--primary-dark); font-weight: 600; }
+.cat-tools-row { display: flex; gap: 0.25rem; align-items: center; padding-top: 0.4rem; }
 .num { text-align: right; font-variant-numeric: tabular-nums; }
 .col-label { display: none; }
 ul.lines { list-style: none; margin: 0; padding: 0; }
@@ -148,7 +154,6 @@ li.line:last-child { border-bottom: 0; }
 .debt-form label { display: flex; align-items: center; gap: 0.35rem; font-weight: 500; }
 .debt-form input { width: 8rem; }
 .line-tools { justify-content: flex-end; gap: 0.1rem; }
-.cat-tools { display: flex; gap: 0.25rem; align-items: center; padding: 0.5rem 1rem; border-bottom: 1px solid #eef0f3; }
 .add-line { display: flex; gap: 0.5rem; padding: 0.5rem 1rem 0.75rem; }
 .add-category { display: flex; gap: 0.5rem; align-items: flex-end; margin: 1rem 0; flex-wrap: wrap; }
 .add-category label { width: 100%; }
@@ -173,7 +178,8 @@ li.line:last-child { border-bottom: 0; }
 .card.over .card-value { color: var(--danger); }
 
 /* Tables */
-.table { width: 100%; border-collapse: collapse; background: var(--card); border-radius: var(--radius); overflow: hidden; }
+.table { width: 100%; border-collapse: collapse; background: var(--card); }
+.table-scroll { border-radius: var(--radius); }
 .table th, .table td { padding: 0.5rem 0.75rem; border-bottom: 1px solid #eef0f3; text-align: left; vertical-align: top; }
 .table th.num, .table td.num { text-align: right; }
 .table thead th { font-size: 0.8rem; text-transform: uppercase; color: var(--muted); letter-spacing: 0.03em; }
@@ -249,14 +255,39 @@ dialog::backdrop { background: rgb(17 24 39 / 55%); }
 
 /* Phones */
 @media (max-width: 640px) {
-  :root { --cols: 1fr 1fr 1fr; }
+  :root, .five, .overview.five { --cols: 1fr 1fr 1fr; }
+  .five .line-tools { grid-column: 1 / -1; }
   main { padding: 0.75rem; }
   .grid-head { display: none; }
-  details.category > summary { grid-template-columns: 1fr 1fr 1fr; }
+  details.category > summary { grid-template-columns: var(--cols); }
   details.category > summary .cat-name { grid-column: 1 / -1; }
   li.line .cell.name { grid-column: 1 / -1; }
   .col-label { display: block; font-size: 0.7rem; color: var(--muted); text-transform: uppercase; font-weight: 700; }
   .hero-amount { font-size: 2.1rem; }
   .tabs { justify-content: flex-start; }
   .month-card { flex-direction: column; align-items: stretch; }
+}
+
+/* Overview density tweaks */
+.overview.five { --cols: minmax(0, 1fr) 8.5rem 7rem 7rem 7.5rem; }
+.five .line-tools { flex-wrap: nowrap; justify-content: flex-end; }
+.line-tools .icon-btn { min-width: 2rem; }
+details.category > p.muted { padding: 0 1rem; }
+.btn { white-space: nowrap; }
+.card[data-card=variance] .card-value { font-size: 1rem; }
+
+@media (max-width: 640px) {
+  /* Transactions stack as cards on phones. */
+  .tx-table thead { display: none; }
+  .tx-table, .tx-table tbody, .tx-table tr, .tx-table td { display: block; width: 100%; }
+  .tx-table tr { border-bottom: 1px solid var(--line); padding: 0.5rem 0; }
+  .tx-table td { border: 0; padding: 0.15rem 0.75rem; }
+  .tx-table td.num { text-align: left; font-weight: 700; }
+}
+
+@media (max-width: 640px) {
+  .funding.five { --cols: repeat(4, minmax(0, 1fr)); }
+  .funding.five .num { font-size: 0.9rem; }
+  .funding.five input.money { padding: 0.35rem 0.4rem; }
+  details.category > summary .num, li.line .num { min-width: 0; }
 }

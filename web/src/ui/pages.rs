@@ -501,7 +501,7 @@ pub fn render_paycheck(c: &Ctx, m: &Month, archived: bool, pid: &Id) -> Markup {
             }
         }
 
-        section class="funding" aria-labelledby="funding-h" {
+        section class="funding five" aria-labelledby="funding-h" {
             div class="section-head" {
                 h2 id="funding-h" { (t("paycheck.funds")) }
             }
@@ -509,13 +509,12 @@ pub fn render_paycheck(c: &Ctx, m: &Month, archived: bool, pid: &Id) -> Markup {
                 (empty_state(&t("paycheck.empty_title"), &t("paycheck.empty_body"), None))
             } @else {
                 div class="grid-head" aria-hidden="true" {
-                    span { (t("col.name")) } span { (t("col.planned")) } span { (t("col.spent")) } span { (t("col.remaining")) }
+                    span { (t("col.name")) } span { (t("col.this_paycheck")) } span { (t("col.planned")) } span { (t("col.spent")) } span { (t("col.remaining")) }
                 }
                 @for cat in &funding {
                     (category_details(c, cat, html! {
-                        span class="num" data-col="planned" { span class="col-label" { (t("col.planned")) } (c.money(cat.this_paycheck)) }
-                        span class="num" data-col="spent" { span class="col-label" { (t("col.spent")) } (c.money(cat.spent)) }
-                        span class=(if cat.remaining.is_negative() { "num neg" } else { "num" }) data-col="remaining" { span class="col-label" { (t("col.remaining")) } (c.money(cat.remaining)) }
+                        span class="num" data-col="this" { span class="col-label" { (t("col.this_paycheck")) } (c.money(cat.this_paycheck)) }
+                        (triad(c, cat.planned, cat.spent, cat.remaining))
                     }, html! {
                         ul class="lines" {
                             @for l in &cat.lines {
@@ -529,12 +528,12 @@ pub fn render_paycheck(c: &Ctx, m: &Month, archived: bool, pid: &Id) -> Markup {
                                         } @else {
                                             span { (l.name) }
                                         }
-                                        @if l.funders.len() > 1 || l.planned != l.this_paycheck {
-                                            span class="split-note" { (tf("line.split_note", &[("total", &c.money(l.planned)), ("count", &l.funders.len().to_string())])) }
+                                        @if l.funders.len() > 1 {
+                                            span class="split-note" { (tf("line.split_note", &[("count", &l.funders.len().to_string())])) }
                                         }
                                     }
-                                    div class="cell num" data-col="planned" {
-                                        span class="col-label" { (t("col.planned")) }
+                                    div class="cell num" data-col="this" {
+                                        span class="col-label" { (t("col.this_paycheck")) }
                                         @if editable {
                                             form data-on:submit__prevent=(post_form_guarded(&format!("/ui/paychecks/{}/lines/{}", pid, l.id))) {
                                                 (view_input(&view))
@@ -545,6 +544,7 @@ pub fn render_paycheck(c: &Ctx, m: &Month, archived: bool, pid: &Id) -> Markup {
                                             span { (c.money(l.this_paycheck)) }
                                         }
                                     }
+                                    span class="cell num" data-col="planned" { span class="col-label" { (t("col.planned")) } (c.money(l.planned)) }
                                     span class="cell num" data-col="spent" { span class="col-label" { (t("col.spent")) } (c.money(l.spent)) }
                                     span class=(if l.remaining.is_negative() { "cell num neg" } else { "cell num" }) data-col="remaining" { span class="col-label" { (t("col.remaining")) } (c.money(l.remaining)) }
                                 }
@@ -724,16 +724,19 @@ pub fn render_overview(c: &Ctx, m: &Month, archived: bool) -> Markup {
             (empty_state(&t("overview.no_income_title"), &t("overview.no_income_body"),
                 Some(html! { a class="btn primary" href=(format!("/months/{}/income", m.id)) { (t("income.add")) } })))
         }
-        section class="overview" aria-label=(t("overview.categories")) {
+        section class="overview five" aria-label=(t("overview.categories")) {
             div class="grid-head" aria-hidden="true" {
-                span { (t("col.name")) } span { (t("col.planned")) } span { (t("col.spent")) } span { (t("col.remaining")) }
+                span { (t("col.name")) } span { (t("col.planned")) } span { (t("col.spent")) } span { (t("col.remaining")) } span {}
             }
             @for cat in &cats {
                 (category_details(c, cat, html! {
                     (triad(c, cat.planned, cat.spent, cat.remaining))
+                    span {}
                 }, html! {
                     @if structure {
-                        div class="cat-tools" {
+                        details class="cat-tools" {
+                            summary { (tf("category.edit", &[("name", &cat.name)])) }
+                            div class="cat-tools-row" {
                             form class="inline grow" data-on:submit__prevent=(post_form(&format!("/ui/categories/{}/rename", cat.id))) {
                                 (view_input(&view))
                                 input type="text" name="name" value=(cat.name) required maxlength="100" aria-label=(tf("category.name_label", &[("name", &cat.name)])) data-on:change="el.form.requestSubmit()";
@@ -743,6 +746,7 @@ pub fn render_overview(c: &Ctx, m: &Month, archived: bool) -> Markup {
                             form class="inline" data-on:submit__prevent=(post_form(&format!("/ui/categories/{}/delete", cat.id))) {
                                 (view_input(&view))
                                 button type="submit" class="icon-btn danger" aria-label=(tf("category.delete", &[("name", &cat.name)])) data-confirm=(tf("category.delete_confirm", &[("name", &cat.name)])) { "🗑" }
+                            }
                             }
                         }
                     }
@@ -789,6 +793,16 @@ pub fn render_overview(c: &Ctx, m: &Month, archived: bool) -> Markup {
                                 }
                                 span class="cell num" data-col="spent" { span class="col-label" { (t("col.spent")) } (c.money(l.spent)) }
                                 span class=(if l.remaining.is_negative() { "cell num neg" } else { "cell num" }) data-col="remaining" { span class="col-label" { (t("col.remaining")) } (c.money(l.remaining)) }
+                                @if structure {
+                                    div class="line-tools" {
+                                        (move_btn(format!("/ui/lines/{}/move", l.id), "up", tf("line.move_up", &[("name", &l.name)])))
+                                        (move_btn(format!("/ui/lines/{}/move", l.id), "down", tf("line.move_down", &[("name", &l.name)])))
+                                        form class="inline" data-on:submit__prevent=(post_form(&format!("/ui/lines/{}/delete", l.id))) {
+                                            (view_input(&view))
+                                            button type="submit" class="icon-btn danger" aria-label=(tf("line.delete", &[("name", &l.name)])) data-confirm=(tf("line.delete_confirm", &[("name", &l.name)])) { "🗑" }
+                                        }
+                                    }
+                                }
                                 @if l.is_debt {
                                     div class="debt" {
                                         @if structure {
@@ -805,16 +819,6 @@ pub fn render_overview(c: &Ctx, m: &Month, archived: bool) -> Markup {
                                             @if l.planned < min {
                                                 span class="warn-text" { (tf("debt.below_minimum", &[("amount", &c.money(min - l.planned))])) }
                                             }
-                                        }
-                                    }
-                                }
-                                @if structure {
-                                    div class="line-tools" {
-                                        (move_btn(format!("/ui/lines/{}/move", l.id), "up", tf("line.move_up", &[("name", &l.name)])))
-                                        (move_btn(format!("/ui/lines/{}/move", l.id), "down", tf("line.move_down", &[("name", &l.name)])))
-                                        form class="inline" data-on:submit__prevent=(post_form(&format!("/ui/lines/{}/delete", l.id))) {
-                                            (view_input(&view))
-                                            button type="submit" class="icon-btn danger" aria-label=(tf("line.delete", &[("name", &l.name)])) data-confirm=(tf("line.delete_confirm", &[("name", &l.name)])) { "🗑" }
                                         }
                                     }
                                 }
@@ -1092,6 +1096,7 @@ pub fn render_transactions(c: &Ctx, m: &Month, archived: bool) -> Markup {
             @if txs.is_empty() {
                 (empty_state(&t("tx.empty_title"), &t("tx.empty_body"), None))
             } @else {
+                div class="table-scroll" tabindex="0" role="region" aria-labelledby="tx-list-h" {
                 table class="table tx-table" id="tx-table" {
                     thead { tr {
                         th scope="col" { (t("col.date")) } th scope="col" { (t("tx.payee")) } th scope="col" { (t("tx.line")) }
@@ -1130,6 +1135,7 @@ pub fn render_transactions(c: &Ctx, m: &Month, archived: bool) -> Markup {
                             }
                         }
                     }
+                }
                 }
             }
         }
@@ -1199,7 +1205,7 @@ fn comparison(c: &Ctx, id: &str, title: &str, cmp: &Comparison) -> Markup {
             @if cmp.other.is_none() {
                 p class="muted" { (tf("report.no_data", &[("month", &oth)])) }
             }
-            div class="table-scroll" {
+            div class="table-scroll" tabindex="0" role="region" aria-label=(title) {
                 (figures_table(c, id, &tf("report.caption_vs", &[("a", &cur), ("b", &oth)]), &short_month(cmp.current_month), &cmp.current,
                     Some(&short_month(cmp.other_month)), cmp.other.as_ref(), &cmp.category_names))
             }
@@ -1223,7 +1229,7 @@ pub fn render_reports(c: &Ctx, m: &Month, all: &[Month]) -> Markup {
         section class="report-section" aria-labelledby="ytd-h" {
             h2 id="ytd-h" class="h3" { (t("report.ytd")) }
             p class="muted" { (tf("report.ytd_range", &[("from", &ytd.from.format("%b %-d, %Y").to_string()), ("through", &month_label(ytd.through)), ("n", &ytd.months_included.to_string())])) }
-            div class="table-scroll" {
+            div class="table-scroll" tabindex="0" role="region" aria-label=(t("report.ytd")) {
                 (figures_table(c, "ytd", &t("report.ytd"), &t("report.ytd_short"), &ytd.figures, None, None, &names))
             }
         }

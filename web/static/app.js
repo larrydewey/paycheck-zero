@@ -85,7 +85,14 @@
     if (kind !== "error") setTimeout(function () { d.remove(); }, 5000);
   }
 
-  window.pz = { cents: cents, fmt: fmt, guard: guard, t: t, fillIncome: fillIncome, toast: toast };
+  /** After a rejected edit, inline fields snap back to the server's values. */
+  function resetInline() {
+    document.querySelectorAll("#content li.line form, #content .cat-tools form").forEach(function (f) {
+      f.querySelectorAll("input").forEach(function (i) { i.value = i.defaultValue; i.removeAttribute("aria-invalid"); });
+    });
+  }
+
+  window.pz = { cents: cents, fmt: fmt, guard: guard, t: t, fillIncome: fillIncome, toast: toast, resetInline: resetInline };
 
   // ------------------------------------------------------------------
   // Confirmations: buttons with data-confirm must be confirmed first.
