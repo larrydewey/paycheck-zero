@@ -12,7 +12,7 @@ Everything in the spec is implemented and tested. **Not yet "v1 complete"** unde
 | Storage (`storage`) | Done — SQLite, PostgreSQL 17, MariaDB 11 verified |
 | REST API §9, auth §13.5, sync §13.7 | Done — 5 in-process HTTP suites |
 | Datastar UI §3/§14, reports §15, exports §13.6, PWA | Done |
-| Playwright §13.1 | 83 tests × 4 browsers = 332 passing (stable over repeated runs); Chromium suite also passes on PostgreSQL and MariaDB |
+| Playwright §13.1 | 350 runs across 4 browsers passing, stable over repeated runs (earlier suite also passed on PostgreSQL and MariaDB) |
 | Accessibility | axe WCAG 2.0/2.1 A+AA: zero violations on every screen |
 
 ## Decisions (agreed with the user before building)
@@ -39,6 +39,28 @@ Everything in the spec is implemented and tested. **Not yet "v1 complete"** unde
 - "Today" is the user's timezone date. In test mode it is pinned by `/__test/reset`.
 - Month-level `total_spent` / CSV month row counts line Spent only (§2.10), not unlinked expenses.
 - UI mutation endpoints require the `Datastar-Request` header (CSRF defence for cookie auth).
+
+## UX polish pass (2026-09-25)
+
+A screenshot tour of every screen on desktop and phone (`npx playwright test -c tour.config.ts` in `e2e/`, output in `e2e/tour-shots/`) drove these changes:
+
+- Phones get a bottom tab bar (top tabs were cut off) and one sticky column header instead of labels on every row.
+- Transactions are a compact list; editing opens a dialog; Expense/Income is a toggle.
+- The variance flow is one panel with numbered steps. The month banner no longer says "Every dollar has a job" while a variance is pending.
+- Summary cards: income vs plan counts only paychecks received so far (no more "−$4,000" before payday); spending shows a progress meter.
+- Reports have a planned-vs-spent bar chart, and all-zero rows are hidden.
+- Assign form: tidy grid and a "Use all $X" shortcut; it's hidden once the paycheck is fully assigned.
+- Styled confirmation dialogs, a saving indicator and progress bar, SVG icons, drag-and-drop reordering on the overview (mouse; move buttons remain for keyboard/phones), grouped timezone picker, dark mode (axe-checked), and "no income yet" status for empty months.
+
+Bugs this caught:
+
+- An edit dialog stayed modal after saving, leaving the page inert. The dialog is now closed before the server re-renders.
+- A late income-suggestion response re-opened the box after "No thanks". Dismissal is now sticky until the user types again.
+- Error toasts covered the last controls on phones; they now sit at the top.
+
+## Open question for the product owner
+
+- **Safe-to-Spend (§2.7):** the formula is `planned − allocations − tagged spending`. A properly fully-assigned paycheck therefore always shows `$0 − spending`, i.e. a negative number as soon as anything is tagged. Implemented literally (the spec is frozen). The likely intent is `planned − tagged spending` (or `allocations − tagged spending`); it needs a decision.
 
 ## Known limitations
 
