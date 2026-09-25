@@ -187,6 +187,79 @@ pub fn to_csv(m: &Month) -> String {
     out
 }
 
+/// Serializes rows as CSV (CRLF line endings, RFC 4180 quoting).
+#[must_use]
+pub fn csv_rows(rows: &[Vec<String>]) -> String {
+    let mut out = String::new();
+    for r in rows {
+        out.push_str(&r.iter().map(|f| esc(f)).collect::<Vec<_>>().join(","));
+        out.push_str("\r\n");
+    }
+    out
+}
+
+#[must_use]
+pub fn csv_download(filename: &str, body: String) -> Response {
+    let mut r = body.into_response();
+    r.headers_mut().insert(CONTENT_TYPE, HeaderValue::from_static("text/csv; charset=utf-8"));
+    if let Ok(v) = HeaderValue::from_str(&format!("attachment; filename=\"{filename}\"")) {
+        r.headers_mut().insert(CONTENT_DISPOSITION, v);
+    }
+    r
+}
+
+/// Rows for a figures report: category and line rows, planned/actual per period.
+#[must_use]
+pub fn figures_rows(periods: &[(String, Option<&paycheckzero_core::report::Figures>)]) -> Vec<Vec<String>> {
+    let mut header = vec!["row".to_string(), "category".into(), "line".into()];
+    for (label, _) in periods {
+        header.push(format!("{label} planned"));
+        header.push(format!("{label} actual"));
+    }
+    let mut rows = vec![header];
+    let pair = |f: Option<&paycheckzero_core::report::Figures>, g: &dyn Fn(&paycheckzero_core::report::Figures) -> (Cents, Cents)| {
+        f.map_or_else(|| vec![String::new(), String::new()], |f| {
+            let (a, b) = g(f);
+            vec![plain(a), plain(b)]
+        })
+    };
+    let mut r = vec!["income".into(), String::new(), String::new()];
+    for (_, f) in periods { r.extend(pair(*f, &|f| (f.planned_income, f.actual_income))); }
+    rows.push(r);
+    let mut r = vec!["expenses".into(), String::new(), String::new()];
+    for (_, f) in periods { r.extend(pair(*f, &|f| (f.planned_expense, f.actual_expense))); }
+    rows.push(r);
+    let mut cats: Vec<String> = Vec::new();
+    for (_, f) in periods {
+        for c in f.map(|f| f.categories.as_slice()).unwrap_or_default() {
+            if !cats.contains(&c.name) { cats.push(c.name.clone()); }
+        }
+    }
+    for cat in &cats {
+        let mut r = vec!["category".into(), cat.clone(), String::new()];
+        for (_, f) in periods {
+            r.extend(pair(*f, &|f| f.category(cat).map_or((Cents::ZERO, Cents::ZERO), |c| (c.planned, c.actual))));
+        }
+        rows.push(r);
+        let mut lines: Vec<String> = Vec::new();
+        for (_, f) in periods {
+            for l in f.and_then(|f| f.category(cat)).map(|c| c.lines.as_slice()).unwrap_or_default() {
+                if !lines.contains(&l.name) { lines.push(l.name.clone()); }
+            }
+        }
+        for ln in &lines {
+            let mut r = vec!["line".into(), cat.clone(), ln.clone()];
+            for (_, f) in periods {
+                r.extend(pair(*f, &|f| {
+                    f.category(cat).and_then(|c| c.lines.iter().find(|l| &l.name == ln)).map_or((Cents::ZERO, Cents::ZERO), |l| (l.planned, l.actual))
+                }));
+            }
+            rows.push(r);
+        }
+    }
+    rows
+}
+
 #[must_use]
 pub fn filename(m: &Month, ext: &str) -> String {
     format!("{}-{}.{ext}", t("app.file_prefix"), m.year_month.format("%Y-%m"))

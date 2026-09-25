@@ -58,6 +58,21 @@ Bugs this caught:
 - A late income-suggestion response re-opened the box after "No thanks". Dismissal is now sticky until the user types again.
 - Error toasts covered the last controls on phones; they now sit at the top.
 
+## Round 2: owner feedback (2026-09-25)
+
+| # | Request | Done |
+|---|---------|------|
+| 1 | Add-line (and other add forms) should clear after submit | Add forms empty after success; a rejected add keeps what you typed |
+| 2 | Automatic 10% tithing | Owner chose one-click: "Give 10% ($X)" per paycheck funds Giving → Tithe (created if missing), rounded half-even |
+| 3 | Save on mouse leave | Changed inline fields save when the pointer leaves the row (blur/Enter still work) |
+| 4 | Field math (600+80) | `+ - * / ( )` in every amount field, exact fractions, same evaluator on server and in browser; field shows the result |
+| 5–7 | Edit per-paycheck funding on the month page, show zeros, choose paycheck when adding | Owner chose expandable: each line has "By paycheck", with one editable amount per paycheck ($0.00 included); "Add a line" takes an amount and a paycheck |
+| 8 | Income tagged to a paycheck should reconcile "Actually received" | Deposits (income tagged to a paycheck) set its actual and mark it Received; reports don't double-count |
+| 9 | Split transactions | Parts across lines *and* paychecks, total must match, edit/delete as one; schema v2 adds `transactions.split_group` |
+| 10 | Overspending warnings | Month banner, row highlight + "Over by $X", category flag, toast when a transaction overspends, negative Safe-to-Spend warning |
+| 11 | Granular reports, exporting | Report tabs: Summary (category → line drill-down), Trends (3/6/12 months, categories or lines, actual or planned), Payees (any date range), Export (month CSV/JSON, transactions for any date range, every report as CSV) |
+| 12 | Android doesn't log in | Not reproducible (login works in Android emulation, including over a LAN IP). Hardened: sign-in works without JavaScript, explains dropped cookies and script failures, and the server logs each attempt with the user agent. Needs a retry on the device |
+
 ## Open question for the product owner
 
 - **Safe-to-Spend (§2.7):** the formula is `planned − allocations − tagged spending`. A properly fully-assigned paycheck therefore always shows `$0 − spending`, i.e. a negative number as soon as anything is tagged. Implemented literally (the spec is frozen). The likely intent is `planned − tagged spending` (or `allocations − tagged spending`); it needs a decision.

@@ -12,6 +12,19 @@ cargo run -p paycheckzero-web          # http://127.0.0.1:8080, data in ./payche
 
 Open the app, create the (single) account, add your first paycheck, and start funding it.
 
+### Using it from your phone
+
+The server listens only on this computer by default (`127.0.0.1`). To reach it from a phone on the same Wi-Fi:
+
+```bash
+PZ_BIND=0.0.0.0:8080 cargo run -p paycheckzero-web
+# then on the phone open http://<this computer's IP>:8080   (e.g. http://192.168.1.20:8080)
+```
+
+- Allow port 8080 through the computer's firewall if the page doesn't load.
+- Leave `PZ_SECURE_COOKIES` unset unless you serve over HTTPS. With it set, browsers drop the sign-in cookie on plain `http://`, and the login page will say so.
+- If sign-in does nothing, the login page and the server log (`sign-in ok` / `sign-in failed` lines, with the browser's user agent) now show why.
+
 ### Production
 
 ```bash

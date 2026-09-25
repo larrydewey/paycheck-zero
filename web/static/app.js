@@ -268,6 +268,26 @@
     toast("warning", t("online_only"));
   }, true);
 
+  // Report drill-down: category rows expand to their lines.
+  document.addEventListener("click", function (e) {
+    var b = e.target instanceof Element ? e.target.closest("[data-toggle-rows]") : null;
+    if (!b) return;
+    var open = b.getAttribute("aria-expanded") !== "true";
+    b.setAttribute("aria-expanded", String(open));
+    b.closest("table").querySelectorAll('[data-parent="' + b.dataset.toggleRows + '"]').forEach(function (r) { r.hidden = !open; });
+  });
+
+  // GET forms that produce a file download it (Safari would display it).
+  document.addEventListener("submit", function (e) {
+    var f = e.target;
+    if (!(f instanceof HTMLFormElement) || !f.hasAttribute("data-download-form")) return;
+    e.preventDefault();
+    var url = new URL(f.action, location.href);
+    new FormData(f).forEach(function (v, k) { url.searchParams.set(k, String(v)); });
+    var a = document.createElement("a");
+    a.href = url.pathname + url.search; a.download = ""; document.body.appendChild(a); a.click(); a.remove();
+  });
+
   window.pz = { clearDone: clearDone, checkSplit: checkSplit, cents: cents, fmt: fmt, guard: guard, t: t, fillIncome: fillIncome, toast: toast, resetInline: resetInline };
 
   // ------------------------------------------------------------------

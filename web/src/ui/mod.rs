@@ -35,6 +35,7 @@ pub fn routes(state: Shared) -> Router<Shared> {
         .route("/months/{id}/transactions/content", get(pages::transactions_content))
         .route("/months/{id}/reports", get(pages::reports_page))
         .route("/months/{id}/reports/content", get(pages::reports_content))
+        .route("/months/{id}/reports/export/{kind}", get(pages::report_csv))
         .route("/months/{id}/export.csv", get(pages::export_csv))
         .route("/months/{id}/snapshot.json", get(pages::export_snapshot))
         .route("/settings", get(pages::settings_page))
@@ -106,7 +107,7 @@ pub enum View {
     Overview { month: Id },
     Income { month: Id, welcome: bool },
     Transactions { month: Id },
-    Reports { month: Id },
+    Reports { month: Id, q: ReportQuery },
     Settings,
 }
 
@@ -119,7 +120,7 @@ impl View {
             View::Overview { month } => format!("overview:{month}"),
             View::Income { month, .. } => format!("income:{month}"),
             View::Transactions { month } => format!("transactions:{month}"),
-            View::Reports { month } => format!("reports:{month}"),
+            View::Reports { month, .. } => format!("reports:{month}"),
             View::Settings => "settings".into(),
         }
     }
@@ -136,7 +137,7 @@ impl View {
             "overview" => View::Overview { month: a? },
             "income" => View::Income { month: a?, welcome: false },
             "transactions" => View::Transactions { month: a? },
-            "reports" => View::Reports { month: a? },
+            "reports" => View::Reports { month: a?, q: ReportQuery::default() },
             "settings" => View::Settings,
             _ => return None,
         })
@@ -149,7 +150,7 @@ impl View {
             | View::Overview { month }
             | View::Income { month, .. }
             | View::Transactions { month }
-            | View::Reports { month } => Some(month),
+            | View::Reports { month, .. } => Some(month),
             View::Months { .. } | View::Settings => None,
         }
     }
@@ -174,7 +175,7 @@ impl View {
                 }
             }
             View::Transactions { month } => format!("/months/{month}/transactions"),
-            View::Reports { month } => format!("/months/{month}/reports"),
+            View::Reports { month, q } => format!("/months/{month}/reports{}", q.query_string()),
             View::Settings => "/settings".into(),
         }
     }
@@ -184,8 +185,85 @@ impl View {
         match self {
             View::Months { archived } => format!("/months/content{}", if *archived { "?archived=1" } else { "" }),
             View::Income { month, welcome } => format!("/months/{month}/income/content{}", if *welcome { "?welcome=1" } else { "" }),
+            View::Reports { month, q } => format!("/months/{month}/reports/content{}", q.query_string()),
             other => format!("{}/content", other.url()),
         }
+    }
+}
+
+/// Reports page state, carried in the URL so it can be bookmarked.
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Deserialize)]
+pub struct ReportQuery {
+    #[serde(default)]
+    pub tab: Option<String>,
+    /// Trend window in months (3, 6 or 12).
+    #[serde(default)]
+    pub n: Option<usize>,
+    /// Trend rows: "category" (default) or "line".
+    #[serde(default)]
+    pub level: Option<String>,
+    /// Trend values: "spent" (default) or "planned".
+    #[serde(default)]
+    pub metric: Option<String>,
+    #[serde(default)]
+    pub from: Option<String>,
+    #[serde(default)]
+    pub to: Option<String>,
+}
+
+impl ReportQuery {
+    #[must_use]
+    pub fn tab(&self) -> &str {
+        match self.tab.as_deref() {
+            Some(t @ ("trends" | "payees" | "export")) => t,
+            _ => "summary",
+        }
+    }
+
+    #[must_use]
+    pub fn months(&self) -> usize {
+        match self.n {
+            Some(3) => 3,
+            Some(12) => 12,
+            _ => 6,
+        }
+    }
+
+    #[must_use]
+    pub fn lines(&self) -> bool {
+        self.level.as_deref() == Some("line")
+    }
+
+    #[must_use]
+    pub fn planned(&self) -> bool {
+        self.metric.as_deref() == Some("planned")
+    }
+
+    /// Date range, defaulting to the month.
+    #[must_use]
+    pub fn range(&self, ym: NaiveDate) -> (NaiveDate, NaiveDate) {
+        let parse = |s: &Option<String>| s.as_deref().and_then(|v| NaiveDate::parse_from_str(v, "%Y-%m-%d").ok());
+        let from = parse(&self.from).unwrap_or(ym);
+        let to = parse(&self.to).unwrap_or_else(|| paycheckzero_core::recurrence::last_of_month(ym));
+        if to < from { (to, from) } else { (from, to) }
+    }
+
+    #[must_use]
+    pub fn query_string(&self) -> String {
+        let mut parts = Vec::new();
+        if self.tab() != "summary" {
+            parts.push(format!("tab={}", self.tab()));
+        }
+        if let Some(n) = self.n {
+            parts.push(format!("n={n}"));
+        }
+        for (k, v) in [("level", &self.level), ("metric", &self.metric), ("from", &self.from), ("to", &self.to)] {
+            if let Some(v) = v {
+                let clean: String = v.chars().filter(|c| c.is_ascii_alphanumeric() || *c == '-').collect();
+                parts.push(format!("{k}={clean}"));
+            }
+        }
+        if parts.is_empty() { String::new() } else { format!("?{}", parts.join("&")) }
     }
 }
 

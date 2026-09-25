@@ -26,6 +26,16 @@ pub struct CategoryFigures {
     pub name: String,
     pub planned: Cents,
     pub actual: Cents,
+    /// Line-level drill-down (matched across months by name).
+    #[serde(default)]
+    pub lines: Vec<LineFigures>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LineFigures {
+    pub name: String,
+    pub planned: Cents,
+    pub actual: Cents,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -48,6 +58,15 @@ impl Figures {
                 Some(x) => {
                     x.planned += c.planned;
                     x.actual += c.actual;
+                    for l in &c.lines {
+                        match x.lines.iter_mut().find(|y| y.name == l.name) {
+                            Some(y) => {
+                                y.planned += l.planned;
+                                y.actual += l.actual;
+                            }
+                            None => x.lines.push(l.clone()),
+                        }
+                    }
                 }
                 None => self.categories.push(c.clone()),
             }
@@ -72,6 +91,10 @@ pub fn month_figures(m: &Month) -> Figures {
                 name: c.name.clone(),
                 planned: lines.iter().map(|l| m.line_planned(&l.id)).sum(),
                 actual: lines.iter().map(|l| m.line_spent(&l.id)).sum(),
+                lines: lines
+                    .iter()
+                    .map(|l| LineFigures { name: l.name.clone(), planned: m.line_planned(&l.id), actual: m.line_spent(&l.id) })
+                    .collect(),
             }
         })
         .collect();
@@ -82,7 +105,7 @@ pub fn month_figures(m: &Month) -> Figures {
         .map(|t| t.amount.abs())
         .sum();
     if unlinked_expense.is_positive() {
-        categories.push(CategoryFigures { name: UNCATEGORIZED.into(), planned: Cents::ZERO, actual: unlinked_expense });
+        categories.push(CategoryFigures { name: UNCATEGORIZED.into(), planned: Cents::ZERO, actual: unlinked_expense, lines: Vec::new() });
     }
     let actual_income = m
         .paychecks
@@ -242,4 +265,98 @@ pub fn summary_cards(m: &Month) -> SummaryCards {
             _ => SpendingStatus::Under,
         },
     }
+}
+
+/// The `n` months ending at `through` (oldest first), with figures for the
+/// months that have a budget.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Trend {
+    pub months: Vec<NaiveDate>,
+    pub figures: Vec<Option<Figures>>,
+    /// Category names in first-seen order across the window.
+    pub category_names: Vec<String>,
+}
+
+#[must_use]
+pub fn trend(through: NaiveDate, all: &[Month], n: usize) -> Trend {
+    let mut months = Vec::with_capacity(n);
+    let mut ym = crate::recurrence::first_of_month(through);
+    for _ in 0..n.max(1) {
+        months.push(ym);
+        ym = previous_month(ym);
+    }
+    months.reverse();
+    let figures: Vec<Option<Figures>> =
+        months.iter().map(|ym| all.iter().find(|m| m.year_month == *ym).map(month_figures)).collect();
+    let mut names: Vec<String> = Vec::new();
+    for f in figures.iter().flatten() {
+        for c in &f.categories {
+            if !names.contains(&c.name) {
+                names.push(c.name.clone());
+            }
+        }
+    }
+    Trend { months, figures, category_names: names }
+}
+
+/// Spending and income grouped by payee over a date range (inclusive).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PayeeRow {
+    pub payee: String,
+    pub count: usize,
+    pub spent: Cents,
+    pub received: Cents,
+}
+
+/// Payee name used for transactions without one.
+pub const NO_PAYEE: &str = "(no payee)";
+
+#[must_use]
+pub fn payees(all: &[Month], from: NaiveDate, to: NaiveDate) -> Vec<PayeeRow> {
+    let mut rows: Vec<PayeeRow> = Vec::new();
+    let mut seen_groups: Vec<crate::Id> = Vec::new();
+    for m in all {
+        for t in m.transactions.iter().filter(|t| t.date >= from && t.date <= to) {
+            let name = t.payee.clone().unwrap_or_else(|| NO_PAYEE.to_string());
+            let key = name.to_lowercase();
+            let idx = match rows.iter().position(|r| r.payee.to_lowercase() == key) {
+                Some(i) => i,
+                None => {
+                    rows.push(PayeeRow { payee: name, count: 0, spent: Cents::ZERO, received: Cents::ZERO });
+                    rows.len() - 1
+                }
+            };
+            let r = &mut rows[idx];
+            // A split payment counts once.
+            let new_payment = match &t.split_group {
+                Some(g) if seen_groups.contains(g) => false,
+                Some(g) => {
+                    seen_groups.push(g.clone());
+                    true
+                }
+                None => true,
+            };
+            if new_payment {
+                r.count += 1;
+            }
+            if t.amount.is_negative() {
+                r.spent += t.amount.abs();
+            } else {
+                r.received += t.amount;
+            }
+        }
+    }
+    rows.sort_by(|a, b| b.spent.cmp(&a.spent).then(b.received.cmp(&a.received)).then(a.payee.cmp(&b.payee)));
+    rows
+}
+
+/// Every transaction in a date range across months, oldest first.
+#[must_use]
+pub fn transactions_between(all: &[Month], from: NaiveDate, to: NaiveDate) -> Vec<(&Month, &crate::models::Transaction)> {
+    let mut out: Vec<(&Month, &crate::models::Transaction)> = all
+        .iter()
+        .flat_map(|m| m.transactions.iter().filter(move |t| t.date >= from && t.date <= to).map(move |t| (m, t)))
+        .collect();
+    out.sort_by_key(|(m, t)| (t.date, m.year_month));
+    out
 }

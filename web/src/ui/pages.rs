@@ -77,9 +77,9 @@ pub async fn render_view(st: &Shared, user: &UserRecord, headers: &HeaderMap, vi
                 View::Overview { .. } => render_overview(&c, m, loaded.archived),
                 View::Income { welcome, .. } => render_income(&c, m, loaded.archived, *welcome),
                 View::Transactions { .. } => render_transactions(&c, m, loaded.archived),
-                View::Reports { .. } => {
+                View::Reports { q, .. } => {
                     let all = st.all_months(user).await?;
-                    render_reports(&c, m, &all)
+                    render_reports(&c, m, &all, q)
                 }
                 View::Months { .. } | View::Settings => html! {},
             }
@@ -270,12 +270,12 @@ pub async fn transactions_content(State(st): State<Shared>, Extension(user): Ext
     content_sse(&st, &user.0, &headers, &View::Transactions { month: id }).await
 }
 
-pub async fn reports_page(State(st): State<Shared>, Extension(user): Extension<AuthUser>, Path(id): Path<Id>) -> Page {
-    month_page(&st, &user.0, &id, View::Reports { month: id.clone() }, "reports", &t("nav.reports")).await
+pub async fn reports_page(State(st): State<Shared>, Extension(user): Extension<AuthUser>, Path(id): Path<Id>, Query(q): Query<ReportQuery>) -> Page {
+    month_page(&st, &user.0, &id, View::Reports { month: id.clone(), q }, "reports", &t("nav.reports")).await
 }
 
-pub async fn reports_content(State(st): State<Shared>, Extension(user): Extension<AuthUser>, headers: HeaderMap, Path(id): Path<Id>) -> Sse {
-    content_sse(&st, &user.0, &headers, &View::Reports { month: id }).await
+pub async fn reports_content(State(st): State<Shared>, Extension(user): Extension<AuthUser>, headers: HeaderMap, Path(id): Path<Id>, Query(q): Query<ReportQuery>) -> Sse {
+    content_sse(&st, &user.0, &headers, &View::Reports { month: id, q }).await
 }
 
 #[derive(Deserialize)]
@@ -1503,6 +1503,17 @@ pub fn render_transactions(c: &Ctx, m: &Month, archived: bool) -> Markup {
 // Reports (spec §15)
 // ----------------------------------------------------------------------
 
+/// Line names of a category in either period, current period's order first.
+fn union_line_names(a: &report::CategoryFigures, b: Option<&report::CategoryFigures>) -> Vec<String> {
+    let mut names: Vec<String> = a.lines.iter().map(|l| l.name.clone()).collect();
+    for l in b.map(|b| b.lines.as_slice()).unwrap_or_default() {
+        if !names.contains(&l.name) {
+            names.push(l.name.clone());
+        }
+    }
+    names
+}
+
 #[allow(clippy::too_many_arguments)]
 fn figures_table(c: &Ctx, id: &str, caption: &str, cur_label: &str, cur: &Figures, other_label: Option<&str>, other: Option<&Figures>, names: &[String]) -> Markup {
     let cat = |f: &Figures, n: &str| f.category(n).cloned().unwrap_or_default();
@@ -1543,12 +1554,32 @@ fn figures_table(c: &Ctx, id: &str, caption: &str, cur_label: &str, cur: &Figure
                     !(a.planned.is_zero() && a.actual.is_zero() && b.planned.is_zero() && b.actual.is_zero())
                 }) {
                     @let a = cat(cur, n);
+                    @let b = other.map(|o| cat(o, n));
+                    @let line_names = union_line_names(&a, b.as_ref());
+                    @let group = format!("{id}-{}", n.to_lowercase().replace(' ', "-"));
                     tr data-row=(format!("cat:{n}")) class="cat-row" {
-                        th scope="row" { (n) }
+                        th scope="row" {
+                            @if line_names.is_empty() { (n) } @else {
+                                button type="button" class="row-toggle" aria-expanded="false" data-toggle-rows=(group) { span class="caret" aria-hidden="true" {} (n) }
+                            }
+                        }
                         td class="num" { (c.money(a.planned)) } td class="num" { (c.money(a.actual)) }
                         @if other_label.is_some() {
-                            @if let Some(o) = other { @let b = cat(o, n); td class="num" { (c.money(b.planned)) } td class="num" { (c.money(b.actual)) } }
+                            @if let Some(b) = &b { td class="num" { (c.money(b.planned)) } td class="num" { (c.money(b.actual)) } }
                             @else { td class="num" { "—" } td class="num" { "—" } }
+                        }
+                    }
+                    @for ln in &line_names {
+                        @let la = a.lines.iter().find(|l| &l.name == ln).cloned().unwrap_or_default();
+                        tr class="line-row" data-row=(format!("line:{n}:{ln}")) data-parent=(group) hidden {
+                            th scope="row" { (ln) }
+                            td class="num" { (c.money(la.planned)) } td class="num" { (c.money(la.actual)) }
+                            @if other_label.is_some() {
+                                @if let Some(b) = &b {
+                                    @let lb = b.lines.iter().find(|l| &l.name == ln).cloned().unwrap_or_default();
+                                    td class="num" { (c.money(lb.planned)) } td class="num" { (c.money(lb.actual)) }
+                                } @else { td class="num" { "—" } td class="num" { "—" } }
+                            }
                         }
                     }
                 }
@@ -1610,25 +1641,308 @@ fn category_chart(c: &Ctx, f: &Figures) -> Markup {
     }
 }
 
-pub fn render_reports(c: &Ctx, m: &Month, all: &[Month]) -> Markup {
+fn report_tabs(m: &Month, q: &ReportQuery) -> Markup {
+    let tab = |key: &str, label: String| {
+        let nq = ReportQuery { tab: Some(key.into()), ..ReportQuery::default() };
+        html! {
+            a href=(format!("/months/{}/reports{}", m.id, nq.query_string())) class=(if q.tab() == key { "rtab active" } else { "rtab" })
+                aria-current=[(q.tab() == key).then_some("page")] { (label) }
+        }
+    };
+    html! {
+        nav class="report-tabs" aria-label=(t("report.tabs")) {
+            (tab("summary", t("report.tab_summary")))
+            (tab("trends", t("report.tab_trends")))
+            (tab("payees", t("report.tab_payees")))
+            (tab("export", t("report.tab_export")))
+        }
+    }
+}
+
+fn csv_link(m: &Month, kind: &str, q: &ReportQuery) -> Markup {
+    html! {
+        a class="btn small" href=(format!("/months/{}/reports/export/{kind}.csv{}", m.id, q.query_string())) download {
+            (t("report.download_csv"))
+        }
+    }
+}
+
+/// Tiny inline bar chart for a trend row.
+fn sparkline(values: &[Option<Cents>]) -> Markup {
+    let max = values.iter().flatten().map(|v| v.get()).max().unwrap_or(0).max(1);
+    let n = values.len().max(1);
+    let w = 6 * n + 2 * (n - 1);
+    html! {
+        svg class="spark" width=(w) height="24" viewBox=(format!("0 0 {w} 24")) aria-hidden="true" {
+            @for (i, v) in values.iter().enumerate() {
+                @let h = v.map_or(0, |v| (v.get().saturating_mul(22) / max).clamp(1, 22));
+                rect x=(i * 8) y=(24 - h) width="6" height=(h) rx="1" {}
+            }
+        }
+    }
+}
+
+fn render_trends(c: &Ctx, m: &Month, all: &[Month], q: &ReportQuery) -> Markup {
+    let n = q.months();
+    let tr = report::trend(m.year_month, all, n);
+    let pick = |f: &Figures, cat: &str, line: Option<&str>| -> Cents {
+        let Some(cf) = f.category(cat) else { return Cents::ZERO };
+        let (p, a) = match line {
+            Some(l) => cf.lines.iter().find(|x| x.name == l).map_or((Cents::ZERO, Cents::ZERO), |x| (x.planned, x.actual)),
+            None => (cf.planned, cf.actual),
+        };
+        if q.planned() { p } else { a }
+    };
+    let mut rows: Vec<(String, Option<String>, String)> = Vec::new();
+    for cat in &tr.category_names {
+        rows.push((cat.clone(), None, cat.clone()));
+        if q.lines() {
+            let mut lines: Vec<String> = Vec::new();
+            for f in tr.figures.iter().flatten() {
+                for l in f.category(cat).map(|c| c.lines.as_slice()).unwrap_or_default() {
+                    if !lines.contains(&l.name) { lines.push(l.name.clone()); }
+                }
+            }
+            for l in lines {
+                rows.push((cat.clone(), Some(l.clone()), format!("{cat} › {l}")));
+            }
+        }
+    }
+    html! {
+        section class="report-section" aria-labelledby="trend-h" {
+            div class="section-head" {
+                h2 id="trend-h" class="h3" { (tf("report.trend_title", &[("n", &n.to_string())])) }
+                (csv_link(m, "trends", q))
+            }
+            form class="report-filters" method="get" action=(format!("/months/{}/reports", m.id)) {
+                input type="hidden" name="tab" value="trends";
+                div class="filter" {
+                    label for="rf-n" { (t("report.window")) }
+                    select id="rf-n" name="n" { @for k in [3usize, 6, 12] { option value=(k) selected[k == n] { (tf("report.months_n", &[("n", &k.to_string())])) } } }
+                }
+                div class="filter" {
+                    label for="rf-level" { (t("report.rows")) }
+                    select id="rf-level" name="level" {
+                        option value="category" selected[!q.lines()] { (t("report.by_category")) }
+                        option value="line" selected[q.lines()] { (t("report.by_line")) }
+                    }
+                }
+                div class="filter" {
+                    label for="rf-metric" { (t("report.values")) }
+                    select id="rf-metric" name="metric" {
+                        option value="spent" selected[!q.planned()] { (t("report.metric_spent")) }
+                        option value="planned" selected[q.planned()] { (t("report.metric_planned")) }
+                    }
+                }
+                button type="submit" class="btn small" { (t("report.apply")) }
+            }
+            div class="table-scroll" tabindex="0" role="region" aria-label=(t("report.tab_trends")) {
+                table class="table report trend" id="trend" {
+                    caption class="visually-hidden" { (tf("report.trend_title", &[("n", &n.to_string())])) }
+                    thead { tr {
+                        th scope="col" { (t("report.row")) }
+                        @for ym in &tr.months { th scope="col" class="num" { (short_month(*ym)) } }
+                        th scope="col" { span class="visually-hidden" { (t("report.shape")) } }
+                    } }
+                    tbody {
+                        @let income: Vec<Option<Cents>> = tr.figures.iter().map(|f| f.as_ref().map(|f| if q.planned() { f.planned_income } else { f.actual_income })).collect();
+                        @let spend: Vec<Option<Cents>> = tr.figures.iter().map(|f| f.as_ref().map(|f| if q.planned() { f.planned_expense } else { f.actual_expense })).collect();
+                        @for (label, key, vals) in [(t("report.income"), "income", &income), (t("report.expenses"), "expenses", &spend)] {
+                            tr data-row=(key) class="total-row" {
+                                th scope="row" { (label) }
+                                @for v in vals.iter() { td class="num" { (v.map_or_else(|| "—".to_string(), |v| c.money(v))) } }
+                                td { (sparkline(vals)) }
+                            }
+                        }
+                        @for (cat, line, label) in &rows {
+                            @let vals: Vec<Option<Cents>> = tr.figures.iter().map(|f| f.as_ref().map(|f| pick(f, cat, line.as_deref()))).collect();
+                            @if vals.iter().flatten().any(|v| !v.is_zero()) {
+                                tr data-row=(format!("{}:{label}", if line.is_some() { "line" } else { "cat" })) class=(if line.is_some() { "line-row" } else { "cat-row" }) {
+                                    th scope="row" { (label) }
+                                    @for v in &vals { td class="num" { (v.map_or_else(|| "—".to_string(), |v| c.money(v))) } }
+                                    td { (sparkline(&vals)) }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            p class="muted small" { (t("report.trend_note")) }
+        }
+    }
+}
+
+fn render_payees(c: &Ctx, m: &Month, all: &[Month], q: &ReportQuery) -> Markup {
+    let (from, to) = q.range(m.year_month);
+    let rows = report::payees(all, from, to);
+    let rq = ReportQuery { tab: Some("payees".into()), from: Some(from.to_string()), to: Some(to.to_string()), ..ReportQuery::default() };
+    html! {
+        section class="report-section" aria-labelledby="payee-h" {
+            div class="section-head" {
+                h2 id="payee-h" class="h3" { (t("report.payee_title")) }
+                (csv_link(m, "payees", &rq))
+            }
+            (range_form(m, "payees", from, to))
+            @if rows.is_empty() {
+                (empty_state(&t("report.payee_empty_title"), &t("report.payee_empty_body"), None))
+            } @else {
+                div class="table-scroll" tabindex="0" role="region" aria-label=(t("report.payee_title")) {
+                    table class="table report" id="payees" {
+                        caption class="visually-hidden" { (t("report.payee_title")) }
+                        thead { tr {
+                            th scope="col" { (t("tx.payee")) } th scope="col" class="num" { (t("report.count")) }
+                            th scope="col" class="num" { (t("report.spent_col")) } th scope="col" class="num" { (t("report.received_col")) }
+                        } }
+                        tbody {
+                            @for r in &rows {
+                                tr data-row=(format!("payee:{}", r.payee)) {
+                                    th scope="row" { (r.payee) }
+                                    td class="num" { (r.count) }
+                                    td class="num" { (c.money(r.spent)) }
+                                    td class="num" { (c.money(r.received)) }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn range_form(m: &Month, tab: &str, from: NaiveDate, to: NaiveDate) -> Markup {
+    html! {
+        form class="report-filters" method="get" action=(format!("/months/{}/reports", m.id)) {
+            input type="hidden" name="tab" value=(tab);
+            div class="filter" { label for="rf-from" { (t("report.from")) } input id="rf-from" type="date" name="from" value=(from.to_string()) required; }
+            div class="filter" { label for="rf-to" { (t("report.to")) } input id="rf-to" type="date" name="to" value=(to.to_string()) required; }
+            button type="submit" class="btn small" { (t("report.apply")) }
+        }
+    }
+}
+
+fn render_export(m: &Month, q: &ReportQuery) -> Markup {
+    let (from, to) = q.range(m.year_month);
+    html! {
+        section class="report-section card" aria-labelledby="exp-month-h" {
+            h2 id="exp-month-h" class="h3" { (tf("report.export_month", &[("month", &month_label(m.year_month))])) }
+            div class="row-actions" {
+                a class="btn" href=(format!("/months/{}/export.csv", m.id)) download { (t("export.csv")) }
+                a class="btn" href=(format!("/months/{}/snapshot.json", m.id)) download { (t("export.snapshot")) }
+            }
+        }
+        section class="report-section card" aria-labelledby="exp-tx-h" {
+            h2 id="exp-tx-h" class="h3" { (t("report.export_tx")) }
+            p class="muted" { (t("report.export_tx_body")) }
+            form class="report-filters" method="get" data-download-form action=(format!("/months/{}/reports/export/transactions.csv", m.id)) {
+                div class="filter" { label for="ex-from" { (t("report.from")) } input id="ex-from" type="date" name="from" value=(from.to_string()) required; }
+                div class="filter" { label for="ex-to" { (t("report.to")) } input id="ex-to" type="date" name="to" value=(to.to_string()) required; }
+                button type="submit" class="btn" { (t("report.download_csv")) }
+            }
+        }
+        section class="report-section card" aria-labelledby="exp-rep-h" {
+            h2 id="exp-rep-h" class="h3" { (t("report.export_reports")) }
+            div class="row-actions" {
+                @for (kind, label) in [("mom", "report.mom"), ("ytd", "report.ytd"), ("yoy", "report.yoy"), ("trends", "report.tab_trends"), ("payees", "report.tab_payees")] {
+                    a class="btn" href=(format!("/months/{}/reports/export/{kind}.csv", m.id)) download { (t(label)) " (CSV)" }
+                }
+            }
+        }
+    }
+}
+
+pub fn render_reports(c: &Ctx, m: &Month, all: &[Month], q: &ReportQuery) -> Markup {
+    html! {
+        h1 { (tf("report.title", &[("month", &month_label(m.year_month))])) }
+        (report_tabs(m, q))
+        @match q.tab() {
+            "trends" => { (render_trends(c, m, all, q)) },
+            "payees" => { (render_payees(c, m, all, q)) },
+            "export" => { (render_export(m, q)) },
+            _ => { (render_summary(c, m, all, q)) },
+        }
+    }
+}
+
+fn render_summary(c: &Ctx, m: &Month, all: &[Month], q: &ReportQuery) -> Markup {
     let mom = report::month_over_month(m, all);
     let yoy = report::year_over_year(m, all);
     let ytd = report::year_to_date(m, all);
     let names: Vec<String> = ytd.figures.categories.iter().map(|c| c.name.clone()).collect();
     html! {
-        h1 { (tf("report.title", &[("month", &month_label(m.year_month))])) }
         (summary_cards(c, m))
         (category_chart(c, &report::month_figures(m)))
+        div class="section-head" { span {} (csv_link(m, "mom", q)) }
         (comparison(c, "mom", &t("report.mom"), &mom))
         section class="report-section" aria-labelledby="ytd-h" {
-            h2 id="ytd-h" class="h3" { (t("report.ytd")) }
+            div class="section-head" {
+                h2 id="ytd-h" class="h3" { (t("report.ytd")) }
+                (csv_link(m, "ytd", q))
+            }
             p class="muted" { (tf("report.ytd_range", &[("from", &ytd.from.format("%b %-d, %Y").to_string()), ("through", &month_label(ytd.through)), ("n", &ytd.months_included.to_string())])) }
             div class="table-scroll" tabindex="0" role="region" aria-label=(t("report.ytd")) {
                 (figures_table(c, "ytd", &t("report.ytd"), &t("report.ytd_short"), &ytd.figures, None, None, &names))
             }
         }
+        div class="section-head" { span {} (csv_link(m, "yoy", q)) }
         (comparison(c, "yoy", &t("report.yoy"), &yoy))
+        p class="muted small" { (t("report.drill_hint")) }
     }
+}
+
+/// CSV downloads for every report (user request #11).
+pub async fn report_csv(State(st): State<Shared>, Extension(user): Extension<AuthUser>, Path((id, kind)): Path<(Id, String)>, Query(q): Query<ReportQuery>) -> Page {
+    let m = st.load(&user.0, &id).await?.month;
+    let all = st.all_months(&user.0).await?;
+    let ym = m.year_month.format("%Y-%m").to_string();
+    let (rows, name): (Vec<Vec<String>>, String) = match kind.as_str() {
+        "mom.csv" | "yoy.csv" => {
+            let cmp = if kind == "mom.csv" { report::month_over_month(&m, &all) } else { report::year_over_year(&m, &all) };
+            let periods = vec![
+                (short_month(cmp.current_month), Some(&cmp.current)),
+                (short_month(cmp.other_month), cmp.other.as_ref()),
+            ];
+            (export::figures_rows(&periods), format!("{}-{}.csv", kind.trim_end_matches(".csv"), ym))
+        }
+        "ytd.csv" => {
+            let y = report::year_to_date(&m, &all);
+            (export::figures_rows(&[(format!("YTD {}", y.through.format("%Y")), Some(&y.figures))]), format!("ytd-{ym}.csv"))
+        }
+        "trends.csv" => {
+            let tr = report::trend(m.year_month, &all, q.months());
+            let periods: Vec<(String, Option<&Figures>)> = tr.months.iter().zip(&tr.figures).map(|(d, f)| (short_month(*d), f.as_ref())).collect();
+            (export::figures_rows(&periods), format!("trends-{}m-{ym}.csv", q.months()))
+        }
+        "payees.csv" => {
+            let (from, to) = q.range(m.year_month);
+            let mut rows = vec![vec!["payee".to_string(), "payments".into(), "spent".into(), "received".into()]];
+            for r in report::payees(&all, from, to) {
+                rows.push(vec![r.payee, r.count.to_string(), crate::money::plain(r.spent), crate::money::plain(r.received)]);
+            }
+            (rows, format!("payees-{from}-to-{to}.csv"))
+        }
+        "transactions.csv" => {
+            let (from, to) = q.range(m.year_month);
+            let mut rows = vec![vec!["date".to_string(), "month".into(), "payee".into(), "category".into(), "line".into(), "paycheck".into(), "amount".into(), "notes".into(), "split_group".into()]];
+            for (mo, t) in report::transactions_between(&all, from, to) {
+                let line = t.expense_line_id.as_ref().and_then(|l| mo.expense_line(l));
+                rows.push(vec![
+                    t.date.to_string(),
+                    mo.year_month.format("%Y-%m").to_string(),
+                    t.payee.clone().unwrap_or_default(),
+                    line.and_then(|l| mo.category(&l.category_id)).map(|c| c.name.clone()).unwrap_or_default(),
+                    line.map(|l| l.name.clone()).unwrap_or_default(),
+                    t.paycheck_id.as_ref().and_then(|p| mo.paycheck(p)).map(|p| p.date.to_string()).unwrap_or_default(),
+                    crate::money::plain(t.amount),
+                    t.notes.clone().unwrap_or_default(),
+                    t.split_group.as_ref().map(ToString::to_string).unwrap_or_default(),
+                ]);
+            }
+            (rows, format!("transactions-{from}-to-{to}.csv"))
+        }
+        _ => return Err(AppError::NotFound),
+    };
+    Ok(export::csv_download(&name, export::csv_rows(&rows)))
 }
 
 // ----------------------------------------------------------------------

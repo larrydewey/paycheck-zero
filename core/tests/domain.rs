@@ -662,3 +662,31 @@ fn split_transactions_across_lines_and_paychecks() {
     assert!(f.m.transactions.is_empty());
     f.m.check_invariants().unwrap();
 }
+
+#[test]
+fn report_drill_down_trends_and_payees() {
+    use paycheckzero_core::report::{month_figures, payees, trend, year_to_date};
+    let mut sep = balanced();
+    sep.m.add_transaction(tx(-2_000, Some(&sep.food), None)).unwrap();
+    let mut t2 = tx(-500, Some(&sep.food), None);
+    t2.payee = Some("shop".into());
+    sep.m.add_transaction(t2).unwrap();
+    let f = month_figures(&sep.m);
+    let food = f.category("Food").unwrap();
+    assert_eq!(food.lines[0].name, "Groceries");
+    assert_eq!(food.lines[0].actual, c(2_500));
+    let mut aug = balanced();
+    aug.m.year_month = d(2026, 8, 1);
+    for p in &mut aug.m.paychecks {
+        p.date = d(2026, 8, 4);
+    }
+    let all = vec![aug.m.clone(), sep.m.clone()];
+    let ytd = year_to_date(&sep.m, &all);
+    assert_eq!(ytd.figures.category("Housing").unwrap().lines[0].planned, c(200_000));
+    let tr = trend(d(2026, 9, 1), &all, 3);
+    assert_eq!(tr.months, vec![d(2026, 7, 1), d(2026, 8, 1), d(2026, 9, 1)]);
+    assert!(tr.figures[0].is_none() && tr.figures[1].is_some());
+    let p = payees(&all, d(2026, 9, 1), d(2026, 9, 30));
+    assert_eq!(p[0].payee, "Shop");
+    assert_eq!((p[0].count, p[0].spent), (2, c(2_500)));
+}

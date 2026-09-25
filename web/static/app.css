@@ -530,3 +530,19 @@ li.line.over { background: color-mix(in srgb, var(--danger-soft) 55%, transparen
 .tx.split .tx-meta strong { color: var(--primary-dark); }
 dialog .split-form { min-width: min(40rem, calc(100vw - 4rem)); }
 @media (max-width: 640px) { .part { grid-template-columns: 1fr 1fr; } .part input { grid-column: 1; } }
+
+/* Reports: tabs, filters, drill-down, sparklines */
+.report-tabs { display: flex; gap: 0.25rem; border-bottom: 1px solid var(--line); margin: 0 0 1rem; overflow-x: auto; }
+.rtab { padding: 0.55rem 0.9rem; color: var(--muted); font-weight: 600; text-decoration: none; border-bottom: 3px solid transparent; white-space: nowrap; }
+.rtab.active { color: var(--primary-dark); border-bottom-color: var(--primary); }
+.report-filters { display: flex; gap: 0.75rem; align-items: flex-end; flex-wrap: wrap; margin: 0.5rem 0 0.75rem; }
+.report-filters .filter { display: flex; flex-direction: column; gap: 0.2rem; }
+.report-filters label { font-size: 0.85rem; margin: 0; }
+.report-filters select, .report-filters input { width: auto; }
+.row-toggle { background: none; border: 0; padding: 0; font: inherit; color: inherit; cursor: pointer; display: inline-flex; align-items: center; gap: 0.35rem; }
+.row-toggle .caret { display: inline-block; width: 0.4rem; height: 0.4rem; border-right: 2px solid currentColor; border-bottom: 2px solid currentColor; transform: rotate(-45deg); transition: transform 0.15s; }
+.row-toggle[aria-expanded=true] .caret { transform: rotate(45deg); }
+.report .line-row th { padding-left: 2.25rem; font-weight: 400; color: var(--muted); }
+.report .total-row th { font-weight: 700; }
+.spark rect { fill: var(--primary); }
+.trend td:last-child { width: 1%; }
