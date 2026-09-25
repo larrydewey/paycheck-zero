@@ -1,77 +1,61 @@
 # PaycheckZero — Implementation Progress
 
-Persistence log for multi-session work. **Read this first every session.**
-Spec source of truth: [`PaycheckZero_Formal_Specification_v0.4.4.md`](./PaycheckZero_Formal_Specification_v0.4.4.md) (v0.4.4, frozen).
+Read this first every session. Spec: `PaycheckZero_Formal_Specification_v0.4.4.md` (frozen).
 
-## Stack (per spec §7)
-- Rust workspace: `core/` (pure domain), `storage/` (SQLite adapter), `web/` (Axum + Datastar)
-- SQLite primary (schema already in `db/`), integer cents money
-- Datastar frontend, JWT auth, Playwright E2E
-- Toolchain confirmed: rustc 1.98, node 26.5 (Playwright), sqlite 3.53
+## Status (2026-09-25, branch `v1-build`)
 
-## Status Legend
-- [ ] not started · [~] in progress · [x] done (tests green)
+Everything in the spec is implemented and tested. **Not yet "v1 complete"** under §13.10: all Playwright tests pass, but core flows have not been checked on real devices (emulation only, which §13.11 allows for now).
 
-## Work log (newest at bottom)
+| Area | State |
+|------|-------|
+| Domain (`core`) | Done — 46 tests |
+| Storage (`storage`) | Done — SQLite, PostgreSQL 17, MariaDB 11 verified |
+| REST API §9, auth §13.5, sync §13.7 | Done — 5 in-process HTTP suites |
+| Datastar UI §3/§14, reports §15, exports §13.6, PWA | Done |
+| Playwright §13.1 | 83 tests × 4 browsers = 332 passing (stable over repeated runs); Chromium suite also passes on PostgreSQL and MariaDB |
+| Accessibility | axe WCAG 2.0/2.1 A+AA: zero violations on every screen |
 
-### Session 1 — scaffold + pure domain crate
-- [x] Explored spec + environment. Confirmed toolchain. Noted prior Python venv is a non-conformant leftover (spec mandates Rust) — left untouched.
-- [x] Created `PROGRESS.md`.
-- [x] Cargo workspace scaffold (`Cargo.toml` + `core` crate).
-- [x] Pure domain crate: `money`, `id`, `models`, `error`, `domain` (invariants + safe-to-spend + zero validation + cascades).
-- [x] `cargo test -p paycheckzero-core` — 23/23 passed.
+## Decisions (agreed with the user before building)
 
-### Session 2 — storage crate (SQLite adapter)
-- [x] Scaffolding `storage/` crate with `Repository` trait (`repo.rs`).
-- [x] SQLite backend (`sqlite.rs`): in-memory schema, load/save `Month`, `list_months`.
-- [x] All compilation errors fixed (type inference, param expansion, mutability).
-- [x] `cargo build --workspace` — clean (zero errors, zero warnings).
-- [x] Round-trip tests: 5/5 passed (save/load, optional fields, list, overwrite, not-found).
+1. Rebuilt storage and web from scratch; the earlier core was rewritten too (it had an allocation-update bug and lacked recurrence, variance, copy and currency). The pre-rebuild snapshot is commit `86aa219`.
+2. §2.11 "copy structure + planned": planned amounts are copied as a non-binding **target** per line (`expense_lines.target_amount`). Planned stays derived; the paycheck view offers one-click "Fund $X".
+3. Overview Planned edit (§14.6): increases come from the earliest paycheck with unassigned money, then later ones. If there isn't enough, it's refused (409 / "you're $X short"). Decreases come off the latest-dated allocations first.
+4. Variance (§2.9): "Use actual as planned" sets planned = actual, with the invariant 6 cascade. On a locked month, "Re-assign variance" opens allocation-only editing. "Done — re-lock" is allowed only once every variance is applied and the month is at exactly zero.
+5. Skipped paychecks count as no income and have no Safe-to-Spend.
+6. §2.10 Spent is literal: the sum of absolute values of all linked transactions, so refunds add to Spent.
+7. Offline: the service worker caches pages and their SSE content (network first). Transaction create/edit/delete and paycheck actuals are queued in IndexedDB and replayed through `POST /sync`. Each op carries a base copy; if the server changed meanwhile, the user sees a conflict and picks "Keep mine" (force) or "Keep the other version". Allocation edits are online-only.
+8. Engines: sqlx `Any` driver with one portable schema (VARCHAR ids/dates, BIGINT cents, table-level FKs, `"year_month"` quoted; MariaDB sessions use `ANSI_QUOTES`).
+9. Auth: HttpOnly cookies for the web UI (access 15 min, refresh 30 days, rotating, stored hashed) with silent refresh in middleware. Bearer tokens for the API. "Log out of all devices" deletes refresh tokens and bumps a token version.
+10. Single user: registration closes once an account exists.
+11. Recurrence is our own JSON: weekly/biweekly by anchor date, semi-monthly (2 days), monthly (days; past month end clamps). Editing a schedule keeps paychecks whose dates still match, adds new ones, and deletes the rest with their allocations (with a notice). A new line amount flows only to paychecks still at the old default.
+12. Currencies: 20 two-decimal ISO currencies, en-US formatting. A currency change converts every month with a user rate, rounding half-even. Each paycheck is converted with largest-remainder distribution, so fully allocated paychecks stay exactly allocated.
+13–15. Browsers installed. Real devices not tested. One commit per area.
 
-### Session 3 — REST API (§9) + JWT auth (§13.5) + reports (§15)
-- [x] §9 REST: full CRUD surface (`web/src/routes/months.rs`) incl. income-lines, paychecks, allocations/transfer, categories, expense-lines, transactions, safe-to-spend, month summary; 6 `find_month_by_*` helpers.
-- [x] JWT auth (§13.5): `users` + `refresh_tokens` tables, `AuthRepository`, access (15 min) + refresh (30 d, sha256-hashed, rotated) tokens, argon2, `register/login/refresh/logout`, `require_auth` middleware on `/api/v1`.
-- [x] Reports (§15): `web/src/report.rs` pure computations (MoM, YTD, YoY, summary cards) + routes under `/months/{month_id}/reports/…`.
-- [x] Fixed deadlock: `find_month_by_*` held the DB Mutex across loop bodies → hoisted `list_months()` before iterating, nested `.lock()` per item.
-- [x] Live smoke verified: auth lifecycle, rotations/replay, seeded June/July via API, all reports correct.
+## Other interpretations / deviations
 
-### Session 4 — Datastar frontend (§14)
-- [x] `web/src/ui.rs`: fragment renderers (login page, dashboard, month view) — summary cards, paycheck-first view with prominent safe-to-spend (§14.5), per-paycheck editable planned + allocations (PATCH/POST + refetch), category overview with live planned/spent/remaining (§14.3) and inline line rename.
-- [x] `web/src/routes/ui.rs`: SSE `datastar-merge-fragments` endpoints — public `/ui/session` (login or dashboard by Authorization), guarded `/ui/month/{id}`.
-- [x] `web/templates/index.html` Datastar shell: CDN bundle 0.26.2, localStorage tokens, sync refresh-at-boot, `data-headers` Authorization on every fragment action.
-- [x] Tests/clippy: workspace 46 tests green, clippy `-D warnings` clean (incl. fixing pre-existing `.into()`/sort lints).
-- [x] Live smoke: shell serves; session returns login without token, dashboard + month-view with token; the exact Datastar PATCH/POST payloads round-trip and safe-to-spend recomputes.
-- [~] UI polish still open (skeleton phase): zero/empty/error/offline states, register landing, transaction + expense-line creation flows, month locking UX, collapse-toggle persistence.
+- §9 says "FastAPI"; §7.2 mandates Rust, so the REST contract is served by Axum.
+- The schema follows §8 with additive columns: users `timezone`, `currency`, `token_version`, `last_month_id`; months `reassigning`, `archived_at`, `version`; category `kind`; line `sort_order`, `target_amount`; `position` on ordered children. There are also `refresh_tokens`, `sync_ops` and `schema_migrations` tables. The obsolete `db/*.sql` (v0.4.3) scripts were removed; the source of truth is `storage/src/schema.rs`.
+- Report definitions (§15): actual income = paycheck actuals + unlinked positive transactions. Actual spending = line Spent + unlinked expenses (shown as "Uncategorized"). Categories are matched across months by name.
+- "Today" is the user's timezone date. In test mode it is pinned by `/__test/reset`.
+- Month-level `total_spent` / CSV month row counts line Spent only (§2.10), not unlinked expenses.
+- UI mutation endpoints require the `Datastar-Request` header (CSRF defence for cookie auth).
 
-## Architecture decisions
-- **Money**: `Cents(i64)` newtype, integer only, no floats. Display conversion only at UI boundary (web crate).
-- **Ids**: `Id` newtype over `String` (UUID text). `Id::generate()` via uuid v4.
-- **Domain = in-memory aggregate**: `Month` owns all children. Storage loads a `Month` aggregate, service mutates it with invariant checks, storage persists. Keeps `core` free of DB/web deps (spec §7.1).
-- **Derived (never stored)**: line `planned` (sum of allocations), line `spent` (sum abs of negative txns linked to line), paycheck `allocated`, `safe_to_spend`, rolling, zero status.
-- **Zero check**: `sum(paycheck.planned) - sum(all allocations)`. Zero ⟺ every paycheck fully allocated (invariant 2 + 3).
-- **Spent**: matches provided DB view `v_expense_line_spent` (sum of `-amount` for `amount<0` linked txns).
-- **Cents→dollars** handled in web/JSON only.
+## Known limitations
 
-## Spec interpretation notes (frozen spec ambiguities)
-- §2.10 "Spent = sum of absolute values of all Transactions" — implemented as negatives-only (expenses), matching the shipped DB views; in practice only expense txns link to a line.
-- §9 header says "FastAPI" but §7.2 + README mandate Rust — using Rust/Axum; "REST" contract preserved.
-- Invariant 6 (reduce planned below allocations): domain reduces/deletes allocations in deterministic order to fit new planned, returns affected lines for UI notification.
-- Fragments served as hand-rolled `datastar-merge-fragments` SSE events (stable since Datastar 0.15, matches 0.26.2 in shell) instead of the `datastar` crate — no extra dependency.
-
-## Known TODO / next session
-- [x] Run `cargo test` for core; ensure green. (23/23 passed)
-- [x] `storage/`: SQLite adapter (rusqlite), load/save `Month` aggregate.
-- [x] `storage/`: Round-trip tests (5/5 passed).
-- [x] `web/`: Axum routes per §9 (full CRUD), JWT (access+refresh) with rotation + logout, invariant re-validation → 409, CSV export, Datastar HTML+SSE fragments.
-- [x] Reports MoM/YTD/YoY/summary (§15) + CSV/snapshot export (§13.6).
-- [~] Datastar frontend: paycheck view (default landing, safe-to-spend prominent, inline edit) + monthly overview + collapsible categories w/ live summaries DONE at skeleton level; still open: empty/skeleton/error/offline states, registering-from-UI flow, transaction & expense-line creation flows, month locking UX.
-- [ ] Playwright E2E (§13.1): grouped by feature, reset+seed per run, a11y (axe) + visual.
-- [ ] PWA manifest + service worker for offline.
+- Playwright's WebKit build needs Ubuntu 24.04 libraries. On this Omarchy host it runs through Playwright's Docker image automatically (`e2e/global-setup.ts`).
+- Playwright's WebKit offline emulation also blocks service-worker cache hits. On mobile Safari the test therefore asserts offline readiness (worker in control, page and content cached). Actual offline serving is asserted on Chromium, Firefox and mobile Chrome.
+- JWT secret defaults to random per start; set `PZ_JWT_SECRET` in production.
 
 ## Commands
-- `cargo test` (workspace tests)
-- `cargo run -p paycheckzero-web` (start server, once web crate exists)
 
-## Conventions
-- TDD: write failing test → minimal impl → refactor (spec §11).
-- Rust style per rust-skills (no unwrap in prod, thiserror for core, newtype ids, etc.).
+```bash
+make test                  # clippy + cargo tests + Playwright (all browsers)
+cargo run -p paycheckzero-web
+cd e2e && npm test         # single command E2E
+cd e2e && npm run test:update   # refresh visual baselines
+```
+
+## Next steps
+
+- Real-device pass on iOS Safari and Android Chrome (release gate §13.10).
+- Optional: CI workflow running `make test` (Postgres/MariaDB services).

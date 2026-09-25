@@ -52,7 +52,9 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
         env: {
           ...process.env,
           PZ_BIND: `127.0.0.1:${port}`,
-          PZ_DATABASE_URL: `sqlite://${path.join(dir, "pz.db")}?mode=rwc`,
+          // PZ_E2E_DATABASE_URL runs the suite against PostgreSQL/MariaDB
+          // (use PZ_WORKERS=1: workers would share that database).
+          PZ_DATABASE_URL: process.env.PZ_E2E_DATABASE_URL ?? `sqlite://${path.join(dir, "pz.db")}?mode=rwc`,
           PZ_TEST_MODE: "1",
           PZ_JWT_SECRET: "e2e-secret-e2e-secret-e2e-secret-e2e",
           RUST_LOG: "warn",
