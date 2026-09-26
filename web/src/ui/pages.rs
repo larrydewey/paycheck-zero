@@ -72,25 +72,35 @@ pub async fn render_view(st: &Shared, user: &UserRecord, headers: &HeaderMap, vi
                 Err(e) => return Err(e),
             };
             let m = &loaded.month;
+            let wallet = st.wallet(user).await?;
             let body = match other {
                 View::Paycheck { paycheck, .. } => {
                     if m.paycheck(paycheck).is_none() {
                         return Ok(Err(format!("/months/{mid}")));
                     }
-                    super::plan::render_paycheck(&c, m, loaded.archived, paycheck)
+                    super::plan::render_paycheck(&c, m, loaded.archived, paycheck, &wallet)
                 }
-                View::Overview { .. } => super::plan::render_overview(&c, m, loaded.archived),
+                View::Overview { .. } => {
+                    let all = st.all_months(user).await?;
+                    super::plan::render_overview(&c, m, loaded.archived, &wallet, &all)
+                }
                 View::Income { welcome, .. } => render_income(&c, m, loaded.archived, *welcome),
-                View::Transactions { .. } => super::plan::render_transactions(&c, m, loaded.archived),
+                View::Transactions { filter, .. } => super::plan::render_transactions(&c, m, loaded.archived, *filter, &wallet),
+                View::Accounts { .. } => {
+                    let all = st.all_months(user).await?;
+                    super::accounts::render_accounts(&c, m, loaded.archived, &wallet, &all)
+                }
                 View::Reports { q, .. } => {
                     let all = st.all_months(user).await?;
                     render_reports(&c, m, &all, q)
                 }
                 View::Months { .. } | View::Settings => html! {},
             };
+            let needs_line = m.transactions.iter().filter(|t| t.needs_line()).count();
             html! {
                 (body)
-                @if !loaded.archived { (super::sheets::offline_templates(&c, m, other)) }
+                div id="nav-state" hidden data-needs-line=(needs_line) {}
+                @if !loaded.archived { (super::sheets::offline_templates(&c, m, other, &wallet)) }
             }
         }
     }))
@@ -271,12 +281,27 @@ pub async fn income_content(State(st): State<Shared>, Extension(user): Extension
     content_sse(&st, &user.0, &headers, &View::Income { month: id, welcome: q.welcome.is_some() }).await
 }
 
-pub async fn transactions_page(State(st): State<Shared>, Extension(user): Extension<AuthUser>, Path(id): Path<Id>) -> Page {
-    month_page(&st, &user.0, &id, View::Transactions { month: id.clone() }, "transactions", &t("nav.transactions")).await
+#[derive(Deserialize)]
+pub struct TxQuery {
+    #[serde(default)]
+    show: Option<String>,
 }
 
-pub async fn transactions_content(State(st): State<Shared>, Extension(user): Extension<AuthUser>, headers: HeaderMap, Path(id): Path<Id>) -> Sse {
-    content_sse(&st, &user.0, &headers, &View::Transactions { month: id }).await
+pub async fn transactions_page(State(st): State<Shared>, Extension(user): Extension<AuthUser>, Path(id): Path<Id>, Query(q): Query<TxQuery>) -> Page {
+    let filter = TxFilter::parse(q.show.as_deref());
+    month_page(&st, &user.0, &id, View::Transactions { month: id.clone(), filter }, "transactions", &t("nav.transactions")).await
+}
+
+pub async fn transactions_content(State(st): State<Shared>, Extension(user): Extension<AuthUser>, headers: HeaderMap, Path(id): Path<Id>, Query(q): Query<TxQuery>) -> Sse {
+    content_sse(&st, &user.0, &headers, &View::Transactions { month: id, filter: TxFilter::parse(q.show.as_deref()) }).await
+}
+
+pub async fn accounts_page(State(st): State<Shared>, Extension(user): Extension<AuthUser>, Path(id): Path<Id>) -> Page {
+    month_page(&st, &user.0, &id, View::Accounts { month: id.clone() }, "accounts", &t("nav.accounts")).await
+}
+
+pub async fn accounts_content(State(st): State<Shared>, Extension(user): Extension<AuthUser>, headers: HeaderMap, Path(id): Path<Id>) -> Sse {
+    content_sse(&st, &user.0, &headers, &View::Accounts { month: id }).await
 }
 
 pub async fn reports_page(State(st): State<Shared>, Extension(user): Extension<AuthUser>, Path(id): Path<Id>, Query(q): Query<ReportQuery>) -> Page {
@@ -312,7 +337,8 @@ pub async fn settings_content(State(st): State<Shared>, Extension(user): Extensi
 
 pub async fn export_csv(State(st): State<Shared>, Extension(user): Extension<AuthUser>, Path(id): Path<Id>) -> Page {
     let m = st.load(&user.0, &id).await?.month;
-    Ok(export::csv_response(&m))
+    let w = st.wallet(&user.0).await?;
+    Ok(export::csv_response(&m, &w))
 }
 
 pub async fn export_snapshot(State(st): State<Shared>, Extension(user): Extension<AuthUser>, Path(id): Path<Id>) -> Page {
@@ -777,7 +803,7 @@ pub(super) fn paycheck_options(m: &Month, selected: Option<&Id>) -> Markup {
 /// One transaction form for both plain and split transactions. With one
 /// part it reads as a normal transaction (Amount, Expense line, Paycheck);
 /// "Split into parts" turns the same fields into part rows.
-pub(super) fn tx_fields(c: &Ctx, m: &Month, prefix: &str, parts: &[&Transaction], default_date: NaiveDate, default_paycheck: Option<&Id>) -> Markup {
+pub(super) fn tx_fields(c: &Ctx, m: &Month, prefix: &str, parts: &[&Transaction], default_date: NaiveDate, default_paycheck: Option<&Id>, wallet: &Wallet) -> Markup {
     let id = |f: &str| format!("{prefix}-{f}");
     let first = parts.first().copied();
     let is_income = first.is_some_and(|x| x.amount.is_positive());
@@ -802,6 +828,14 @@ pub(super) fn tx_fields(c: &Ctx, m: &Month, prefix: &str, parts: &[&Transaction]
         div class="field wide" {
             label for=(id("payee")) { (t("tx.payee")) }
             input id=(id("payee")) type="text" name="payee" maxlength="200" value=[first.and_then(|x| x.payee.clone())];
+        }
+        @if !wallet.accounts_sorted().is_empty() {
+            div class="field wide" {
+                label for=(id("account")) { (t("tx.account")) }
+                select id=(id("account")) name="account_id" data-remember-account=[first.is_none().then_some("1")] {
+                    (account_options(wallet, first.and_then(|x| x.account_id.as_ref()), true))
+                }
+            }
         }
         div class={ "tx-parts wide" @if split { " is-split" } } data-split-editor
             data-label-line=(t("tx.line")) data-label-paycheck=(t("tx.paycheck"))
@@ -855,6 +889,25 @@ pub(super) fn tx_fields(c: &Ctx, m: &Month, prefix: &str, parts: &[&Transaction]
             input id=(id("notes")) type="text" name="notes" maxlength="2000" value=[first.and_then(|x| x.notes.clone())];
         }
         p id=(id("paycheck-hint")) class="hint wide" { (t("tx.paycheck_hint")) }
+    }
+}
+
+/// `<option>`s for an account picker: bank and cash, then cards.
+pub(super) fn account_options(wallet: &Wallet, selected: Option<&Id>, allow_none: bool) -> Markup {
+    let accts = wallet.accounts_sorted();
+    let (cash, cards): (Vec<&&Account>, Vec<&&Account>) = accts.iter().partition(|a| !a.kind.is_card());
+    html! {
+        @if allow_none { option value="" { (t("tx.no_account")) } }
+        @if !cash.is_empty() {
+            optgroup label=(t("accounts.group_cash")) {
+                @for a in &cash { option value=(a.id) selected[selected == Some(&a.id)] { (a.name) } }
+            }
+        }
+        @if !cards.is_empty() {
+            optgroup label=(t("accounts.group_cards")) {
+                @for a in &cards { option value=(a.id) selected[selected == Some(&a.id)] { (a.name) } }
+            }
+        }
     }
 }
 
@@ -1574,6 +1627,16 @@ pub fn render_settings(c: &Ctx) -> Markup {
     let view = View::Settings;
     html! {
         h1 { (t("settings.title")) }
+        section class="card" aria-labelledby="theme-h" {
+            h2 id="theme-h" class="h3" { (t("theme.title")) }
+            p class="muted" { (t("theme.body")) }
+            fieldset class="segmented theme-choice" {
+                legend class="visually-hidden" { (t("theme.title")) }
+                @for (v, key) in [("system", "theme.system"), ("light", "theme.light"), ("dark", "theme.dark")] {
+                    label { input type="radio" name="pz-theme" value=(v) checked[v == "system"]; span { (t(key)) } }
+                }
+            }
+        }
         section class="card" aria-labelledby="acct-h" {
             h2 id="acct-h" class="h3" { (t("settings.account")) }
             p { (tf("settings.signed_in_as", &[("email", &c.user.email)])) }

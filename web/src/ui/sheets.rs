@@ -71,6 +71,8 @@ pub async fn line(State(st): State<Shared>, Extension(user): Extension<AuthUser>
         v
     };
     let over = l.spent > l.planned;
+    let wallet = st.wallet(&user).await.unwrap_or_default();
+    let all = if wallet.goals_for_line(&l.name).is_empty() { Vec::new() } else { st.all_months(&user).await.unwrap_or_default() };
     Sse::new().patch(sheet(&l.name, Some(&cat_name), html! {
         div class="sheet-stats" {
             (stat(&t("col.planned"), c.money(l.planned), "", "planned"))
@@ -78,6 +80,7 @@ pub async fn line(State(st): State<Shared>, Extension(user): Extension<AuthUser>
             (stat(&t("col.remaining"), c.money(l.remaining), if l.remaining.is_negative() { "neg" } else { "" }, "remaining"))
         }
         @if over { p class="alert danger" { (icon("alert")) " " (tf("over.line", &[("amount", &c.money(l.spent - l.planned))])) } }
+        @if !all.is_empty() { (super::accounts::line_goals(&c, &m, &wallet, &all, &l, &view, alloc)) }
 
         section class="sheet-section" aria-labelledby="ls-funding" {
             h3 id="ls-funding" { (t("line.funding_title")) }
@@ -313,19 +316,29 @@ pub async fn tx_new(State(st): State<Shared>, Extension(user): Extension<AuthUse
     };
     let m = loaded.month;
     let c = ctx(&st, &user, &headers);
-    let view = fallback(&q.view, View::Transactions { month: mid.clone() });
-    Sse::new().patch(sheet(&t("tx.add"), None, tx_new_form(&c, &m, &view, "new-tx")))
+    let view = fallback(&q.view, View::Transactions { month: mid.clone(), filter: TxFilter::All });
+    let wallet = st.wallet(&user).await.unwrap_or_default();
+    Sse::new().patch(sheet(&t("tx.add"), None, tx_new_form(&c, &m, &view, "new-tx", &wallet)))
 }
 
-fn tx_new_form(c: &Ctx, m: &Month, view: &View, prefix: &str) -> Markup {
+fn tx_new_form(c: &Ctx, m: &Month, view: &View, prefix: &str, wallet: &Wallet) -> Markup {
     // Default the paycheck to the one being viewed.
     let default_pc = match view { View::Paycheck { paycheck, .. } => Some(paycheck.clone()), _ => None };
     let date = default_tx_date(c, m);
+    let transfers = wallet.accounts_sorted().len() >= 2;
     html! {
+        @if transfers {
+            p class="sheet-switch" {
+                button type="button" class="link" data-online-only-link
+                    data-on:click=(super::open_sheet(&format!("/ui/sheet/transfer/new/{}?view={}", m.id, view.encode()))) {
+                    (icon("transfer")) " " (t("transfer.instead"))
+                }
+            }
+        }
         form id="add-tx" class="tx-form" data-clear data-offline="create_transaction" data-month=(m.id)
             data-on:submit__prevent=(format!("pz.checkSplit(el) && @post('/ui/months/{}/transactions', {{contentType: 'form'}})", m.id)) {
             (view_input(view))
-            (tx_fields(c, m, prefix, &[], date, default_pc.as_ref()))
+            (tx_fields(c, m, prefix, &[], date, default_pc.as_ref(), wallet))
             div class="form-actions wide" {
                 button type="submit" class="btn primary block" { (t("tx.save")) }
             }
@@ -337,10 +350,10 @@ fn tx_new_form(c: &Ctx, m: &Month, view: &View, prefix: &str) -> Markup {
 /// editing a transaction, recording what a paycheck actually paid). They
 /// ride along with each month page, so the service worker's cached page
 /// can still open them; `app.js` uses them only while offline.
-pub(super) fn offline_templates(c: &Ctx, m: &Month, view: &View) -> Markup {
+pub(super) fn offline_templates(c: &Ctx, m: &Month, view: &View, wallet: &Wallet) -> Markup {
     html! {
         template id="offline-tx" {
-            (sheet(&t("tx.add"), None, tx_new_form(c, m, view, "off-tx")))
+            (sheet(&t("tx.add"), None, tx_new_form(c, m, view, "off-tx", wallet)))
         }
         @if let View::Paycheck { paycheck, .. } = view {
             @if let Some(p) = m.paycheck(paycheck).filter(|p| p.status != PaycheckStatus::Skipped) {
@@ -377,13 +390,17 @@ pub async fn tx_edit(State(st): State<Shared>, Extension(user): Extension<AuthUs
         Err(e) => return error_sheet(&e, &user.currency),
     };
     let c = ctx(&st, &user, &headers);
-    let view = fallback(&q.view, View::Transactions { month: m.id.clone() });
+    let view = fallback(&q.view, View::Transactions { month: m.id.clone(), filter: TxFilter::All });
     let Some(x) = m.transaction(&tid) else { return error_sheet(&AppError::NotFound, &user.currency) };
+    let wallet = st.wallet(&user).await.unwrap_or_default();
+    if x.is_transfer() {
+        return Sse::new().patch(sheet(&t("transfer.edit_title"), None, super::accounts::transfer_form(&c, &m, &view, &wallet, Some(x), &super::accounts::TransferPrefill::default())));
+    }
     let parts: Vec<&Transaction> = match &x.split_group { Some(g) => m.split_parts(g), None => vec![x] };
     let split = parts.len() > 1;
     let base = serde_json::json!({
         "date": x.date, "amount": x.amount.get(), "payee": x.payee, "notes": x.notes,
-        "expense_line_id": x.expense_line_id, "paycheck_id": x.paycheck_id,
+        "expense_line_id": x.expense_line_id, "paycheck_id": x.paycheck_id, "account_id": x.account_id,
     }).to_string();
     let first_id = parts[0].id.clone();
     let date = default_tx_date(&c, &m);
@@ -392,7 +409,7 @@ pub async fn tx_edit(State(st): State<Shared>, Extension(user): Extension<AuthUs
             form class="tx-form" data-online-only
                 data-on:submit__prevent=(format!("pz.checkSplit(el) && @post('/ui/transactions/{first_id}', {{contentType: 'form'}})")) {
                 (view_input(&view))
-                (tx_fields(&c, &m, &format!("split-{first_id}"), &parts, date, None))
+                (tx_fields(&c, &m, &format!("split-{first_id}"), &parts, date, None, &wallet))
                 div class="form-actions wide" { button type="submit" class="btn primary block" { (t("common.save")) } }
             }
             form class="dialog-danger" data-on:submit__prevent=(post_form(&format!("/ui/splits/{}/delete", x.split_group.clone().unwrap_or_default()))) {
@@ -404,7 +421,7 @@ pub async fn tx_edit(State(st): State<Shared>, Extension(user): Extension<AuthUs
             form class="tx-form" data-offline="update_transaction" data-month=(m.id) data-tx=(x.id) data-base=(base.clone())
                 data-on:submit__prevent=(format!("pz.checkSplit(el) && @post('/ui/transactions/{}', {{contentType: 'form'}})", x.id)) {
                 (view_input(&view))
-                (tx_fields(&c, &m, &format!("tx-{}", x.id), &[x], date, None))
+                (tx_fields(&c, &m, &format!("tx-{}", x.id), &[x], date, None, &wallet))
                 div class="form-actions wide" { button type="submit" class="btn primary block" { (t("common.save")) } }
             }
             form class="dialog-danger" data-offline="delete_transaction" data-month=(m.id) data-tx=(x.id) data-base=(base)

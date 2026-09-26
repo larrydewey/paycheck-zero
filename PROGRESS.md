@@ -99,6 +99,34 @@ Feedback: "too involved… feels like the website was shoved into a smaller wind
 - **Offline.** Month pages carry offline copies of the add/edit transaction and record-actual sheets. Other sheets say they need a connection. The service worker's caches are versioned by a hash of the assets, so a new release never leaves phones on stale CSS or JS.
 - **Deviations from earlier rounds.** Line names are edited in the line sheet, not inline. Drag-and-drop was removed; line sheets use move buttons and a category picker instead. Moving a category steps past empty categories, so the visible order always changes.
 
+## Accounts, cards, transfers, goals (2026-09-25)
+
+The owner chose all four recommended designs, and asked that transfers be first-class and that the "Spending" tab be called "Transactions".
+
+- **Navigation.** Five tabs: Plan, Budget, Transactions, Accounts, Insights. A light/dark toggle in the app bar cycles Match device → Light → Dark, and Settings has the same choice. It's saved per device with no flash on load.
+- **Transactions that need a line.** Spending with no line is flagged in several places:
+  - a count badge on the Transactions tab;
+  - an alert on Plan and Budget ("1 transaction ($12.00) needs a line · Sort them");
+  - a "Needs a line" filter chip;
+  - an amber marker and pill on each such row.
+
+  Plan also shows "Recent from this paycheck", so the plan and what actually happened sit side by side.
+- **Accounts (manual + reconcile).** Checking, savings, cash and credit cards live in a user-level wallet (schema v3: `accounts`, `account_adjustments`, `goals`, plus `transactions.account_id` and `transfer_account_id`).
+  - A balance is its adjustments plus every transaction on the account, across all months.
+  - Reconciling records the gap to the bank as an adjustment.
+  - Accounts with history can only be archived, not deleted.
+  - Budget shows the balances and the net.
+- **Transfers.** A transfer moves money between two accounts. It is never budget spending unless it is linked to a line (paying down debt that wasn't budgeted). It doesn't touch Safe-to-Spend or payee reports.
+- **Credit cards (budget-aware).** Purchases count against their lines.
+  - Each card shows what's owed, "ready to pay" (this month's line-budgeted card spending not yet paid) and "carried" debt.
+  - It also shows utilization, the minimum payment still due, and spending that needs a line.
+  - "Pay $X" opens a prefilled transfer.
+- **Goals.** Save-up goals follow a budget line (what's planned each month, plus an optional starting amount) or an account balance. Pay-off goals follow a card or a debt line.
+  - Each goal shows its progress, its status (On track / Behind / Done / No deadline), what this month needs, and bars for the last six months.
+  - "Plan $X more" tops up the line in one tap. The same appears in the line's sheet.
+- **CSV export.** Gains `account` and `transfer_account` columns.
+- **Fix.** Quick-add rows no longer shift the layout under the next tap after a submit.
+
 ## Known limitations
 
 - Playwright's WebKit build needs Ubuntu 24.04 libraries. On this Omarchy host it runs through Playwright's Docker image automatically (`e2e/global-setup.ts`).

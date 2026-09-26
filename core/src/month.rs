@@ -280,7 +280,7 @@ impl Month {
     pub fn paycheck_tagged_expense(&self, paycheck: &Id) -> Cents {
         self.transactions
             .iter()
-            .filter(|t| t.paycheck_id.as_ref() == Some(paycheck) && t.amount.is_negative())
+            .filter(|t| t.paycheck_id.as_ref() == Some(paycheck) && t.is_spending())
             .map(|t| t.amount.abs())
             .sum()
     }
@@ -288,7 +288,7 @@ impl Month {
     /// Tagged spending per line for a paycheck: (line or None, amount spent).
     fn tagged_by_line(&self, paycheck: &Id) -> Vec<(Option<Id>, Cents)> {
         let mut out: Vec<(Option<Id>, Cents)> = Vec::new();
-        for t in self.transactions.iter().filter(|t| t.paycheck_id.as_ref() == Some(paycheck) && t.amount.is_negative()) {
+        for t in self.transactions.iter().filter(|t| t.paycheck_id.as_ref() == Some(paycheck) && t.is_spending()) {
             match out.iter_mut().find(|(l, _)| *l == t.expense_line_id) {
                 Some((_, v)) => *v += t.amount.abs(),
                 None => out.push((t.expense_line_id.clone(), t.amount.abs())),
@@ -1137,6 +1137,11 @@ impl Month {
         if t.amount.is_zero() {
             return Err(DomainError::ZeroTransaction);
         }
+        if let Some(to) = &t.transfer_account_id {
+            if t.account_id.as_ref().is_none_or(|from| from == to) || !t.amount.is_negative() || t.split_group.is_some() {
+                return Err(DomainError::InvalidTransfer);
+            }
+        }
         if let Some(l) = &t.expense_line_id {
             if self.expense_line(l).is_none() {
                 return Err(DomainError::not_found("expense line", l));
@@ -1240,6 +1245,7 @@ impl Month {
         date: NaiveDate,
         payee: Option<String>,
         notes: Option<String>,
+        account: Option<Id>,
         parts: Vec<SplitPart>,
     ) -> Result<Id, DomainError> {
         if parts.len() < 2 {
@@ -1273,6 +1279,8 @@ impl Month {
                 expense_line_id: p.expense_line_id,
                 paycheck_id: p.paycheck_id,
                 split_group: Some(group_id.clone()),
+                account_id: account.clone(),
+                transfer_account_id: None,
             })
             .collect();
         for t in &new {

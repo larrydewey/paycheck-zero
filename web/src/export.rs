@@ -10,7 +10,7 @@ use crate::money::plain;
 use axum::http::header::{CONTENT_DISPOSITION, CONTENT_TYPE};
 use axum::http::HeaderValue;
 use axum::response::{IntoResponse, Response};
-use paycheckzero_core::{Cents, Month};
+use paycheckzero_core::{Cents, Id, Month, Wallet};
 
 pub const HEADER: &[&str] = &[
     "record_type",
@@ -31,6 +31,8 @@ pub const HEADER: &[&str] = &[
     "current_balance",
     "minimum_payment",
     "split_group",
+    "account",
+    "transfer_account",
 ];
 
 fn esc(s: &str) -> String {
@@ -60,10 +62,13 @@ struct Row<'a> {
     current_balance: Option<Cents>,
     minimum_payment: Option<Cents>,
     split_group: String,
+    account: String,
+    transfer_account: String,
 }
 
 #[must_use]
-pub fn to_csv(m: &Month) -> String {
+pub fn to_csv(m: &Month, wallet: &Wallet) -> String {
+    let acct = |id: &Option<Id>| id.as_ref().and_then(|i| wallet.account(i)).map(|a| a.name.clone()).unwrap_or_default();
     let ym = m.year_month.format("%Y-%m").to_string();
     let mut rows: Vec<Row> = Vec::new();
     let status = if m.reassigning { "reassigning" } else { m.status.as_str() };
@@ -153,6 +158,8 @@ pub fn to_csv(m: &Month) -> String {
             notes: tx.notes.clone().unwrap_or_default(),
             amount: Some(tx.amount),
             split_group: tx.split_group.as_ref().map(ToString::to_string).unwrap_or_default(),
+            account: acct(&tx.account_id),
+            transfer_account: acct(&tx.transfer_account_id),
             ..Row::default()
         });
     }
@@ -180,6 +187,8 @@ pub fn to_csv(m: &Month) -> String {
             money(r.current_balance),
             money(r.minimum_payment),
             r.split_group,
+            r.account,
+            r.transfer_account,
         ];
         out.push_str(&fields.iter().map(|f| esc(f)).collect::<Vec<_>>().join(","));
         out.push_str("\r\n");
@@ -266,8 +275,8 @@ pub fn filename(m: &Month, ext: &str) -> String {
 }
 
 #[must_use]
-pub fn csv_response(m: &Month) -> Response {
-    let mut r = to_csv(m).into_response();
+pub fn csv_response(m: &Month, wallet: &Wallet) -> Response {
+    let mut r = to_csv(m, wallet).into_response();
     r.headers_mut().insert(CONTENT_TYPE, HeaderValue::from_static("text/csv; charset=utf-8"));
     if let Ok(v) = HeaderValue::from_str(&format!("attachment; filename=\"{}\"", filename(m, "csv"))) {
         r.headers_mut().insert(CONTENT_DISPOSITION, v);
@@ -290,10 +299,10 @@ mod tests {
         let l = m.add_expense_line(&cat, "Tithe, \"church\"").unwrap();
         let p = m.paychecks[0].id.clone();
         m.set_allocation(&p, &l, Cents::new(10_000)).unwrap();
-        let a = to_csv(&m);
-        assert_eq!(a, to_csv(&m.clone()));
+        let a = to_csv(&m, &Wallet::default());
+        assert_eq!(a, to_csv(&m.clone(), &Wallet::default()));
         assert!(a.starts_with("record_type,month,date,"));
-        assert!(a.contains("expense_line,2026-09,,,Giving,\"Tithe, \"\"church\"\"\",,,,,100.00,,0.00,100.00,,,,"));
+        assert!(a.contains("expense_line,2026-09,,,Giving,\"Tithe, \"\"church\"\"\",,,,,100.00,,0.00,100.00,,,,,,"));
         assert!(a.contains("allocation,2026-09,2026-09-04,Pay,Giving,"));
     }
 }

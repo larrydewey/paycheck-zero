@@ -93,7 +93,7 @@ test.describe("transactions", () => {
     await page.getByLabel("Month", { exact: true }).fill("2026-11");
     await page.getByRole("button", { name: "Create month" }).click();
     await expect(page).toHaveURL(/\/income$/);
-    await page.getByRole("link", { name: "Spending" }).first().click();
+    await page.getByRole("link", { name: "Transactions", exact: true }).first().click();
     await expect(page.getByRole("heading", { name: "No transactions yet" })).toBeVisible();
   });
 });

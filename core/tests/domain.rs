@@ -50,6 +50,8 @@ fn tx(amount: i64, line: Option<&Id>, paycheck: Option<&Id>) -> Transaction {
         expense_line_id: line.cloned(),
         paycheck_id: paycheck.cloned(),
         split_group: None,
+        account_id: None,
+        transfer_account_id: None,
     }
 }
 
@@ -655,22 +657,22 @@ fn tagged_deposits_reconcile_the_paycheck_actual() {
 fn split_transactions_across_lines_and_paychecks() {
     let mut f = fixture();
     let part = |a: i64, l: &Id, p: &Id| SplitPart { amount: c(a), expense_line_id: Some(l.clone()), paycheck_id: Some(p.clone()) };
-    let g = f.m.save_split(None, d(2026, 9, 12), Some("Target".into()), None, vec![part(-8_000, &f.food, &f.p1), part(-4_000, &f.rent, &f.p2)]).unwrap();
+    let g = f.m.save_split(None, d(2026, 9, 12), Some("Target".into()), None, None, vec![part(-8_000, &f.food, &f.p1), part(-4_000, &f.rent, &f.p2)]).unwrap();
     assert_eq!(f.m.split_parts(&g).len(), 2);
     assert_eq!(f.m.line_spent(&f.food), c(8_000));
     assert_eq!(f.m.line_spent(&f.rent), c(4_000));
     assert_eq!(f.m.paycheck_tagged_expense(&f.p1), c(8_000));
     assert_eq!(f.m.paycheck_tagged_expense(&f.p2), c(4_000));
     // Replace keeps the group id and position.
-    f.m.save_split(Some(&g), d(2026, 9, 12), Some("Target".into()), None, vec![part(-1_000, &f.food, &f.p1), part(-2_000, &f.food, &f.p1), part(-3_000, &f.rent, &f.p1)]).unwrap();
+    f.m.save_split(Some(&g), d(2026, 9, 12), Some("Target".into()), None, None, vec![part(-1_000, &f.food, &f.p1), part(-2_000, &f.food, &f.p1), part(-3_000, &f.rent, &f.p1)]).unwrap();
     assert_eq!(f.m.split_parts(&g).len(), 3);
     assert_eq!(f.m.line_spent(&f.food), c(3_000));
     assert_eq!(f.m.paycheck_tagged_expense(&f.p2), c(0));
     // Validation.
-    assert_eq!(f.m.save_split(None, d(2026, 9, 1), None, None, vec![part(-1, &f.food, &f.p1)]), Err(DomainError::SplitTooFew));
-    assert_eq!(f.m.save_split(None, d(2026, 9, 1), None, None, vec![part(-1, &f.food, &f.p1), part(1, &f.food, &f.p1)]), Err(DomainError::SplitMixedSigns));
+    assert_eq!(f.m.save_split(None, d(2026, 9, 1), None, None, None, vec![part(-1, &f.food, &f.p1)]), Err(DomainError::SplitTooFew));
+    assert_eq!(f.m.save_split(None, d(2026, 9, 1), None, None, None, vec![part(-1, &f.food, &f.p1), part(1, &f.food, &f.p1)]), Err(DomainError::SplitMixedSigns));
     // Income splits reconcile paycheck actuals.
-    let g2 = f.m.save_split(None, d(2026, 9, 4), Some("Payroll".into()), None, vec![part(90_000, &f.food, &f.p1), part(10_000, &f.food, &f.p2)]).unwrap();
+    let g2 = f.m.save_split(None, d(2026, 9, 4), Some("Payroll".into()), None, None, vec![part(90_000, &f.food, &f.p1), part(10_000, &f.food, &f.p2)]).unwrap();
     assert_eq!(f.m.paycheck(&f.p1).unwrap().actual_amount, Some(c(90_000)));
     f.m.delete_split(&g2).unwrap();
     assert_eq!(f.m.paycheck(&f.p1).unwrap().actual_amount, None);

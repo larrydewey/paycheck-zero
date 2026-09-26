@@ -121,6 +121,7 @@ impl AppError {
                 DomainError::NonPositiveAmount => t("err.non_positive"),
                 DomainError::NegativeAmount => t("err.negative"),
                 DomainError::ZeroTransaction => t("err.zero_transaction"),
+                DomainError::InvalidTransfer => t("err.invalid_transfer"),
                 DomainError::SplitTooFew => t("err.split_too_few"),
                 DomainError::SplitMixedSigns => t("err.split_mixed"),
                 DomainError::Locked => t("err.locked"),

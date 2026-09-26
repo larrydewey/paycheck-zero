@@ -14,6 +14,7 @@ pub mod recurrence;
 pub mod report;
 pub mod suggest;
 pub mod views;
+pub mod wallet;
 
 pub use copy::CopyMode;
 pub use error::DomainError;
@@ -23,3 +24,4 @@ pub use money::{Cents, Rate};
 pub use month::{Impact, Month, SplitPart, STARTER_CATEGORIES};
 pub use recurrence::Recurrence;
 pub use views::*;
+pub use wallet::*;

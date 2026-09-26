@@ -95,3 +95,38 @@ test.describe("accessibility (WCAG 2.1 AA via axe)", () => {
     await expect(page.getByRole("link", { name: "Skip to content" })).toBeFocused();
   });
 });
+
+test.describe("accessibility: accounts, goals, transfers", () => {
+  test("accounts, card and goal sheets pass axe in light and dark", async ({ page, seed, login }) => {
+    const s = await seed("wallet");
+    await login();
+    for (const scheme of ["light", "dark"] as const) {
+      await page.emulateMedia({ colorScheme: scheme });
+      await pz.accounts(page, s);
+      await audit(page);
+      await pz.openSheet(page, "Visa details");
+      await audit(page);
+      await pz.closeSheet(page);
+      await pz.openSheet(page, "Transfer", { exact: true });
+      await audit(page);
+      await pz.closeSheet(page);
+      await pz.openSheet(page, "Add account");
+      await audit(page);
+      await pz.closeSheet(page);
+      await pz.overview(page, s);
+      await audit(page);
+      await pz.openSheet(page, "Emergency fund goal");
+      await audit(page);
+      await pz.closeSheet(page);
+      await pz.openSheet(page, "New goal");
+      await audit(page);
+      await pz.closeSheet(page);
+      await page.goto(`/months/${s.months["2026-09"].id}/transactions?show=needs-line`);
+      await waitForContent(page);
+      await audit(page);
+      await page.goto("/settings");
+      await waitForContent(page);
+      await audit(page);
+    }
+  });
+});

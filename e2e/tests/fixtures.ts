@@ -10,7 +10,7 @@ const BIN = path.join(ROOT, "target", "debug", process.platform === "win32" ? "p
 export const EMAIL = "demo@paycheckzero.test";
 export const PASSWORD = "correct-horse-battery";
 
-export type Seed = "empty" | "user" | "basic" | "balanced" | "locked" | "history";
+export type Seed = "empty" | "user" | "basic" | "balanced" | "locked" | "history" | "wallet";
 
 export interface SeedMonth {
   id: string;
@@ -20,6 +20,7 @@ export interface SeedMonth {
 
 export interface SeedResult {
   months: Record<string, SeedMonth>;
+  accounts?: Record<string, string>;
 }
 
 type WorkerFixtures = { server: { url: string } };
@@ -129,6 +130,10 @@ export const pz = {
   },
   async transactions(page: Page, s: SeedResult, ym = "2026-09") {
     await page.goto(`/months/${s.months[ym].id}/transactions`);
+    await waitForContent(page);
+  },
+  async accounts(page: Page, s: SeedResult, ym = "2026-09") {
+    await page.goto(`/months/${s.months[ym].id}/accounts`);
     await waitForContent(page);
   },
   async reports(page: Page, s: SeedResult, ym = "2026-09") {

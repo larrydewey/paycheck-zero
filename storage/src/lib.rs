@@ -571,7 +571,7 @@ impl Store {
         }
 
         for r in sqlx::query(&self.sql(
-            "SELECT id, date, amount, payee, notes, expense_line_id, paycheck_id, split_group FROM transactions WHERE month_id = ? ORDER BY position, id",
+            "SELECT id, date, amount, payee, notes, expense_line_id, paycheck_id, split_group, account_id, transfer_account_id FROM transactions WHERE month_id = ? ORDER BY position, id",
         ))
         .bind(mid)
         .fetch_all(&mut *conn)
@@ -586,6 +586,8 @@ impl Store {
                 expense_line_id: opt_id(r.try_get(5)?),
                 paycheck_id: opt_id(r.try_get(6)?),
                 split_group: opt_id(r.try_get(7)?),
+                account_id: opt_id(r.try_get(8)?),
+                transfer_account_id: opt_id(r.try_get(9)?),
             });
         }
 
@@ -627,11 +629,12 @@ impl Store {
     }
 
     /// Saves several months and changes the user's currency atomically.
-    pub async fn save_months_with_currency(&self, user: &Id, changes: &[(Loaded, Month)], currency: &str) -> Result<()> {
+    pub async fn save_months_with_currency(&self, user: &Id, changes: &[(Loaded, Month)], wallet: &Wallet, currency: &str) -> Result<()> {
         let mut tx = self.pool.begin().await?;
         for (before, after) in changes {
             self.save_in(&mut tx, user, before, after).await?;
         }
+        self.write_wallet(&mut tx, user, wallet).await?;
         sqlx::query(&self.sql("UPDATE users SET currency = ?, updated_at = ? WHERE id = ?"))
             .bind(currency)
             .bind(now())
@@ -691,6 +694,111 @@ impl Store {
             .await?;
         tx.commit().await?;
         Ok(true)
+    }
+
+    // ------------------------------------------------------------------
+    // Wallet: accounts, adjustments, goals
+    // ------------------------------------------------------------------
+
+    pub async fn load_wallet(&self, user: &Id) -> Result<Wallet> {
+        let mut w = Wallet::default();
+        for r in sqlx::query(&self.sql(
+            "SELECT id, name, kind, sort_order, archived, credit_limit, apr_bp, minimum_payment, reconciled_on FROM accounts WHERE user_id = ? ORDER BY sort_order, id",
+        ))
+        .bind(user.as_str())
+        .fetch_all(&self.pool)
+        .await?
+        {
+            w.accounts.push(Account {
+                id: Id::new(r.try_get::<String, _>(0)?),
+                name: r.try_get(1)?,
+                kind: AccountKind::parse(&r.try_get::<String, _>(2)?).ok_or_else(|| StorageError::Corrupt("account kind".into()))?,
+                sort_order: i32::try_from(r.try_get::<i64, _>(3)?).unwrap_or(0),
+                archived: r.try_get::<i64, _>(4)? == 1,
+                credit_limit: opt_cents(r.try_get(5)?),
+                apr_bp: r.try_get(6)?,
+                minimum_payment: opt_cents(r.try_get(7)?),
+                reconciled_on: r.try_get::<Option<String>, _>(8)?.map(|s| parse_date(&s)).transpose()?,
+            });
+        }
+        for r in sqlx::query(&self.sql(
+            "SELECT x.id, x.account_id, x.date, x.amount, x.kind FROM account_adjustments x JOIN accounts a ON a.id = x.account_id WHERE a.user_id = ? ORDER BY x.date, x.created_at, x.id",
+        ))
+        .bind(user.as_str())
+        .fetch_all(&self.pool)
+        .await?
+        {
+            w.adjustments.push(Adjustment {
+                id: Id::new(r.try_get::<String, _>(0)?),
+                account_id: Id::new(r.try_get::<String, _>(1)?),
+                date: parse_date(&r.try_get::<String, _>(2)?)?,
+                amount: Cents::new(r.try_get(3)?),
+                kind: AdjustmentKind::parse(&r.try_get::<String, _>(4)?).ok_or_else(|| StorageError::Corrupt("adjustment kind".into()))?,
+            });
+        }
+        for r in sqlx::query(&self.sql(
+            "SELECT id, name, kind, target_amount, target_month, line_name, account_id, start_month, starting_amount, sort_order FROM goals WHERE user_id = ? ORDER BY sort_order, id",
+        ))
+        .bind(user.as_str())
+        .fetch_all(&self.pool)
+        .await?
+        {
+            let line: Option<String> = r.try_get(5)?;
+            let account: Option<String> = r.try_get(6)?;
+            let track = match (account, line) {
+                (Some(a), _) => GoalTrack::Account { id: Id::new(a) },
+                (None, Some(name)) => GoalTrack::Line { name },
+                (None, None) => return Err(StorageError::Corrupt("goal without a line or account".into())),
+            };
+            w.goals.push(Goal {
+                id: Id::new(r.try_get::<String, _>(0)?),
+                name: r.try_get(1)?,
+                kind: GoalKind::parse(&r.try_get::<String, _>(2)?).ok_or_else(|| StorageError::Corrupt("goal kind".into()))?,
+                target_amount: Cents::new(r.try_get(3)?),
+                target_month: r.try_get::<Option<String>, _>(4)?.map(|s| parse_date(&s)).transpose()?,
+                track,
+                start_month: parse_date(&r.try_get::<String, _>(7)?)?,
+                starting_amount: Cents::new(r.try_get(8)?),
+                sort_order: i32::try_from(r.try_get::<i64, _>(9)?).unwrap_or(0),
+            });
+        }
+        Ok(w)
+    }
+
+    /// Replaces the user's wallet (it is small; one transaction).
+    pub async fn save_wallet(&self, user: &Id, w: &Wallet) -> Result<()> {
+        let mut tx = self.pool.begin().await?;
+        self.write_wallet(&mut tx, user, w).await?;
+        tx.commit().await?;
+        Ok(())
+    }
+
+    async fn write_wallet(&self, conn: &mut AnyConnection, user: &Id, w: &Wallet) -> Result<()> {
+        let ts = now();
+        let uid = user.as_str().to_string();
+        self.exec(conn, "DELETE FROM account_adjustments WHERE account_id IN (SELECT id FROM accounts WHERE user_id = ?)", vec![Bind::S(uid.clone())]).await?;
+        self.exec(conn, "DELETE FROM goals WHERE user_id = ?", vec![Bind::S(uid.clone())]).await?;
+        self.exec(conn, "DELETE FROM accounts WHERE user_id = ?", vec![Bind::S(uid.clone())]).await?;
+        for a in &w.accounts {
+            self.exec(conn, "INSERT INTO accounts (id, user_id, name, kind, sort_order, archived, credit_limit, apr_bp, minimum_payment, reconciled_on, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                vec![Bind::s(&a.id), Bind::S(uid.clone()), Bind::S(a.name.clone()), Bind::S(a.kind.as_str().into()), Bind::I(i64::from(a.sort_order)), Bind::I(i64::from(a.archived)),
+                     Bind::OI(opt_i64(a.credit_limit)), Bind::OI(a.apr_bp), Bind::OI(opt_i64(a.minimum_payment)), Bind::OS(a.reconciled_on.map(date_str)), Bind::S(ts.clone()), Bind::S(ts.clone())]).await?;
+        }
+        for (i, x) in w.adjustments.iter().enumerate() {
+            // created_at keeps same-day adjustments in order.
+            self.exec(conn, "INSERT INTO account_adjustments (id, account_id, date, amount, kind, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                vec![Bind::s(&x.id), Bind::s(&x.account_id), Bind::S(date_str(x.date)), Bind::I(x.amount.get()), Bind::S(x.kind.as_str().into()), Bind::S(format!("{i:08}"))]).await?;
+        }
+        for g in &w.goals {
+            let (line, account) = match &g.track {
+                GoalTrack::Line { name } => (Some(name.clone()), None),
+                GoalTrack::Account { id } => (None, Some(id.as_str().to_string())),
+            };
+            self.exec(conn, "INSERT INTO goals (id, user_id, name, kind, target_amount, target_month, line_name, account_id, start_month, starting_amount, sort_order, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                vec![Bind::s(&g.id), Bind::S(uid.clone()), Bind::S(g.name.clone()), Bind::S(g.kind.as_str().into()), Bind::I(g.target_amount.get()), Bind::OS(g.target_month.map(date_str)),
+                     Bind::OS(line), Bind::OS(account), Bind::S(date_str(g.start_month)), Bind::I(g.starting_amount.get()), Bind::I(i64::from(g.sort_order)), Bind::S(ts.clone()), Bind::S(ts.clone())]).await?;
+        }
+        Ok(())
     }
 
     // ------------------------------------------------------------------
@@ -772,11 +880,11 @@ impl Store {
         }
         for (pos, t, new) in changed(&before.transactions, &after.transactions, |t| &t.id) {
             if new {
-                self.exec(conn, "INSERT INTO transactions (id, month_id, date, amount, payee, notes, expense_line_id, paycheck_id, split_group, position, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                    vec![Bind::s(&t.id), Bind::S(mid.clone()), Bind::S(date_str(t.date)), Bind::I(t.amount.get()), Bind::OS(t.payee.clone()), Bind::OS(t.notes.clone()), Bind::OS(opt_str(&t.expense_line_id)), Bind::OS(opt_str(&t.paycheck_id)), Bind::OS(opt_str(&t.split_group)), Bind::I(pos), Bind::S(ts.clone()), Bind::S(ts.clone())]).await?;
+                self.exec(conn, "INSERT INTO transactions (id, month_id, date, amount, payee, notes, expense_line_id, paycheck_id, split_group, account_id, transfer_account_id, position, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    vec![Bind::s(&t.id), Bind::S(mid.clone()), Bind::S(date_str(t.date)), Bind::I(t.amount.get()), Bind::OS(t.payee.clone()), Bind::OS(t.notes.clone()), Bind::OS(opt_str(&t.expense_line_id)), Bind::OS(opt_str(&t.paycheck_id)), Bind::OS(opt_str(&t.split_group)), Bind::OS(opt_str(&t.account_id)), Bind::OS(opt_str(&t.transfer_account_id)), Bind::I(pos), Bind::S(ts.clone()), Bind::S(ts.clone())]).await?;
             } else {
-                self.exec(conn, "UPDATE transactions SET date = ?, amount = ?, payee = ?, notes = ?, expense_line_id = ?, paycheck_id = ?, split_group = ?, position = ?, updated_at = ? WHERE id = ?",
-                    vec![Bind::S(date_str(t.date)), Bind::I(t.amount.get()), Bind::OS(t.payee.clone()), Bind::OS(t.notes.clone()), Bind::OS(opt_str(&t.expense_line_id)), Bind::OS(opt_str(&t.paycheck_id)), Bind::OS(opt_str(&t.split_group)), Bind::I(pos), Bind::S(ts.clone()), Bind::s(&t.id)]).await?;
+                self.exec(conn, "UPDATE transactions SET date = ?, amount = ?, payee = ?, notes = ?, expense_line_id = ?, paycheck_id = ?, split_group = ?, account_id = ?, transfer_account_id = ?, position = ?, updated_at = ? WHERE id = ?",
+                    vec![Bind::S(date_str(t.date)), Bind::I(t.amount.get()), Bind::OS(t.payee.clone()), Bind::OS(t.notes.clone()), Bind::OS(opt_str(&t.expense_line_id)), Bind::OS(opt_str(&t.paycheck_id)), Bind::OS(opt_str(&t.split_group)), Bind::OS(opt_str(&t.account_id)), Bind::OS(opt_str(&t.transfer_account_id)), Bind::I(pos), Bind::S(ts.clone()), Bind::s(&t.id)]).await?;
             }
         }
 

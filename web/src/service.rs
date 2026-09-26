@@ -144,6 +144,44 @@ impl AppState {
         Ok(())
     }
 
+    // ------------------------------------------------------------------
+    // Wallet: accounts, credit cards, goals
+    // ------------------------------------------------------------------
+
+    pub async fn wallet(&self, user: &UserRecord) -> AppResult<Wallet> {
+        Ok(self.store.load_wallet(&user.id).await?)
+    }
+
+    /// Applies `f` to the wallet (with every month for balances) and saves it.
+    pub async fn mutate_wallet<T>(
+        &self,
+        user: &UserRecord,
+        f: impl FnOnce(&mut Wallet, &[Month]) -> Result<T, AppError>,
+    ) -> AppResult<(T, Wallet)> {
+        let before = self.wallet(user).await?;
+        let months = self.all_months(user).await?;
+        let mut next = before.clone();
+        let out = f(&mut next, &months)?;
+        if next != before {
+            self.store.save_wallet(&user.id, &next).await?;
+        }
+        Ok((out, next))
+    }
+
+    /// Fails unless every given account exists.
+    pub async fn check_accounts(&self, user: &UserRecord, ids: &[Option<&Id>]) -> AppResult<()> {
+        if ids.iter().all(Option::is_none) {
+            return Ok(());
+        }
+        let w = self.wallet(user).await?;
+        for id in ids.iter().flatten() {
+            if w.account(id).is_none() {
+                return Err(AppError::Domain(DomainError::NotFound { kind: "account", id: (*id).clone() }));
+            }
+        }
+        Ok(())
+    }
+
     pub async fn all_months(&self, user: &UserRecord) -> AppResult<Vec<Month>> {
         Ok(self.store.load_all_months(&user.id).await?.into_iter().map(|l| l.month).collect())
     }
@@ -181,7 +219,9 @@ impl AppState {
             m.check_invariants()?;
             changes.push((loaded, m));
         }
-        self.store.save_months_with_currency(&user.id, &changes, code).await?;
+        let mut wallet = self.store.load_wallet(&user.id).await?;
+        wallet.convert(&rate);
+        self.store.save_months_with_currency(&user.id, &changes, &wallet, code).await?;
         Ok(())
     }
 

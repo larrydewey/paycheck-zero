@@ -39,6 +39,8 @@ fn sample_month(ym: NaiveDate) -> Month {
         expense_line_id: Some(card),
         paycheck_id: Some(p),
         split_group: Some(Id::new("g-1")),
+        account_id: None,
+        transfer_account_id: None,
     })
     .unwrap();
     m
@@ -126,7 +128,7 @@ async fn storage_behaviour() {
             (l, m)
         })
         .collect();
-    s.save_months_with_currency(&u.id, &changes, "EUR").await.unwrap();
+    s.save_months_with_currency(&u.id, &changes, &Wallet::default(), "EUR").await.unwrap();
     assert_eq!(s.user_by_id(&u.id).await.unwrap().unwrap().currency, "EUR");
     let m2l = s.load_month(&u.id, &m2.id).await.unwrap().unwrap();
     assert_eq!(m2l.month.paychecks[0].planned_amount, Cents::new(200_000));
@@ -141,6 +143,45 @@ async fn storage_behaviour() {
     assert!(s.sync_result(&u.id, "op1").await.unwrap().is_none());
     s.record_sync(&u.id, "op1", "{\"status\":\"applied\"}").await.unwrap();
     assert!(s.sync_result(&u.id, "op1").await.unwrap().is_some());
+
+    // Wallet: accounts, adjustments and goals round-trip.
+    let mut w = Wallet::default();
+    let chk = w.add_account("Checking", AccountKind::Checking, Cents::new(245_000), d(2026, 9, 1), None).unwrap();
+    let visa = w.add_account("Visa", AccountKind::CreditCard, Cents::new(82_000), d(2026, 9, 1), Some(Cents::new(500_000))).unwrap();
+    w.set_card_details(&visa, Some(Cents::new(500_000)), Some(1999), Some(Cents::new(3_500))).unwrap();
+    w.reconcile(&chk, Cents::new(240_000), &[], d(2026, 9, 5)).unwrap();
+    w.add_goal(Goal {
+        id: Id::generate(),
+        name: "Emergency fund".into(),
+        kind: GoalKind::Save,
+        target_amount: Cents::new(1_000_000),
+        target_month: Some(d(2027, 12, 1)),
+        track: GoalTrack::Line { name: "Emergency Fund".into() },
+        start_month: d(2026, 9, 1),
+        starting_amount: Cents::new(50_000),
+        sort_order: 0,
+    })
+    .unwrap();
+    w.add_goal(Goal {
+        id: Id::generate(),
+        name: "Pay off Visa".into(),
+        kind: GoalKind::Payoff,
+        target_amount: Cents::new(82_000),
+        target_month: None,
+        track: GoalTrack::Account { id: visa.clone() },
+        start_month: d(2026, 9, 1),
+        starting_amount: Cents::ZERO,
+        sort_order: 0,
+    })
+    .unwrap();
+    s.save_wallet(&u.id, &w).await.unwrap();
+    assert_eq!(s.load_wallet(&u.id).await.unwrap(), w);
+    w.delete_account(&visa).unwrap();
+    s.save_wallet(&u.id, &w).await.unwrap();
+    let back = s.load_wallet(&u.id).await.unwrap();
+    assert_eq!(back.accounts.len(), 1);
+    assert_eq!(back.goals.len(), 1, "goals tracking a deleted account go with it");
+    assert_eq!(back.balance(&chk, &[]), Cents::new(240_000));
 
     s.reset().await.unwrap();
     assert_eq!(s.count_users().await.unwrap(), 0);

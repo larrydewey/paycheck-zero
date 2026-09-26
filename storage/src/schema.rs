@@ -14,7 +14,57 @@
 //! - `refresh_tokens` and `sync_ops` support auth and offline sync.
 
 /// Ordered migrations: (version, statements).
-pub const MIGRATIONS: &[(i64, &[&str])] = &[(1, V1), (2, V2)];
+pub const MIGRATIONS: &[(i64, &[&str])] = &[(1, V1), (2, V2), (3, V3)];
+
+/// v3: accounts (bank, cash, credit cards), their balance adjustments,
+/// goals, and the account / transfer target on transactions.
+const V3: &[&str] = &[
+    "ALTER TABLE transactions ADD COLUMN account_id VARCHAR(36)",
+    "ALTER TABLE transactions ADD COLUMN transfer_account_id VARCHAR(36)",
+    r#"CREATE TABLE accounts (
+    id              VARCHAR(36) NOT NULL PRIMARY KEY,
+    user_id         VARCHAR(36) NOT NULL,
+    name            VARCHAR(100) NOT NULL,
+    kind            VARCHAR(16) NOT NULL CHECK (kind IN ('checking', 'savings', 'cash', 'credit_card')),
+    sort_order      BIGINT NOT NULL DEFAULT 0,
+    archived        BIGINT NOT NULL DEFAULT 0 CHECK (archived IN (0, 1)),
+    credit_limit    BIGINT CHECK (credit_limit IS NULL OR credit_limit >= 0),
+    apr_bp          BIGINT CHECK (apr_bp IS NULL OR apr_bp >= 0),
+    minimum_payment BIGINT CHECK (minimum_payment IS NULL OR minimum_payment >= 0),
+    reconciled_on   VARCHAR(10),
+    created_at      VARCHAR(40) NOT NULL,
+    updated_at      VARCHAR(40) NOT NULL,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+)"#,
+    r#"CREATE TABLE account_adjustments (
+    id              VARCHAR(36) NOT NULL PRIMARY KEY,
+    account_id      VARCHAR(36) NOT NULL,
+    date            VARCHAR(10) NOT NULL,
+    amount          BIGINT NOT NULL,
+    kind            VARCHAR(10) NOT NULL CHECK (kind IN ('opening', 'reconcile')),
+    created_at      VARCHAR(40) NOT NULL,
+    FOREIGN KEY (account_id) REFERENCES accounts(id) ON DELETE CASCADE
+)"#,
+    r#"CREATE TABLE goals (
+    id              VARCHAR(36) NOT NULL PRIMARY KEY,
+    user_id         VARCHAR(36) NOT NULL,
+    name            VARCHAR(100) NOT NULL,
+    kind            VARCHAR(10) NOT NULL CHECK (kind IN ('save', 'payoff')),
+    target_amount   BIGINT NOT NULL CHECK (target_amount >= 0),
+    target_month    VARCHAR(10),
+    line_name       VARCHAR(100),
+    account_id      VARCHAR(36),
+    start_month     VARCHAR(10) NOT NULL,
+    starting_amount BIGINT NOT NULL DEFAULT 0 CHECK (starting_amount >= 0),
+    sort_order      BIGINT NOT NULL DEFAULT 0,
+    created_at      VARCHAR(40) NOT NULL,
+    updated_at      VARCHAR(40) NOT NULL,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+)"#,
+    "CREATE INDEX idx_accounts_user ON accounts(user_id)",
+    "CREATE INDEX idx_adjustments_account ON account_adjustments(account_id)",
+    "CREATE INDEX idx_goals_user ON goals(user_id)",
+];
 
 /// v2: split transactions (parts of one payment share a group id).
 const V2: &[&str] = &[
@@ -150,6 +200,9 @@ const V1: &[&str] = &[
 
 /// Tables in child-first order (for resets).
 pub const TABLES_CHILD_FIRST: &[&str] = &[
+    "goals",
+    "account_adjustments",
+    "accounts",
     "sync_ops",
     "transactions",
     "allocations",

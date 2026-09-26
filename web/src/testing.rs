@@ -53,6 +53,8 @@ fn tx(date: NaiveDate, cents: i64, payee: &str, line: Option<&Id>, paycheck: Opt
         expense_line_id: line.cloned(),
         paycheck_id: paycheck.cloned(),
         split_group: None,
+        account_id: None,
+        transfer_account_id: None,
     }
 }
 
@@ -120,8 +122,48 @@ async fn reset(State(st): State<Shared>, Json(r): Json<ResetReq>) -> AppResult<J
     }
     let user = seed_user(&st).await?;
     let mut months: Vec<(Month, Vec<Id>)> = Vec::new();
+    let mut wallet: Option<Wallet> = None;
     match seed.as_str() {
         "user" => {}
+        "wallet" => {
+            // Basic month plus accounts, a credit card and two goals.
+            let (mut m, pcs) = basic_month(d(2026, 9, 1), d(2026, 9, 4))?;
+            let mut w = Wallet::default();
+            let opened = d(2026, 9, 1);
+            let checking = w.add_account("Checking", AccountKind::Checking, usd(2_450), opened, None)?;
+            w.add_account("Savings", AccountKind::Savings, usd(5_000), opened, None)?;
+            let visa = w.add_account("Visa", AccountKind::CreditCard, usd(820), opened, Some(usd(5_000)))?;
+            w.set_card_details(&visa, Some(usd(5_000)), Some(2_199), Some(usd(35)))?;
+            for t in &mut m.transactions {
+                t.account_id = Some(if t.payee.as_deref() == Some("Shell") { checking.clone() } else { visa.clone() });
+            }
+            w.add_goal(Goal {
+                id: Id::generate(),
+                name: "Emergency fund".into(),
+                kind: GoalKind::Save,
+                target_amount: usd(5_000),
+                target_month: Some(d(2027, 6, 1)),
+                track: GoalTrack::Line { name: "Emergency Fund".into() },
+                start_month: d(2026, 9, 1),
+                starting_amount: usd(1_000),
+                sort_order: 0,
+            })?;
+            let debt = w.debt_now(&GoalTrack::Account { id: visa.clone() }, std::slice::from_ref(&m), d(2026, 9, 1));
+            w.add_goal(Goal {
+                id: Id::generate(),
+                name: "Visa paid off".into(),
+                kind: GoalKind::Payoff,
+                target_amount: debt,
+                target_month: Some(d(2027, 3, 1)),
+                track: GoalTrack::Account { id: visa },
+                start_month: d(2026, 9, 1),
+                starting_amount: Cents::ZERO,
+                sort_order: 0,
+            })?;
+            months.push((m, pcs));
+            out["accounts"] = json!(w.accounts.iter().map(|a| (a.name.clone(), a.id.clone())).collect::<std::collections::BTreeMap<_, _>>());
+            wallet = Some(w);
+        }
         "basic" | "balanced" | "locked" | "history" => {
             let (mut m, pcs) = basic_month(d(2026, 9, 1), d(2026, 9, 4))?;
             if seed != "basic" {
@@ -166,6 +208,9 @@ async fn reset(State(st): State<Shared>, Json(r): Json<ResetReq>) -> AppResult<J
             "paychecks": pcs,
             "lines": m.expense_lines.iter().map(|l| (l.name.clone(), l.id.clone())).collect::<std::collections::BTreeMap<_, _>>(),
         });
+    }
+    if let Some(w) = &wallet {
+        st.store.save_wallet(&user.id, w).await?;
     }
     if let Some((m, _)) = months.first() {
         st.store.set_last_month(&user.id, Some(&m.id)).await?;

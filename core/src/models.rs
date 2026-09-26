@@ -209,4 +209,33 @@ pub struct Transaction {
     /// part has its own amount, line and paycheck.
     #[serde(default)]
     pub split_group: Option<Id>,
+    /// The account the money moved in or out of (a bank account, cash or a
+    /// credit card). Optional: budgets work without accounts.
+    #[serde(default)]
+    pub account_id: Option<Id>,
+    /// Set on transfers (moving money between accounts, e.g. paying a
+    /// credit card): the money leaves `account_id` and arrives here. A
+    /// transfer only counts as budget spending when it has a line (paying
+    /// down debt that was never budgeted).
+    #[serde(default)]
+    pub transfer_account_id: Option<Id>,
+}
+
+impl Transaction {
+    #[must_use]
+    pub fn is_transfer(&self) -> bool {
+        self.transfer_account_id.is_some()
+    }
+
+    /// Money out that counts against the budget.
+    #[must_use]
+    pub fn is_spending(&self) -> bool {
+        self.amount.is_negative() && (!self.is_transfer() || self.expense_line_id.is_some())
+    }
+
+    /// Spending that hasn't been given a line yet.
+    #[must_use]
+    pub fn needs_line(&self) -> bool {
+        self.amount.is_negative() && !self.is_transfer() && self.expense_line_id.is_none()
+    }
 }

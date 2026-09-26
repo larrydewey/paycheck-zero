@@ -101,7 +101,7 @@ pub fn month_figures(m: &Month) -> Figures {
     let unlinked_expense: Cents = m
         .transactions
         .iter()
-        .filter(|t| t.expense_line_id.is_none() && t.amount.is_negative())
+        .filter(|t| t.needs_line())
         .map(|t| t.amount.abs())
         .sum();
     if unlinked_expense.is_positive() {
@@ -316,7 +316,8 @@ pub fn payees(all: &[Month], from: NaiveDate, to: NaiveDate) -> Vec<PayeeRow> {
     let mut rows: Vec<PayeeRow> = Vec::new();
     let mut seen_groups: Vec<crate::Id> = Vec::new();
     for m in all {
-        for t in m.transactions.iter().filter(|t| t.date >= from && t.date <= to) {
+        // Moving money between your own accounts isn't a payee.
+        for t in m.transactions.iter().filter(|t| t.date >= from && t.date <= to && (!t.is_transfer() || t.expense_line_id.is_some())) {
             let name = t.payee.clone().unwrap_or_else(|| NO_PAYEE.to_string());
             let key = name.to_lowercase();
             let idx = match rows.iter().position(|r| r.payee.to_lowercase() == key) {

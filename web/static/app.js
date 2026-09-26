@@ -175,6 +175,9 @@
         el.dispatchEvent(new Event("change", { bubbles: true }));
       });
       var err = f.querySelector(".field-error"); if (err) err.textContent = "";
+      // Done with this form: let a quick-add row settle now, not under the next tap.
+      if (f.contains(document.activeElement)) document.activeElement.blur();
+      f.classList.remove("keep");
     });
   }
 
@@ -319,6 +322,34 @@
     document.cookie = "pz_only_funded=" + (on ? "1" : "0") + "; path=/; SameSite=Lax; max-age=31536000";
   });
 
+  // Theme: follow the device, or a light/dark choice saved on this device.
+  var THEMES = ["system", "light", "dark"];
+  function currentTheme() {
+    try { var v = localStorage.getItem("pz-theme"); return v === "light" || v === "dark" ? v : "system"; } catch (_) { return "system"; }
+  }
+  function applyTheme(v, announce) {
+    var root = document.documentElement;
+    if (v === "system") root.removeAttribute("data-theme"); else root.setAttribute("data-theme", v);
+    try { if (v === "system") localStorage.removeItem("pz-theme"); else localStorage.setItem("pz-theme", v); } catch (_) {}
+    document.querySelectorAll("[data-theme-toggle]").forEach(function (b) {
+      b.dataset.mode = v;
+      b.setAttribute("aria-label", t("theme_" + v)); b.title = t("theme_" + v);
+    });
+    document.querySelectorAll('input[name="pz-theme"]').forEach(function (r) { r.checked = r.value === v; });
+    var dark = v === "dark" || (v === "system" && window.matchMedia && matchMedia("(prefers-color-scheme: dark)").matches);
+    document.querySelectorAll('meta[name="theme-color"]').forEach(function (m) { m.setAttribute("content", dark ? "#0b1220" : "#0f766e"); m.removeAttribute("media"); });
+    if (announce) toast("success", t("theme_now_" + v));
+  }
+  document.addEventListener("click", function (e) {
+    var b = e.target.closest && e.target.closest("[data-theme-toggle]");
+    if (!b) return;
+    applyTheme(THEMES[(THEMES.indexOf(currentTheme()) + 1) % THEMES.length], true);
+  });
+  document.addEventListener("change", function (e) {
+    if (e.target && e.target.name === "pz-theme") applyTheme(e.target.value, false);
+  });
+  function syncTheme() { applyTheme(currentTheme(), false); }
+
   // Bottom sheet: opens instantly with a placeholder, content streams in.
   var sheetOpener = null;
   /** Opens the sheet; returns false (so the caller skips its request) when
@@ -367,7 +398,8 @@
       var abs = Math.abs(base.amount);
       set("amount", Math.floor(abs / 100) + "." + String(abs % 100).padStart(2, "0"));
       set("payee", base.payee); set("notes", base.notes); set("date", base.date);
-      set("part_line_0", base.expense_line_id); set("part_paycheck_0", base.paycheck_id);
+      set("part_line_0", base.expense_line_id); set("part_paycheck_0", base.paycheck_id); set("account_id", base.account_id);
+      var acct = form.querySelector("[data-remember-account]"); if (acct) acct.removeAttribute("data-remember-account");
       var dir = form.querySelector('input[name="direction"][value="' + (base.amount > 0 ? "income" : "expense") + '"]'); if (dir) dir.checked = true;
       var save = form.querySelector('button[type="submit"]'); if (save) save.textContent = t("save");
       var del = document.createElement("form");
@@ -542,7 +574,56 @@
     }, 4000);
   });
 
+  // Tab badges (e.g. transactions that still need a line) come from a
+  // marker in the freshly rendered content.
+  function syncBadges() {
+    var st = byId("nav-state");
+    var n = st ? Number(st.dataset.needsLine || 0) : 0;
+    document.querySelectorAll("[data-badge=needs-line]").forEach(function (b) {
+      b.textContent = n > 0 ? String(n) : ""; b.hidden = !(n > 0);
+    });
+  }
+  // Quick-add rows expand while focused. Collapse a moment after focus
+  // leaves, so the layout doesn't jump under the finger mid-tap.
+  document.addEventListener("focusin", function (e) {
+    var row = e.target.closest && e.target.closest(".add-line");
+    if (row) { clearTimeout(row._keepT); row.classList.add("keep"); }
+  });
+  document.addEventListener("focusout", function (e) {
+    var row = e.target.closest && e.target.closest(".add-line");
+    if (!row) return;
+    clearTimeout(row._keepT);
+    row._keepT = setTimeout(function () { if (!row.contains(document.activeElement)) row.classList.remove("keep"); }, 400);
+  });
+
+  var contentQueued = false;
+  function onContent() {
+    if (contentQueued) return;
+    contentQueued = true;
+    requestAnimationFrame(function () { contentQueued = false; syncTheme(); syncBadges(); });
+  }
+
+  // New transactions default to the account used last on this device.
+  function rememberAccount(root) {
+    var saved = null; try { saved = localStorage.getItem("pz-last-account"); } catch (_) {}
+    if (!saved) return;
+    (root || document).querySelectorAll("select[data-remember-account]").forEach(function (s) {
+      if (s.dataset.remembered) return;
+      s.dataset.remembered = "1";
+      if (Array.prototype.some.call(s.options, function (o) { return o.value === saved; })) s.value = saved;
+    });
+  }
+  document.addEventListener("submit", function (e) {
+    var s = e.target && e.target.querySelector && e.target.querySelector("select[data-remember-account]");
+    if (s) { try { if (s.value) localStorage.setItem("pz-last-account", s.value); else localStorage.removeItem("pz-last-account"); } catch (_) {} }
+  }, true);
+
   document.addEventListener("DOMContentLoaded", function () {
+    onContent();
+    var sheetEl = byId("sheet");
+    if (sheetEl && window.MutationObserver) new MutationObserver(function () { rememberAccount(sheetEl); }).observe(sheetEl, { childList: true, subtree: true });
+    var main = byId("content");
+    if (main && window.MutationObserver) new MutationObserver(onContent).observe(main, { childList: true, subtree: true, attributes: true, attributeFilter: ["aria-busy", "data-needs-line"] });
     // Drop the one-time sign-in marker from the address bar.
     if (/[?&]signed_in=1/.test(location.search)) {
       var u = new URL(location.href); u.searchParams.delete("signed_in");
@@ -657,7 +738,8 @@
     var text = function (k) { var v = String(fd.get(k) || "").trim(); return v === "" ? null : v; };
     return {
       date: String(fd.get("date") || ""), amount: signed, payee: text("payee"), notes: text("notes"),
-      expense_line_id: text("part_line_0") || text("expense_line_id"), paycheck_id: text("part_paycheck_0") || text("paycheck_id")
+      expense_line_id: text("part_line_0") || text("expense_line_id"), paycheck_id: text("part_paycheck_0") || text("paycheck_id"),
+      account_id: text("account_id")
     };
   }
 

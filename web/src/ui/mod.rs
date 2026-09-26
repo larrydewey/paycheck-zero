@@ -3,6 +3,7 @@
 //! mutation answers with SSE that re-renders the current view, so derived
 //! numbers (Safe-to-Spend, category totals, zero status) update live.
 
+pub mod accounts;
 pub mod actions;
 pub mod pages;
 pub mod plan;
@@ -35,6 +36,8 @@ pub fn routes(state: Shared) -> Router<Shared> {
         .route("/months/{id}/income/suggestions", get(actions::income_suggestions))
         .route("/months/{id}/transactions", get(pages::transactions_page))
         .route("/months/{id}/transactions/content", get(pages::transactions_content))
+        .route("/months/{id}/accounts", get(pages::accounts_page))
+        .route("/months/{id}/accounts/content", get(pages::accounts_content))
         .route("/months/{id}/reports", get(pages::reports_page))
         .route("/months/{id}/reports/content", get(pages::reports_content))
         .route("/months/{id}/reports/export/{kind}", get(pages::report_csv))
@@ -48,6 +51,22 @@ pub fn routes(state: Shared) -> Router<Shared> {
         .route("/ui/sheet/category/{id}", get(sheets::category))
         .route("/ui/sheet/new-line/{id}", get(sheets::new_line))
         .route("/ui/lines/{id}/edit", post(actions::edit_line))
+        .route("/ui/sheet/account/new", get(accounts::account_new_sheet))
+        .route("/ui/sheet/account/{id}", get(accounts::account_sheet))
+        .route("/ui/sheet/transfer/new/{id}", get(accounts::transfer_new_sheet))
+        .route("/ui/sheet/goal/new", get(accounts::goal_new_sheet))
+        .route("/ui/sheet/goal/{id}", get(accounts::goal_sheet))
+        .route("/ui/accounts", post(accounts::add_account))
+        .route("/ui/accounts/{id}/edit", post(accounts::edit_account))
+        .route("/ui/accounts/{id}/reconcile", post(accounts::reconcile_account))
+        .route("/ui/accounts/{id}/archive", post(accounts::archive_account))
+        .route("/ui/accounts/{id}/move", post(accounts::move_account))
+        .route("/ui/accounts/{id}/delete", post(accounts::delete_account))
+        .route("/ui/months/{id}/transfers", post(accounts::add_transfer))
+        .route("/ui/transfers/{id}", post(accounts::update_transfer))
+        .route("/ui/goals", post(accounts::add_goal))
+        .route("/ui/goals/{id}", post(accounts::update_goal))
+        .route("/ui/goals/{id}/delete", post(accounts::delete_goal))
         .route("/settings", get(pages::settings_page))
         .route("/settings/content", get(pages::settings_content))
         .route("/ui/logout", post(actions::logout))
@@ -114,9 +133,34 @@ pub enum View {
     Paycheck { month: Id, paycheck: Id },
     Overview { month: Id },
     Income { month: Id, welcome: bool },
-    Transactions { month: Id },
+    Transactions { month: Id, filter: TxFilter },
+    Accounts { month: Id },
     Reports { month: Id, q: ReportQuery },
     Settings,
+}
+
+/// Transactions list filter (carried in the URL as `?show=`).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum TxFilter {
+    #[default]
+    All,
+    /// Spending that still needs a line.
+    NeedsLine,
+}
+
+impl TxFilter {
+    #[must_use]
+    pub fn parse(s: Option<&str>) -> Self {
+        if s == Some("needs-line") { TxFilter::NeedsLine } else { TxFilter::All }
+    }
+
+    #[must_use]
+    pub fn query(self) -> &'static str {
+        match self {
+            TxFilter::All => "",
+            TxFilter::NeedsLine => "?show=needs-line",
+        }
+    }
 }
 
 impl View {
@@ -127,7 +171,8 @@ impl View {
             View::Paycheck { month, paycheck } => format!("paycheck:{month}:{paycheck}"),
             View::Overview { month } => format!("overview:{month}"),
             View::Income { month, .. } => format!("income:{month}"),
-            View::Transactions { month } => format!("transactions:{month}"),
+            View::Transactions { month, filter } => format!("transactions:{month}:{}", if *filter == TxFilter::NeedsLine { "needs-line" } else { "all" }),
+            View::Accounts { month } => format!("accounts:{month}"),
             View::Reports { month, .. } => format!("reports:{month}"),
             View::Settings => "settings".into(),
         }
@@ -144,7 +189,8 @@ impl View {
             "paycheck" => View::Paycheck { month: a?, paycheck: b? },
             "overview" => View::Overview { month: a? },
             "income" => View::Income { month: a?, welcome: false },
-            "transactions" => View::Transactions { month: a? },
+            "transactions" => View::Transactions { month: a?, filter: TxFilter::parse(b.as_ref().map(Id::as_str)) },
+            "accounts" => View::Accounts { month: a? },
             "reports" => View::Reports { month: a?, q: ReportQuery::default() },
             "settings" => View::Settings,
             _ => return None,
@@ -157,7 +203,8 @@ impl View {
             View::Paycheck { month, .. }
             | View::Overview { month }
             | View::Income { month, .. }
-            | View::Transactions { month }
+            | View::Transactions { month, .. }
+            | View::Accounts { month }
             | View::Reports { month, .. } => Some(month),
             View::Months { .. } | View::Settings => None,
         }
@@ -182,7 +229,8 @@ impl View {
                     format!("/months/{month}/income")
                 }
             }
-            View::Transactions { month } => format!("/months/{month}/transactions"),
+            View::Transactions { month, filter } => format!("/months/{month}/transactions{}", filter.query()),
+            View::Accounts { month } => format!("/months/{month}/accounts"),
             View::Reports { month, q } => format!("/months/{month}/reports{}", q.query_string()),
             View::Settings => "/settings".into(),
         }
@@ -194,6 +242,7 @@ impl View {
             View::Months { archived } => format!("/months/content{}", if *archived { "?archived=1" } else { "" }),
             View::Income { month, welcome } => format!("/months/{month}/income/content{}", if *welcome { "?welcome=1" } else { "" }),
             View::Reports { month, q } => format!("/months/{month}/reports/content{}", q.query_string()),
+            View::Transactions { month, filter } => format!("/months/{month}/transactions/content{}", filter.query()),
             other => format!("{}/content", other.url()),
         }
     }
@@ -450,6 +499,13 @@ pub fn icon(name: &str) -> Markup {
         "more" => "M5 12h.01 M12 12h.01 M19 12h.01",
         "close" => "M6 6l12 12 M18 6L6 18",
         "wallet" => "M3 7h15a3 3 0 0 1 3 3v7a3 3 0 0 1-3 3H6a3 3 0 0 1-3-3z M3 7l12-3v3 M16 14h.01",
+        "sun" => "M12 16a4 4 0 1 0 0-8 4 4 0 0 0 0 8z M12 2v2 M12 20v2 M4.9 4.9l1.4 1.4 M17.7 17.7l1.4 1.4 M2 12h2 M20 12h2 M4.9 19.1l1.4-1.4 M17.7 6.3l1.4-1.4",
+        "moon" => "M20 14.5A8 8 0 0 1 9.5 4 8 8 0 1 0 20 14.5z",
+        "theme-auto" => "M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18z M12 3v18 M12 3a9 9 0 0 1 0 18z",
+        "flag" => "M5 21V4 M5 4h11l-2 4 2 4H5",
+        "card" => "M3 6h18v12H3z M3 10h18 M7 15h3",
+        "bank" => "M3 10l9-6 9 6 M5 10v8 M9 10v8 M15 10v8 M19 10v8 M3 20h18",
+        "transfer" => "M4 8h14l-3-3 M20 16H6l3 3",
         _ => "",
     };
     let width = if matches!(name, "grip" | "more") { "3" } else { "2" };
@@ -466,19 +522,22 @@ struct NavTab {
     label: String,
     icon: &'static str,
     href: String,
+    badge: Option<&'static str>,
 }
 
-fn nav_tabs(month: &Id, default_paycheck: Option<&Id>) -> [NavTab; 4] {
+fn nav_tabs(month: &Id, default_paycheck: Option<&Id>) -> [NavTab; 5] {
     [
         NavTab {
             key: "paycheck",
             label: t("nav.plan"),
             icon: "paychecks",
             href: default_paycheck.map_or_else(|| format!("/months/{month}"), |p| format!("/months/{month}/paychecks/{p}")),
+            badge: None,
         },
-        NavTab { key: "overview", label: t("nav.budget"), icon: "overview", href: format!("/months/{month}/overview") },
-        NavTab { key: "transactions", label: t("nav.spending"), icon: "transactions", href: format!("/months/{month}/transactions") },
-        NavTab { key: "reports", label: t("nav.insights"), icon: "reports", href: format!("/months/{month}/reports") },
+        NavTab { key: "overview", label: t("nav.budget"), icon: "overview", href: format!("/months/{month}/overview"), badge: None },
+        NavTab { key: "transactions", label: t("nav.transactions"), icon: "transactions", href: format!("/months/{month}/transactions"), badge: Some("needs-line") },
+        NavTab { key: "accounts", label: t("nav.accounts"), icon: "wallet", href: format!("/months/{month}/accounts"), badge: None },
+        NavTab { key: "reports", label: t("nav.insights"), icon: "reports", href: format!("/months/{month}/reports"), badge: None },
     ]
 }
 
@@ -503,6 +562,23 @@ fn month_switcher(h: &MonthHeader) -> Markup {
             a class="icon-btn" href=(target(&h.prev, prev_ym)) aria-label=(tf("nav.prev_month", &[("month", &month_label(prev_ym))])) { (icon("chev-left")) }
             a class="month-name" href="/months" aria-label=(tf("nav.all_months_current", &[("month", &month_label(h.year_month))])) { (month_label(h.year_month)) }
             a class="icon-btn" href=(target(&h.next, next_ym)) aria-label=(tf("nav.next_month", &[("month", &month_label(next_ym))])) { (icon("chevron")) }
+        }
+    }
+}
+
+/// A count on a tab; filled in by `app.js` from the rendered content.
+fn nav_badge(kind: &str) -> Markup {
+    html! { span class="nav-badge" data-badge=(kind) hidden aria-hidden="true" {} }
+}
+
+/// Cycles System → Light → Dark. The label and icon are set by `app.js`
+/// from the saved choice; this is the "System" state.
+fn theme_button() -> Markup {
+    html! {
+        button type="button" class="icon-btn theme-btn" data-theme-toggle aria-label=(t("theme.button_system")) title=(t("theme.button_system")) {
+            span class="ti ti-system" { (icon("theme-auto")) }
+            span class="ti ti-light" { (icon("sun")) }
+            span class="ti ti-dark" { (icon("moon")) }
         }
     }
 }
@@ -536,6 +612,8 @@ pub fn layout(user: Option<&UserRecord>, title: &str, header: Option<(&MonthHead
                 link rel="manifest" href="/manifest.webmanifest";
                 link rel="icon" href="/static/icon.svg" type="image/svg+xml";
                 link rel="apple-touch-icon" href="/static/icon-192.png";
+                // Apply a chosen theme before first paint (no flash).
+                script { (PreEscaped("try{var t=localStorage.getItem('pz-theme');if(t==='light'||t==='dark')document.documentElement.setAttribute('data-theme',t)}catch(e){}")) }
                 link rel="stylesheet" href="/static/app.css";
                 script id="pz-i18n" type="application/json" { (PreEscaped(client_bundle().replace("</", "<\\/"))) }
                 script src="/static/app.js" {}
@@ -560,15 +638,21 @@ pub fn layout(user: Option<&UserRecord>, title: &str, header: Option<(&MonthHead
                             }
                         }
                         @if let Some((h, _)) = header { (month_switcher(h)) } @else { span class="appbar-title" { (title) } }
-                        @if user.is_some() {
-                            a class="icon-btn settings-link" href="/settings" aria-label=(t("nav.settings")) { (icon("gear")) }
-                        } @else { span {} }
+                        div class="appbar-actions" {
+                            (theme_button())
+                            @if user.is_some() {
+                                a class="icon-btn settings-link" href="/settings" aria-label=(t("nav.settings")) { (icon("gear")) }
+                            }
+                        }
                     }
                     @if let Some(tabs) = &tabs {
                         nav class="tabs" aria-label=(t("nav.sections")) {
                             @for tab in tabs {
                                 a href=(tab.href) class=(if tab.key == active { "tab active" } else { "tab" })
-                                    aria-current=[(tab.key == active).then_some("page")] { (tab.label) }
+                                    aria-current=[(tab.key == active).then_some("page")] {
+                                    (tab.label)
+                                    @if let Some(b) = tab.badge { (nav_badge(b)) }
+                                }
                             }
                         }
                     }
@@ -598,7 +682,7 @@ pub fn layout(user: Option<&UserRecord>, title: &str, header: Option<(&MonthHead
                         @for tab in tabs {
                             a href=(tab.href) class=(if tab.key == active { "btab active" } else { "btab" })
                                 aria-current=[(tab.key == active).then_some("page")] {
-                                (icon(tab.icon))
+                                span class="btab-icon" { (icon(tab.icon)) @if let Some(b) = tab.badge { (nav_badge(b)) } }
                                 span { (tab.label) }
                             }
                         }

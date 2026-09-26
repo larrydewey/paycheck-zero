@@ -26,6 +26,8 @@ pub struct TxData {
     pub expense_line_id: Option<Id>,
     #[serde(default)]
     pub paycheck_id: Option<Id>,
+    #[serde(default)]
+    pub account_id: Option<Id>,
 }
 
 impl TxData {
@@ -37,6 +39,7 @@ impl TxData {
             notes: t.notes.clone(),
             expense_line_id: t.expense_line_id.clone(),
             paycheck_id: t.paycheck_id.clone(),
+            account_id: t.account_id.clone(),
         }
     }
 
@@ -51,6 +54,8 @@ impl TxData {
             expense_line_id: self.expense_line_id.filter(|i| !i.as_str().is_empty()),
             paycheck_id: self.paycheck_id.filter(|i| !i.as_str().is_empty()),
             split_group: None,
+            account_id: self.account_id.filter(|i| !i.as_str().is_empty()),
+            transfer_account_id: None,
         }
     }
 

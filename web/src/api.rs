@@ -628,6 +628,8 @@ impl TxReq {
             expense_line_id: self.expense_line_id,
             paycheck_id: self.paycheck_id,
             split_group: self.split_group,
+            account_id: None,
+            transfer_account_id: None,
         }
     }
 }
@@ -724,7 +726,8 @@ async fn variance(State(st): State<Shared>, user: AuthUser, Path(id): Path<Id>) 
 
 async fn export_csv(State(st): State<Shared>, user: AuthUser, Path(id): Path<Id>) -> AppResult<Response> {
     let m = st.load(&user.0, &id).await?.month;
-    Ok(export::csv_response(&m))
+    let w = st.wallet(&user.0).await?;
+    Ok(export::csv_response(&m, &w))
 }
 
 async fn snapshot(State(st): State<Shared>, user: AuthUser, Path(id): Path<Id>) -> J {

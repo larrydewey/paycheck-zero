@@ -168,6 +168,43 @@ pub(super) fn month_alerts(c: &Ctx, m: &Month, archived: bool, view: &View, offe
     }
 }
 
+/// "3 transactions need a line" with a way to fix them.
+fn needs_line_alert(c: &Ctx, m: &Month) -> Markup {
+    let needing: Vec<&Transaction> = m.transactions.iter().filter(|t| t.needs_line()).collect();
+    let total: Cents = needing.iter().map(|t| t.amount.abs()).sum();
+    html! {
+        @if !needing.is_empty() {
+            div class="alert caution" id="needs-line-alert" role="status" {
+                span class="alert-text" {
+                    (icon("alert")) " "
+                    (tf("tx.needs_line_alert", &[("n", &needing.len().to_string()), ("amount", &c.money(total))]))
+                }
+                a class="alert-link" href=(format!("/months/{}/transactions?show=needs-line", m.id)) { (t("tx.needs_line_review")) }
+            }
+        }
+    }
+}
+
+/// The latest spending tagged to this paycheck, so the plan and what
+/// actually happened sit side by side.
+fn recent_from_paycheck(c: &Ctx, m: &Month, wallet: &Wallet, pid: &Id, view: &View) -> Markup {
+    let mut txs: Vec<&Transaction> = m.transactions.iter().filter(|t| t.paycheck_id.as_ref() == Some(pid)).collect();
+    txs.sort_by_key(|t| std::cmp::Reverse(t.date));
+    html! {
+        section class="card recent" aria-labelledby="recent-h" {
+            div class="section-head" {
+                h2 id="recent-h" class="h3" { (t("plan.recent")) }
+                a class="small" href=(format!("/months/{}/transactions", m.id)) { (t("plan.recent_all")) }
+            }
+            @if txs.is_empty() {
+                p class="muted small" { (t("plan.recent_empty")) }
+            } @else {
+                (super::accounts::recent_list(c, m, wallet, &txs.iter().take(4).copied().collect::<Vec<_>>(), view, None))
+            }
+        }
+    }
+}
+
 // ----------------------------------------------------------------------
 // Plan: one paycheck
 // ----------------------------------------------------------------------
@@ -195,7 +232,7 @@ fn paycheck_strip(c: &Ctx, m: &Month, active: &Id) -> Markup {
     }
 }
 
-pub fn render_paycheck(c: &Ctx, m: &Month, archived: bool, pid: &Id) -> Markup {
+pub fn render_paycheck(c: &Ctx, m: &Month, archived: bool, pid: &Id, wallet: &Wallet) -> Markup {
     let Some(p) = m.paycheck(pid) else { return html! {} };
     let v = m.paycheck_view(p);
     let view = View::Paycheck { month: m.id.clone(), paycheck: pid.clone() };
@@ -207,7 +244,7 @@ pub fn render_paycheck(c: &Ctx, m: &Month, archived: bool, pid: &Id) -> Markup {
     let has_lines = !shown.is_empty();
     html! {
         h1 class="visually-hidden" { (tf("paycheck.heading", &[("date", &short_date(p.date)), ("name", &v.income_line_name)])) }
-        div class="split-layout" {
+        div class="split-layout has-extras" {
         div class="side" {
         (paycheck_strip(c, m, pid))
 
@@ -255,6 +292,7 @@ pub fn render_paycheck(c: &Ctx, m: &Month, archived: bool, pid: &Id) -> Markup {
         }
 
         (month_alerts(c, m, archived, &view, false))
+        (needs_line_alert(c, m))
         }
         div class="main-col" {
         section class=(if c.only_funded { "funding only-funded" } else { "funding" }) id="funding" aria-labelledby="funding-h" {
@@ -316,6 +354,7 @@ pub fn render_paycheck(c: &Ctx, m: &Month, archived: bool, pid: &Id) -> Markup {
             a href=(format!("/months/{}/income", m.id)) { (t("plan.manage_income")) }
         }
         }
+        div class="extras" { (recent_from_paycheck(c, m, wallet, pid, &view)) }
         }
     }
 }
@@ -324,7 +363,7 @@ pub fn render_paycheck(c: &Ctx, m: &Month, archived: bool, pid: &Id) -> Markup {
 // Budget: the whole month
 // ----------------------------------------------------------------------
 
-pub fn render_overview(c: &Ctx, m: &Month, archived: bool) -> Markup {
+pub fn render_overview(c: &Ctx, m: &Month, archived: bool, wallet: &Wallet, all: &[Month]) -> Markup {
     let view = View::Overview { month: m.id.clone() };
     let enc = view.encode();
     let alloc = m.allocations_editable() && !archived;
@@ -336,7 +375,7 @@ pub fn render_overview(c: &Ctx, m: &Month, archived: bool) -> Markup {
     let planned = m.total_planned_expense();
     let spent: Cents = m.expense_lines.iter().map(|l| m.line_spent(&l.id)).sum();
     html! {
-        div class="split-layout" {
+        div class="split-layout has-extras" {
         div class="side" {
         h1 { (t("budget.title")) span class="visually-hidden" { " · " (month_label(m.year_month)) } }
         section class="summary card" aria-label=(t("cards.label")) {
@@ -349,6 +388,7 @@ pub fn render_overview(c: &Ctx, m: &Month, archived: bool) -> Markup {
             p class="summary-note" { (tf("budget.spent_of", &[("pct", &pct(spent, planned).to_string())])) }
         }
         (month_alerts(c, m, archived, &view, true))
+        (needs_line_alert(c, m))
         }
         div class="main-col" {
         @if m.paychecks.is_empty() {
@@ -405,6 +445,11 @@ pub fn render_overview(c: &Ctx, m: &Month, archived: bool) -> Markup {
             }
         }
         }
+        // Goals and balances: beside the plan on wide screens, after it on phones.
+        div class="extras" {
+            (super::accounts::goals_section(c, m, wallet, all, &view))
+            (super::accounts::accounts_card(c, m, wallet, all))
+        }
         }
     }
 }
@@ -418,10 +463,11 @@ enum TxItem<'a> {
     Split(Id),
 }
 
-pub fn render_transactions(c: &Ctx, m: &Month, archived: bool) -> Markup {
-    let view = View::Transactions { month: m.id.clone() };
+pub fn render_transactions(c: &Ctx, m: &Month, archived: bool, filter: TxFilter, wallet: &Wallet) -> Markup {
+    let view = View::Transactions { month: m.id.clone(), filter };
     let enc = view.encode();
-    let mut txs: Vec<&Transaction> = m.transactions.iter().collect();
+    let needing: Vec<&Transaction> = m.transactions.iter().filter(|t| t.needs_line()).collect();
+    let mut txs: Vec<&Transaction> = m.transactions.iter().filter(|t| filter == TxFilter::All || t.needs_line()).collect();
     txs.sort_by_key(|x| std::cmp::Reverse(x.date));
     let mut items: Vec<TxItem> = Vec::new();
     for x in &txs {
@@ -435,7 +481,7 @@ pub fn render_transactions(c: &Ctx, m: &Month, archived: bool) -> Markup {
         }
     }
     let line_name = |id: &Option<Id>| id.as_ref().and_then(|l| m.expense_line(l)).map(|l| l.name.clone());
-    let spent: Cents = m.transactions.iter().filter(|t| t.amount.is_negative()).map(|t| t.amount.abs()).sum();
+    let spent: Cents = m.transactions.iter().filter(|t| t.is_spending()).map(|t| t.amount.abs()).sum();
     let received: Cents = m.transactions.iter().filter(|t| t.amount.is_positive()).map(|t| t.amount).sum();
     // (show a day header?, first part, total, parts) per payment.
     let mut last_day: Option<NaiveDate> = None;
@@ -470,6 +516,15 @@ pub fn render_transactions(c: &Ctx, m: &Month, archived: bool) -> Markup {
         (super::pages::overspent_banner_pub(c, m, &view))
         }
         div class="main-col" {
+        div class="filter-chips" role="group" aria-label=(t("tx.filter_label")) {
+            a class=(if filter == TxFilter::All { "chip-toggle on" } else { "chip-toggle" }) href=(format!("/months/{}/transactions", m.id))
+                aria-current=[(filter == TxFilter::All).then_some("page")] { (t("tx.filter_all")) }
+            a class={ "chip-toggle" @if filter == TxFilter::NeedsLine { " on" } @if !needing.is_empty() { " attention" } }
+                href=(format!("/months/{}/transactions?show=needs-line", m.id)) data-filter="needs-line"
+                aria-current=[(filter == TxFilter::NeedsLine).then_some("page")] {
+                (t("tx.filter_needs_line")) @if !needing.is_empty() { " " span class="count" { (needing.len()) } }
+            }
+        }
         div class="toolbar" {
             div class="search" {
                 span class="search-icon" aria-hidden="true" { (icon("search")) }
@@ -478,7 +533,9 @@ pub fn render_transactions(c: &Ctx, m: &Month, archived: bool) -> Markup {
         }
         section aria-labelledby="tx-list-h" {
             h2 id="tx-list-h" class="visually-hidden" { (t("tx.list")) }
-            @if items.is_empty() {
+            @if items.is_empty() && filter == TxFilter::NeedsLine {
+                div class="empty soft" { h3 { (icon("check")) " " (t("tx.all_have_lines")) } p { (t("tx.all_have_lines_body")) } }
+            } @else if items.is_empty() {
                 (empty_state(&t("tx.empty_title"), &t("tx.empty_body"), (!archived).then(|| html! {
                     button type="button" class="btn primary" data-on:click=(open_sheet(&format!("/ui/sheet/tx/new/{}?view={enc}", m.id))) { (t("tx.add")) }
                 })))
@@ -489,21 +546,30 @@ pub fn render_transactions(c: &Ctx, m: &Month, archived: bool) -> Markup {
                         @if *show_day {
                             li class="tx-day" aria-hidden="true" { (first.date.format("%a, %b %-d").to_string()) }
                         }
-                        @let payee = first.payee.clone().unwrap_or_else(|| t("tx.no_payee"));
+                        @let payee = first.payee.clone().unwrap_or_else(|| if first.is_transfer() { t("transfer.title") } else { t("tx.no_payee") });
                         @let is_split = parts.len() > 1;
-                        @let base = (!is_split).then(|| serde_json::json!({
+                        @let account = first.account_id.as_ref().and_then(|a| wallet.account(a)).map(|a| a.name.clone());
+                        @let base = (!is_split && !first.is_transfer()).then(|| serde_json::json!({
                             "date": first.date, "amount": first.amount.get(), "payee": first.payee, "notes": first.notes,
-                            "expense_line_id": first.expense_line_id, "paycheck_id": first.paycheck_id,
+                            "expense_line_id": first.expense_line_id, "paycheck_id": first.paycheck_id, "account_id": first.account_id,
                         }).to_string());
-                        li class={ "tx" @if is_split { " split" } } data-tx=(first.id) data-split=[first.split_group.as_ref()] data-base=[base]
+                        li class={ "tx" @if is_split { " split" } @if first.is_transfer() { " transfer" } @if first.needs_line() { " needs-line" } } data-tx=(first.id) data-split=[first.split_group.as_ref()] data-base=[base]
                             data-search=(format!("{} {}", payee, parts.iter().filter_map(|p| line_name(&p.expense_line_id)).collect::<Vec<_>>().join(" ")).to_lowercase()) {
                             button type="button" class="tx-open" disabled[archived]
                                 aria-label=(tf("tx.edit_label", &[("payee", &payee), ("date", &short_date(first.date))]))
                                 data-on:click=(open_sheet(&format!("/ui/sheet/tx/{}?view={enc}", first.id))) {
                                 span class="tx-main" {
-                                    span class="tx-payee" { (payee) }
+                                    span class="tx-payee" {
+                                        @if first.is_transfer() { span class="tx-icon" { (icon("transfer")) } }
+                                        (payee)
+                                        @if first.needs_line() { " " span class="pill warn tiny" { (t("tx.needs_line")) } }
+                                    }
                                     span class="tx-meta" {
-                                        @if is_split {
+                                        @if first.is_transfer() {
+                                            (super::accounts::transfer_route(wallet, first))
+                                            @if let Some(l) = line_name(&first.expense_line_id) { " · " (l) }
+                                            @if let Some(n) = &first.notes { " · " (n) }
+                                        } @else if is_split {
                                             strong { (t("split.meta")) } " · "
                                             @for (i, p) in parts.iter().enumerate() {
                                                 @if i > 0 { " · " }
@@ -511,15 +577,19 @@ pub fn render_transactions(c: &Ctx, m: &Month, archived: bool) -> Markup {
                                                 @if let Some(pc) = p.paycheck_id.as_ref().and_then(|pc| m.paycheck(pc)) { " (" (short_date(pc.date)) ")" }
                                             }
                                         } @else {
-                                            (line_name(&first.expense_line_id).unwrap_or_else(|| t("tx.uncategorized")))
+                                            @if !first.needs_line() { (line_name(&first.expense_line_id).unwrap_or_else(|| t("tx.uncategorized"))) }
+                                            @else { (t("tx.tap_to_add_line")) }
                                             @if let Some(p) = first.paycheck_id.as_ref().and_then(|p| m.paycheck(p)) {
                                                 " · " (tf("tx.from_paycheck", &[("date", &short_date(p.date))]))
                                             }
                                             @if let Some(n) = &first.notes { " · " (n) }
                                         }
+                                        @if let (Some(a), false) = (&account, first.is_transfer()) { " · " span class="tx-acct" { (a) } }
                                     }
                                 }
-                                span class=(if total.is_negative() { "tx-amt num" } else { "tx-amt num pos" }) { (c.money(total)) }
+                                span class={ "tx-amt num" @if total.is_positive() { " pos" } @if first.is_transfer() { " neutral" } } {
+                                    (c.money(if first.is_transfer() { total.abs() } else { total }))
+                                }
                             }
                         }
                     }

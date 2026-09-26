@@ -13,6 +13,8 @@ pub enum DomainError {
     NegativeAmount,
     #[error("transaction amount cannot be zero")]
     ZeroTransaction,
+    #[error("a transfer needs two different accounts and an amount leaving the first")]
+    InvalidTransfer,
     #[error("a split needs at least two parts")]
     SplitTooFew,
     #[error("split parts must all be expenses or all be income")]
@@ -67,6 +69,7 @@ impl DomainError {
             DomainError::NonPositiveAmount => "NON_POSITIVE_AMOUNT",
             DomainError::NegativeAmount => "NEGATIVE_AMOUNT",
             DomainError::ZeroTransaction => "ZERO_TRANSACTION",
+            DomainError::InvalidTransfer => "INVALID_TRANSFER",
             DomainError::SplitTooFew => "SPLIT_TOO_FEW",
             DomainError::SplitMixedSigns => "SPLIT_MIXED_SIGNS",
             DomainError::OverAllocated { .. } => "INVARIANT_VIOLATION",
