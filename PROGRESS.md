@@ -190,6 +190,14 @@ Teller and Plaid can be turned on from the app instead of environment variables.
 - **Background sync** now runs even without Teller or Plaid, because SimpleFIN is always available.
 - **Tests:** a test-mode reset flag ignores the environment providers so the UI flow can be tested. The fixtures include a self-signed test certificate.
 
+## Teller removed (2026-09-25)
+
+The owner reported Teller as no longer working, so it was removed:
+- its client, configuration, environment variables, Settings block, Connect handling, fake server and tests;
+- the certificate upload, which only Teller needed.
+
+Existing Teller connections, if any, show "no longer supported". Disconnecting keeps their accounts and history. The end-to-end bank scenarios (dedupe, transfer pairing, paycheck deposits, pending, incremental sync, reconnect, mapping to existing accounts) now run against the fake Plaid. The sections above describe the history.
+
 ## Known limitations
 
 - Playwright's WebKit build needs Ubuntu 24.04 libraries. On this Omarchy host it runs through Playwright's Docker image automatically (`e2e/global-setup.ts`).

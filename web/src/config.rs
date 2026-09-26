@@ -9,11 +9,7 @@
 //! | `PZ_TEST_MODE`        | `false` (enables `/__test/*` endpoints; never in production) |
 //! | `PZ_DATA_KEY`         | 64 hex chars; encrypts stored bank tokens (else `PZ_DATA_KEY_FILE`) |
 //! | `PZ_DATA_KEY_FILE`    | `paycheckzero.key` (created on first start, mode 0600) |
-//! | `PZ_TELLER_APP_ID`    | unset: bank sync is off. Your Teller application id |
-//! | `PZ_TELLER_ENV`       | `development` (`sandbox`, `development` or `production`) |
-//! | `PZ_TELLER_CERT`      | path to the Teller client certificate (PEM), needed outside sandbox |
-//! | `PZ_TELLER_KEY`       | path to its private key (PEM) |
-//! | `PZ_BANK_SYNC_HOURS`  | `6` (background sync of every connection; `0` turns it off; `PZ_TELLER_SYNC_HOURS` also works) |
+//! | `PZ_BANK_SYNC_HOURS`  | `6` (background sync of every connection; `0` turns it off) |
 //! | `PZ_PLAID_CLIENT_ID`  | unset: Plaid is off |
 //! | `PZ_PLAID_SECRET`     | Plaid secret for the chosen environment |
 //! | `PZ_PLAID_ENV`        | `sandbox` (`sandbox` or `production`) |
@@ -31,8 +27,6 @@ pub struct Config {
     pub test_mode: bool,
     /// Encrypts bank access tokens at rest.
     pub data_key: [u8; 32],
-    /// Bank sync through Teller; `None` when not configured.
-    pub teller: Option<TellerConfig>,
     /// Bank sync through Plaid; `None` when not configured.
     pub plaid: Option<PlaidConfig>,
     /// Background sync interval in hours (0 = off).
@@ -70,35 +64,6 @@ impl PlaidConfig {
     }
 }
 
-#[derive(Debug, Clone)]
-pub struct TellerConfig {
-    pub app_id: String,
-    pub environment: String,
-    /// API base URL (tests point this at the built-in fake).
-    pub api: String,
-    /// Teller Connect script URL.
-    pub connect_js: String,
-    pub cert: Option<String>,
-    pub key: Option<String>,
-    /// Certificate and key contents (set in the app) instead of file paths.
-    pub cert_pem: Option<String>,
-    pub key_pem: Option<String>,
-    pub sync_hours: u64,
-    /// Where it came from: environment variables, or saved in the app.
-    pub from_env: bool,
-}
-
-/// Teller API base (tests point this at the built-in fake).
-#[must_use]
-pub fn teller_api() -> String {
-    std::env::var("PZ_TELLER_API").unwrap_or_else(|_| "https://api.teller.io".into())
-}
-
-#[must_use]
-pub fn teller_connect_js() -> String {
-    std::env::var("PZ_TELLER_CONNECT_JS").unwrap_or_else(|_| "https://cdn.teller.io/connect/connect.js".into())
-}
-
 #[must_use]
 pub fn plaid_api(environment: &str) -> String {
     std::env::var("PZ_PLAID_API").unwrap_or_else(|_| format!("https://{environment}.plaid.com"))
@@ -109,26 +74,8 @@ pub fn plaid_link_js() -> String {
     std::env::var("PZ_PLAID_LINK_JS").unwrap_or_else(|_| "https://cdn.plaid.com/link/v2/stable/link-initialize.js".into())
 }
 
-impl TellerConfig {
-    fn from_env() -> Option<TellerConfig> {
-        let app_id = std::env::var("PZ_TELLER_APP_ID").ok().filter(|s| !s.trim().is_empty())?;
-        Some(TellerConfig {
-            app_id: app_id.trim().to_string(),
-            environment: std::env::var("PZ_TELLER_ENV").unwrap_or_else(|_| "development".into()),
-            api: teller_api(),
-            connect_js: teller_connect_js(),
-            cert: std::env::var("PZ_TELLER_CERT").ok().filter(|s| !s.is_empty()),
-            key: std::env::var("PZ_TELLER_KEY").ok().filter(|s| !s.is_empty()),
-            cert_pem: None,
-            key_pem: None,
-            sync_hours: sync_hours(),
-            from_env: true,
-        })
-    }
-}
-
 fn sync_hours() -> u64 {
-    std::env::var("PZ_BANK_SYNC_HOURS").or_else(|_| std::env::var("PZ_TELLER_SYNC_HOURS")).ok().and_then(|v| v.parse().ok()).unwrap_or(6)
+    std::env::var("PZ_BANK_SYNC_HOURS").ok().and_then(|v| v.parse().ok()).unwrap_or(6)
 }
 
 /// The key that encrypts bank tokens: `PZ_DATA_KEY`, else a key file that
@@ -174,7 +121,6 @@ impl Config {
             secure_cookies: flag("PZ_SECURE_COOKIES"),
             test_mode: flag("PZ_TEST_MODE"),
             data_key: data_key(),
-            teller: TellerConfig::from_env(),
             plaid: PlaidConfig::from_env(),
             bank_sync_hours: sync_hours(),
             simplefin_allow_http: flag("PZ_TEST_MODE"),
@@ -192,7 +138,6 @@ impl Config {
             secure_cookies: false,
             test_mode: true,
             data_key: [7u8; 32],
-            teller: None,
             plaid: None,
             bank_sync_hours: 0,
             simplefin_allow_http: true,

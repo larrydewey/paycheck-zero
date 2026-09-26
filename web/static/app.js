@@ -596,23 +596,6 @@
     row._keepT = setTimeout(function () { if (!row.contains(document.activeElement)) row.classList.remove("keep"); }, 400);
   });
 
-  // Certificate files for bank providers: read the PEM text into its field.
-  document.addEventListener("change", function (e) {
-    var input = e.target;
-    if (!(input instanceof HTMLInputElement) || !input.dataset.pemInto || !input.files || !input.files[0]) return;
-    var file = input.files[0];
-    var target = byId(input.dataset.pemInto);
-    var name = document.querySelector('[data-pem-name="' + input.dataset.pemInto + '"]');
-    var reader = new FileReader();
-    reader.onload = function () {
-      var text = String(reader.result || "");
-      if (text.indexOf("-----BEGIN") === -1) { toast("error", t("pem_invalid")); input.value = ""; return; }
-      if (target) target.value = text;
-      if (name) name.textContent = "✓ " + file.name;
-    };
-    reader.readAsText(file);
-  });
-
   // Bank forms share the "Import transactions from" date in the sheet.
   document.addEventListener("submit", function (e) {
     var f = e.target; if (!(f instanceof HTMLFormElement)) return;
@@ -624,7 +607,9 @@
     if (from) form.querySelectorAll("input[data-from]").forEach(function (i) { i.value = from.value; });
   }
 
-  // Plaid Link: same pattern as Teller below.
+  // Plaid Link. The sheet closes first (a modal sheet would sit above
+  // Plaid's window); the enroll form moves out of it so the result can
+  // still be posted, and the sheet reopens for the next step.
   document.addEventListener("click", function (e) {
     var b = e.target.closest && e.target.closest("[data-plaid-connect]");
     if (!b) return;
@@ -648,52 +633,12 @@
           },
           onExit: function () { if (form.parentNode === document.body) form.remove(); }
         }).open();
-      } catch (_) { toast("error", t("teller_failed")); }
+      } catch (_) { toast("error", t("provider_failed")); }
     };
     if (window.Plaid) { start(); return; }
     var s = document.createElement("script");
     s.src = b.dataset.src; s.onload = start;
-    s.onerror = function () { toast("error", t("teller_failed")); form.remove(); };
-    document.head.appendChild(s);
-  });
-
-  // Bank sync: Teller Connect. The sheet closes first (a modal sheet would
-  // sit above Teller's window); the enroll form moves out of it so the
-  // result can still be posted, and the sheet reopens for the next step.
-  document.addEventListener("click", function (e) {
-    var b = e.target.closest && e.target.closest("[data-teller-connect]");
-    if (!b) return;
-    if (!navigator.onLine) { toast("error", t("online_only")); return; }
-    var form = byId("teller-enroll");
-    if (!form) return;
-    copyFrom(form);
-    document.body.appendChild(form);
-    closeSheet();
-    var start = function () {
-      var opts = {
-        applicationId: b.dataset.appId,
-        environment: b.dataset.environment,
-        products: ["transactions", "balance"],
-        selectAccount: "multiple",
-        onSuccess: function (en) {
-          var set = function (k, v) { var el = form.querySelector('[name="' + k + '"]'); if (el) el.value = v || ""; };
-          set("access_token", en.accessToken);
-          set("enrollment_id", en.enrollment && en.enrollment.id);
-          set("institution", en.enrollment && en.enrollment.institution && en.enrollment.institution.name);
-          openSheet();
-          form.requestSubmit();
-          setTimeout(function () { if (form.parentNode === document.body) form.remove(); }, 8000);
-        },
-        onExit: function () { if (form.parentNode === document.body) form.remove(); }
-      };
-      if (b.dataset.enrollment) opts.enrollmentId = b.dataset.enrollment;
-      try { window.TellerConnect.setup(opts).open(); } catch (_) { toast("error", t("teller_failed")); }
-    };
-    if (window.TellerConnect) { start(); return; }
-    var s = document.createElement("script");
-    s.src = b.dataset.src;
-    s.onload = start;
-    s.onerror = function () { toast("error", t("teller_failed")); form.remove(); };
+    s.onerror = function () { toast("error", t("provider_failed")); form.remove(); };
     document.head.appendChild(s);
   });
 

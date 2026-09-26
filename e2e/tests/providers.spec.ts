@@ -1,7 +1,4 @@
 import { test, expect, pz, waitForContent } from "./fixtures";
-import path from "node:path";
-
-const data = (f: string) => path.join(__dirname, "data", f);
 
 test.describe("Settings → Bank providers", () => {
   test.beforeEach(async ({ seed, login }) => {
@@ -9,44 +6,30 @@ test.describe("Settings → Bank providers", () => {
     await login();
   });
 
-  test("turn Teller on from the app and connect a bank with it", async ({ page }) => {
-    // With nothing set up, only SimpleFIN is offered, with a pointer to Settings.
+  test("with Plaid off, only SimpleFIN is offered, with a way to turn Plaid on", async ({ page }) => {
     await page.goto("/");
     await waitForContent(page);
     await page.getByRole("link", { name: "Accounts", exact: true }).click();
     await waitForContent(page);
     await pz.openSheet(page, "Connect a bank");
-    await expect(page.getByRole("button", { name: "Continue with Teller" })).toHaveCount(0);
-    await pz.sheet(page).getByRole("link", { name: "Turn them on in Settings" }).click();
+    await expect(page.getByRole("button", { name: "Continue with Plaid" })).toHaveCount(0);
+    await expect(pz.sheet(page)).toContainText("SimpleFIN Bridge");
+    await pz.sheet(page).getByRole("link", { name: "Turn it on in Settings" }).click();
     await waitForContent(page);
-    const teller = page.locator('[data-provider="teller"]');
-    await expect(teller).toContainText("Off");
-
-    const form = page.locator("#teller-settings");
-    await form.getByLabel("Application ID").fill("app_test");
-    await form.getByLabel("Environment").selectOption("development");
+    await expect(page.locator('[data-provider="plaid"]')).toContainText("Off");
+    await expect(page.locator('[data-provider="teller"]')).toHaveCount(0);
+    const form = page.locator("#plaid-settings");
+    await form.getByLabel("Client ID").fill("cid");
+    await form.getByLabel("Secret").fill("sec");
     await form.getByRole("button", { name: "Save" }).click();
-    await expect(page.locator("#toasts")).toContainText("Outside sandbox, Teller needs both the certificate and the private key.");
-
-    await form.getByLabel("Certificate (certificate.pem)", { exact: true }).setInputFiles(data("not-a-cert.txt"));
-    await expect(page.locator("#toasts")).toContainText("isn't a PEM certificate");
-    await form.getByLabel("Certificate (certificate.pem)", { exact: true }).setInputFiles(data("certificate.pem"));
-    await form.getByLabel("Private key (private_key.pem)", { exact: true }).setInputFiles(data("private_key.pem"));
-    await expect(form.locator('[data-pem-name="ts-cert"]')).toHaveText("✓ certificate.pem");
-    await form.getByRole("button", { name: "Save" }).click();
-    await expect(page.locator("#toasts")).toContainText("Teller is on.");
-    await expect(teller).toContainText("On · development");
-    await page.reload();
-    await waitForContent(page);
-    await expect(page.locator('[data-provider="teller"]')).toContainText("On · development");
-
-    // It works straight away, no restart.
-    await page.getByRole("link", { name: "Budget", exact: true }).click();
+    await expect(page.locator("#toasts")).toContainText("Plaid is on.");
+    // Works straight away, no restart.
+    await page.getByRole("link", { name: "Budget" }).first().click();
     await waitForContent(page);
     await page.getByRole("link", { name: "Accounts", exact: true }).click();
     await waitForContent(page);
     await pz.openSheet(page, "Connect a bank");
-    await page.getByRole("button", { name: "Continue with Teller" }).click();
+    await page.getByRole("button", { name: "Continue with Plaid" }).click();
     await expect(pz.sheet(page).getByRole("heading", { name: "Accounts at Test Bank" })).toBeVisible();
   });
 

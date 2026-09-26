@@ -137,7 +137,7 @@ test("accessibility: bank connection sheets", async ({ page, seed, login }) => {
   await pz.accounts(page, s);
   await pz.openSheet(page, "Connect a bank");
   await audit(page);
-  await page.getByRole("button", { name: "Continue with Teller" }).click();
+  await page.getByRole("button", { name: "Continue with Plaid" }).click();
   await expect(pz.sheet(page).getByRole("heading", { name: "Accounts at Test Bank" })).toBeVisible();
   await audit(page);
   await pz.sheet(page).getByRole("button", { name: "Import" }).click();

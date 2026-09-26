@@ -359,7 +359,7 @@ impl LinkStatus {
     }
 }
 
-/// A connection to a bank through a data provider (Teller).
+/// A connection to a bank through a data provider (SimpleFIN or Plaid).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BankLink {
     pub id: Id,

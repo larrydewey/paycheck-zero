@@ -20,11 +20,7 @@ pub const PASSWORD: &str = "correct-horse-battery";
 pub fn routes() -> Router<Shared> {
     Router::new()
         .route("/reset", post(reset))
-        .route("/teller/connect.js", axum::routing::get(fake_teller::connect_js))
-        .route("/teller/state", post(fake_teller::set_state))
-        .route("/teller/accounts", axum::routing::get(fake_teller::accounts))
-        .route("/teller/accounts/{id}/balances", axum::routing::get(fake_teller::balances))
-        .route("/teller/accounts/{id}/transactions", axum::routing::get(fake_teller::transactions))
+        .route("/bank/state", post(fake_bank::set_state))
         .route("/simplefin/claim/{code}", post(fake_simplefin::claim))
         .route("/simplefin/accounts", axum::routing::get(fake_simplefin::accounts))
         .route("/plaid/link.js", axum::routing::get(fake_plaid::link_js))
@@ -36,7 +32,7 @@ pub fn routes() -> Router<Shared> {
 
 /// A stand-in for SimpleFIN Bridge (claim + accounts).
 mod fake_simplefin {
-    use super::fake_teller::DISCONNECTED;
+    use super::fake_bank::DISCONNECTED;
     use axum::http::{header, HeaderMap, StatusCode};
     use axum::response::{IntoResponse, Response};
     use axum::Json;
@@ -78,7 +74,7 @@ mod fake_simplefin {
 /// A stand-in for Plaid (Link script and the endpoints the app calls).
 #[allow(clippy::result_large_err)]
 mod fake_plaid {
-    use super::fake_teller::DISCONNECTED;
+    use super::fake_bank::{DISCONNECTED, EXTRA};
     use axum::http::{header, StatusCode};
     use axum::response::{IntoResponse, Response};
     use axum::Json;
@@ -87,7 +83,7 @@ mod fake_plaid {
 
     pub async fn link_js() -> Response {
         let js = r#"window.Plaid = { create: function (o) { return { open: function () {
-  setTimeout(function () { o.onSuccess("public-sandbox-1", { institution: { name: "Plaid Bank" } }); }, 30);
+  setTimeout(function () { o.onSuccess("public-sandbox-1", { institution: { name: "Test Bank" } }); }, 30);
 } }; } };"#;
         ([(header::CONTENT_TYPE, "text/javascript")], js).into_response()
     }
@@ -125,40 +121,56 @@ mod fake_plaid {
         if let Err(r) = item_ok(&b) {
             return r;
         }
+        let checking = if EXTRA.load(Ordering::Relaxed) { 2395.0 } else { 2410.0 };
         Json(json!({ "accounts": [
-            { "account_id": "p_chk", "name": "Plaid Checking", "mask": "0000", "type": "depository", "subtype": "checking",
-              "balances": { "current": 1200.5, "available": 1100.0 } },
-            { "account_id": "p_401k", "name": "Plaid 401k", "mask": "1111", "type": "investment", "subtype": "401k",
+            { "account_id": "p_chk", "name": "Checking", "mask": "1234", "type": "depository", "subtype": "checking",
+              "balances": { "current": checking, "available": checking } },
+            { "account_id": "p_card", "name": "Sapphire", "mask": "9876", "type": "credit", "subtype": "credit card",
+              "balances": { "current": 250.0 } },
+            { "account_id": "p_401k", "name": "401k", "mask": "1111", "type": "investment", "subtype": "401k",
               "balances": { "current": 52000.0 } }
         ] }))
         .into_response()
+    }
+
+    /// Plaid amounts are positive for money leaving the account.
+    fn tx(id: &str, acct: &str, amount: f64, date: &str, merchant: &str, pending: bool) -> Value {
+        json!({ "transaction_id": id, "account_id": acct, "amount": amount, "date": date,
+                "name": merchant.to_uppercase(), "merchant_name": merchant, "pending": pending })
     }
 
     pub async fn sync(Json(b): Json<Value>) -> Response {
         if let Err(r) = item_ok(&b) {
             return r;
         }
-        if b["cursor"].is_string() {
-            return Json(json!({ "added": [], "modified": [], "removed": [], "next_cursor": "c1", "has_more": false })).into_response();
+        let page = |added: Vec<Value>, next: &str| Json(json!({ "added": added, "modified": [], "removed": [], "next_cursor": next, "has_more": false })).into_response();
+        match b["cursor"].as_str() {
+            Some("c1") if EXTRA.load(Ordering::Relaxed) => page(vec![tx("pt_chk6", "p_chk", 15.0, "2026-09-10", "Chipotle", false)], "c2"),
+            Some(c) => page(Vec::new(), c),
+            None => page(
+                vec![
+                    tx("pt_pend", "p_chk", 9.99, "2026-09-10", "Netflix", true),
+                    tx("pt_chk4", "p_chk", 23.50, "2026-09-09", "Trader Joe's", false),
+                    tx("pt_chk3", "p_chk", 120.0, "2026-09-08", "Payment to Sapphire", false),
+                    tx("pt_chk2", "p_chk", 40.0, "2026-09-06", "Shell", false),
+                    tx("pt_chk1", "p_chk", -1950.0, "2026-09-04", "Acme Payroll", false),
+                    tx("pt_old", "p_chk", 5.0, "2026-08-20", "Old", false),
+                    tx("pt_card3", "p_card", 64.10, "2026-09-09", "Target", false),
+                    tx("pt_card2", "p_card", -120.0, "2026-09-08", "Payment received", false),
+                    tx("pt_card1", "p_card", 12.0, "2026-09-07", "Coffee", false),
+                ],
+                "c1",
+            ),
         }
-        Json(json!({ "added": [
-            { "transaction_id": "pt1", "account_id": "p_chk", "amount": 25.0, "date": "2026-09-07", "name": "UBER *TRIP", "merchant_name": "Uber", "pending": false },
-            { "transaction_id": "pt2", "account_id": "p_chk", "amount": 9.0, "date": "2026-09-09", "name": "Pending", "pending": true }
-        ], "modified": [], "removed": [], "next_cursor": "c1", "has_more": false }))
-        .into_response()
     }
 }
 
-/// A stand-in for Teller (API and Connect) so the whole bank flow can be
-/// tested end to end without a real bank.
-#[allow(clippy::result_large_err)] // test-only fakes answer errors as whole responses
-mod fake_teller {
-    use axum::extract::{Path, Query};
-    use axum::http::{header, HeaderMap, StatusCode};
-    use axum::response::{IntoResponse, Response};
+/// State shared by the fake providers: a "disconnected" bank, and one
+/// extra transaction for testing incremental syncs.
+mod fake_bank {
+    use axum::http::StatusCode;
     use axum::Json;
     use serde::Deserialize;
-    use serde_json::{json, Value};
     use std::sync::atomic::{AtomicBool, Ordering};
 
     pub static DISCONNECTED: AtomicBool = AtomicBool::new(false);
@@ -167,14 +179,6 @@ mod fake_teller {
     pub fn reset() {
         DISCONNECTED.store(false, Ordering::Relaxed);
         EXTRA.store(false, Ordering::Relaxed);
-    }
-
-    pub async fn connect_js() -> Response {
-        let js = r#"window.TellerConnect = { setup: function (o) { return { open: function () {
-  setTimeout(function () { o.onSuccess({ accessToken: "test_token_ok", user: { id: "usr_test" },
-    enrollment: { id: o.enrollmentId || "enr_test", institution: { name: "Test Bank" } } }); }, 30);
-} }; } };"#;
-        ([(header::CONTENT_TYPE, "text/javascript")], js).into_response()
     }
 
     #[derive(Deserialize)]
@@ -189,80 +193,6 @@ mod fake_teller {
         DISCONNECTED.store(r.disconnected, Ordering::Relaxed);
         EXTRA.store(r.extra, Ordering::Relaxed);
         StatusCode::NO_CONTENT
-    }
-
-    fn authorized(h: &HeaderMap) -> Result<(), Response> {
-        use base64::Engine;
-        let ok = format!("Basic {}", base64::engine::general_purpose::STANDARD.encode("test_token_ok:"));
-        if DISCONNECTED.load(Ordering::Relaxed) || h.get(header::AUTHORIZATION).and_then(|v| v.to_str().ok()) != Some(ok.as_str()) {
-            return Err((StatusCode::UNAUTHORIZED, Json(json!({ "error": { "code": "enrollment.disconnected", "message": "sign in again" } }))).into_response());
-        }
-        Ok(())
-    }
-
-    pub async fn accounts(h: HeaderMap) -> Response {
-        if let Err(r) = authorized(&h) {
-            return r;
-        }
-        Json(json!([
-            { "id": "acc_chk", "name": "Checking", "type": "depository", "subtype": "checking", "last_four": "1234",
-              "institution": { "id": "test", "name": "Test Bank" }, "enrollment_id": "enr_test", "currency": "USD", "status": "open" },
-            { "id": "acc_card", "name": "Sapphire", "type": "credit", "subtype": "credit_card", "last_four": "9876",
-              "institution": { "id": "test", "name": "Test Bank" }, "enrollment_id": "enr_test", "currency": "USD", "status": "open" }
-        ]))
-        .into_response()
-    }
-
-    pub async fn balances(h: HeaderMap, Path(id): Path<String>) -> Response {
-        if let Err(r) = authorized(&h) {
-            return r;
-        }
-        let extra = EXTRA.load(Ordering::Relaxed);
-        let ledger = match (id.as_str(), extra) {
-            ("acc_chk", false) => "2410.00",
-            ("acc_chk", true) => "2395.00",
-            _ => "250.00",
-        };
-        Json(json!({ "account_id": id, "ledger": ledger, "available": ledger })).into_response()
-    }
-
-    fn tx(id: &str, acct: &str, date: &str, amount: &str, name: &str, status: &str) -> Value {
-        json!({ "id": id, "account_id": acct, "date": date, "amount": amount, "description": name.to_uppercase(),
-                "status": status, "type": "card_payment", "details": { "counterparty": { "name": name, "type": "organization" } } })
-    }
-
-    #[derive(Deserialize)]
-    pub struct TxQuery {
-        #[serde(default)]
-        from_id: Option<String>,
-    }
-
-    pub async fn transactions(h: HeaderMap, Path(id): Path<String>, Query(q): Query<TxQuery>) -> Response {
-        if let Err(r) = authorized(&h) {
-            return r;
-        }
-        if q.from_id.is_some() {
-            return Json(json!([])).into_response();
-        }
-        let mut v = match id.as_str() {
-            "acc_chk" => vec![
-                tx("chk_5", "acc_chk", "2026-09-10", "-9.99", "Netflix", "pending"),
-                tx("chk_4", "acc_chk", "2026-09-09", "-23.50", "Trader Joe's", "posted"),
-                tx("chk_3", "acc_chk", "2026-09-08", "-120.00", "Payment to Sapphire", "posted"),
-                tx("chk_2", "acc_chk", "2026-09-06", "-40.00", "Shell", "posted"),
-                tx("chk_1", "acc_chk", "2026-09-04", "1950.00", "Acme Payroll", "posted"),
-                tx("chk_old", "acc_chk", "2026-08-20", "-5.00", "Old", "posted"),
-            ],
-            _ => vec![
-                tx("card_3", "acc_card", "2026-09-09", "-64.10", "Target", "posted"),
-                tx("card_2", "acc_card", "2026-09-08", "120.00", "Payment received", "posted"),
-                tx("card_1", "acc_card", "2026-09-07", "-12.00", "Coffee", "posted"),
-            ],
-        };
-        if id == "acc_chk" && EXTRA.load(Ordering::Relaxed) {
-            v.insert(0, tx("chk_6", "acc_chk", "2026-09-10", "-15.00", "Chipotle", "posted"));
-        }
-        Json(Value::Array(v)).into_response()
     }
 }
 
@@ -361,7 +291,7 @@ async fn seed_user(st: &Shared) -> AppResult<UserRecord> {
 
 async fn reset(State(st): State<Shared>, Json(r): Json<ResetReq>) -> AppResult<Json<Value>> {
     st.store.reset().await?;
-    fake_teller::reset();
+    fake_bank::reset();
     st.set_ignore_env_providers(r.no_env_providers);
     st.load_providers().await;
     st.refresh_grace.lock().await.clear();

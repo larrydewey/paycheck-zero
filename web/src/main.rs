@@ -31,9 +31,6 @@ async fn main() {
         }
     };
     tracing::info!("PaycheckZero listening on http://{bind}");
-    if let Some(t) = state.teller_cfg() {
-        tracing::info!(environment = %t.environment, "Teller bank sync is on");
-    }
     if let Some(p) = state.plaid_cfg() {
         tracing::info!(environment = %p.environment, "Plaid bank sync is on");
     }

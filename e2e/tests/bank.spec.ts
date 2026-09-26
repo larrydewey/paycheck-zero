@@ -5,18 +5,18 @@ const acct = (page: import("@playwright/test").Page, name: string) => page.locat
 async function connect(page: import("@playwright/test").Page) {
   await pz.openSheet(page, "Connect a bank");
   await expect(pz.sheet(page)).toContainText("PaycheckZero never sees your password");
-  await page.getByRole("button", { name: "Continue with Teller" }).click();
+  await page.getByRole("button", { name: "Continue with Plaid" }).click();
   await expect(pz.sheet(page).getByRole("heading", { name: "Accounts at Test Bank" })).toBeVisible();
 }
 
-test.describe("bank sync (Teller)", () => {
+test.describe("bank sync", () => {
   test("connect a bank: accounts, balances and sorted transactions arrive", async ({ page, seed, login }) => {
     const s = await seed("basic");
     await login();
     await pz.accounts(page, s);
     await connect(page);
     const sh = pz.sheet(page);
-    await expect(sh.locator("#map-acc_chk")).toHaveValue("new");
+    await expect(sh.locator("#map-p_chk")).toHaveValue("new");
     await sh.getByRole("button", { name: "Import" }).click();
     await expect(page.locator("#toasts")).toContainText(
       "Synced Test Bank: 5 new transaction(s), 1 sorted into lines, 2 matched one you'd entered, 1 transfer(s) paired, 1 paycheck(s) recognized."
@@ -51,7 +51,7 @@ test.describe("bank sync (Teller)", () => {
     await pz.openSheet(page, "Test Bank connection");
     await pz.sheet(page).getByRole("button", { name: "Sync now" }).click();
     await expect(page.locator("#toasts")).toContainText("Synced Test Bank: 0 new transaction(s).");
-    await pz.teller(server, { extra: true });
+    await pz.bank(server, { extra: true });
     await pz.openSheet(page, "Test Bank connection");
     await pz.sheet(page).getByRole("button", { name: "Sync now" }).click();
     await expect(page.locator("#toasts")).toContainText("Synced Test Bank: 1 new transaction(s)");
@@ -65,12 +65,12 @@ test.describe("bank sync (Teller)", () => {
     await connect(page);
     await pz.sheet(page).getByRole("button", { name: "Import" }).click();
     await expect(page.locator("#toasts")).toContainText("Synced Test Bank");
-    await pz.teller(server, { disconnected: true });
+    await pz.bank(server, { disconnected: true });
     await pz.openSheet(page, "Test Bank connection");
     await pz.sheet(page).getByRole("button", { name: "Sync now" }).click();
     await expect(page.locator("#toasts")).toContainText("The bank needs you to sign in again.");
     await expect(page.locator('li.bank-link[data-link="Test Bank"] [data-link-status=reconnect]')).toBeVisible();
-    await pz.teller(server, { disconnected: false });
+    await pz.bank(server, { disconnected: false });
     await pz.openSheet(page, "Test Bank connection");
     await page.getByRole("button", { name: "Sign in again" }).click();
     await expect(page.locator("#toasts")).toContainText("Synced Test Bank: 0 new transaction(s).");
@@ -84,8 +84,9 @@ test.describe("bank sync (Teller)", () => {
     await pz.accounts(page, s);
     await connect(page);
     const sh = pz.sheet(page);
-    await sh.locator("#map-acc_chk").selectOption({ label: "Use my Checking account" });
-    await sh.locator("#map-acc_card").selectOption({ label: "Don't import" });
+    await sh.locator("#map-p_chk").selectOption({ label: "Use my Checking account" });
+    await sh.locator("#map-p_card").selectOption({ label: "Don't import" });
+    await sh.locator("#map-p_401k").selectOption({ label: "Don't import" });
     await sh.getByRole("button", { name: "Import" }).click();
     await expect(page.locator("#toasts")).toContainText("Synced Test Bank");
     await expect(page.locator("li.account")).toHaveCount(4);
@@ -107,9 +108,9 @@ test.describe("bank sync (Teller)", () => {
     await login();
     await page.goto("/settings");
     await waitForContent(page);
-    await expect(page.locator('[data-provider="teller"]')).toContainText("On · sandbox");
-    await expect(page.locator('[data-provider="teller"]')).toContainText("Set by the server's environment variables.");
+    await expect(page.locator('[data-provider="teller"]')).toHaveCount(0);
     await expect(page.locator('[data-provider="plaid"]')).toContainText("On · sandbox");
+    await expect(page.locator('[data-provider="plaid"]')).toContainText("Set by the server's environment variables.");
     await expect(page.locator('[data-provider="simplefin"]')).toContainText("Always available.");
   });
 
@@ -137,31 +138,19 @@ test.describe("bank sync (Teller)", () => {
     await expect(page.locator("#tx-list li.tx", { hasText: "Chipotle" })).toContainText("SF Checking");
   });
 
-  test("Plaid: Link, then investment accounts and transactions", async ({ page, seed, login, server }) => {
+  test("Plaid: retirement accounts are recognized and pending charges wait", async ({ page, seed, login }) => {
     const s = await seed("basic");
     await login();
     await pz.accounts(page, s);
-    await pz.openSheet(page, "Connect a bank");
-    await page.getByRole("button", { name: "Continue with Plaid" }).click();
+    await connect(page);
     const sh = pz.sheet(page);
-    await expect(sh.getByRole("heading", { name: "Accounts at Plaid Bank" })).toBeVisible();
     await expect(sh.locator("#map-p_401k")).toContainText("Add as a new Retirement account");
+    await expect(sh.locator("#map-p_card")).toContainText("Add as a new Credit card account");
     await sh.getByRole("button", { name: "Import" }).click();
-    await expect(page.locator("#toasts")).toContainText("Synced Plaid Bank: 1 new transaction(s)");
-    await expect(acct(page, "Plaid Checking ••0000").locator("[data-col=balance]")).toHaveText("$1,200.50");
-    await expect(acct(page, "Plaid 401k ••1111").locator("[data-col=balance]")).toHaveText("$52,000.00");
+    await expect(page.locator("#toasts")).toContainText("Synced Test Bank");
+    await expect(acct(page, "401k ••1111").locator("[data-col=balance]")).toHaveText("$52,000.00");
+    await expect(page.locator("#invested-accounts")).toContainText("401k ••1111");
     await pz.transactions(page, s);
-    await expect(page.locator("#tx-list li.tx", { hasText: "Uber" })).toContainText("-$25.00");
-    await expect(page.locator("#tx-list li.tx", { hasText: "Pending" })).toHaveCount(0);
-    // Plaid asks you to sign in again: update mode.
-    await pz.teller(server, { disconnected: true });
-    await pz.accounts(page, s);
-    await pz.openSheet(page, "Plaid Bank connection");
-    await pz.sheet(page).getByRole("button", { name: "Sync now" }).click();
-    await expect(page.locator("#toasts")).toContainText("The bank needs you to sign in again.");
-    await pz.teller(server, { disconnected: false });
-    await pz.openSheet(page, "Plaid Bank connection");
-    await page.getByRole("button", { name: "Sign in again" }).click();
-    await expect(page.locator("#toasts")).toContainText("Synced Plaid Bank: 0 new transaction(s).");
+    await expect(page.locator("#tx-list li.tx", { hasText: "Netflix" })).toHaveCount(0);
   });
 });

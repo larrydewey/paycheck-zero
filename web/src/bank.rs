@@ -1,7 +1,5 @@
 //! Bank sync through a data provider. All are optional; use any mix:
 //!
-//! - **Teller** (teller.io): the browser runs Teller Connect, which hands
-//!   back an access token; API calls use Teller's client certificate.
 //! - **SimpleFIN Bridge** (simplefin.org): the person pastes a setup token,
 //!   which is exchanged once for an access URL. No server settings needed.
 //! - **Plaid** (plaid.com): the browser runs Plaid Link with a link token
@@ -12,7 +10,6 @@
 //! (`paycheckzero_core::bank`), and afterwards each synced account is
 //! reconciled to the bank's balance. Secrets are kept encrypted.
 
-use crate::config::TellerConfig;
 use crate::error::{AppError, AppResult};
 use crate::i18n::t;
 use crate::Shared;
@@ -55,7 +52,7 @@ pub fn open(key: &[u8; 32], sealed: &str) -> Option<String> {
 }
 
 // ----------------------------------------------------------------------
-// Teller API
+// Common shapes
 // ----------------------------------------------------------------------
 
 /// A bank account as a provider reports it.
@@ -118,71 +115,6 @@ fn kind_from_name(name: &str) -> AccountKind {
     }
 }
 
-#[derive(Debug, Clone, Deserialize)]
-struct TInstitution {
-    #[serde(default)]
-    name: String,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-struct TAccount {
-    id: String,
-    name: String,
-    /// "depository" or "credit".
-    #[serde(rename = "type")]
-    kind: String,
-    #[serde(default)]
-    subtype: String,
-    #[serde(default)]
-    last_four: Option<String>,
-    #[serde(default)]
-    institution: Option<TInstitution>,
-}
-
-impl TAccount {
-    fn remote(self) -> RemoteAccount {
-        let kind = match (self.kind.as_str(), self.subtype.as_str()) {
-            ("credit", _) => AccountKind::CreditCard,
-            (_, "savings" | "money_market" | "certificate_of_deposit") => AccountKind::Savings,
-            _ => AccountKind::Checking,
-        };
-        RemoteAccount { id: self.id, name: self.name, mask: self.last_four, kind, institution: self.institution.map(|i| i.name) }
-    }
-}
-
-#[derive(Debug, Clone, Deserialize)]
-struct TBalance {
-    #[serde(default)]
-    ledger: Option<String>,
-    #[serde(default)]
-    available: Option<String>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-struct TCounterparty {
-    #[serde(default)]
-    name: Option<String>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-struct TDetails {
-    #[serde(default)]
-    counterparty: Option<TCounterparty>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-struct TTx {
-    id: String,
-    amount: String,
-    date: NaiveDate,
-    #[serde(default)]
-    description: String,
-    #[serde(default)]
-    status: String,
-    #[serde(default)]
-    details: Option<TDetails>,
-}
-
 #[derive(Debug)]
 pub enum ProviderError {
     /// The bank needs the user to sign in again.
@@ -212,92 +144,6 @@ fn parse_amount(s: &str) -> Option<Cents> {
     let cents: i64 = frac.get(..2)?.parse().ok()?;
     let v = whole.checked_mul(100)?.checked_add(cents)?;
     Some(Cents::new(if neg { -v } else { v }))
-}
-
-pub struct Teller {
-    http: reqwest::Client,
-    base: String,
-}
-
-impl Teller {
-    pub fn new(cfg: &TellerConfig) -> Result<Teller, String> {
-        let mut b = reqwest::Client::builder().timeout(std::time::Duration::from_secs(30));
-        if let (Some(cert), Some(key)) = (&cfg.cert_pem, &cfg.key_pem) {
-            let pem = format!("{}\n{}", cert.trim(), key.trim());
-            b = b.identity(reqwest::Identity::from_pem(pem.as_bytes()).map_err(|e| format!("bad Teller certificate: {e}"))?);
-        } else if let (Some(cert), Some(key)) = (&cfg.cert, &cfg.key) {
-            let mut pem = std::fs::read(cert).map_err(|e| format!("cannot read {cert}: {e}"))?;
-            pem.push(b'\n');
-            pem.extend(std::fs::read(key).map_err(|e| format!("cannot read {key}: {e}"))?);
-            b = b.identity(reqwest::Identity::from_pem(&pem).map_err(|e| format!("bad Teller certificate: {e}"))?);
-        }
-        Ok(Teller { http: b.build().map_err(|e| e.to_string())?, base: cfg.api.trim_end_matches('/').to_string() })
-    }
-
-    async fn get<T: serde::de::DeserializeOwned>(&self, token: &str, path: &str) -> Result<T, ProviderError> {
-        let resp = self.http.get(format!("{}{path}", self.base)).basic_auth(token, Some("")).send().await?;
-        let status = resp.status();
-        let body = resp.text().await?;
-        if status.is_success() {
-            return serde_json::from_str(&body).map_err(|e| ProviderError::Other(format!("unexpected response from Teller: {e}")));
-        }
-        let code = serde_json::from_str::<serde_json::Value>(&body)
-            .ok()
-            .and_then(|v| v["error"]["code"].as_str().map(str::to_string))
-            .unwrap_or_default();
-        if status.as_u16() == 401 || status.as_u16() == 403 || code.starts_with("enrollment.") {
-            Err(ProviderError::Reconnect(if code.is_empty() { status.to_string() } else { code }))
-        } else {
-            Err(ProviderError::Other(format!("Teller answered {status}: {code}")))
-        }
-    }
-
-    async fn accounts(&self, token: &str) -> Result<Vec<RemoteAccount>, ProviderError> {
-        let a: Vec<TAccount> = self.get(token, "/accounts").await?;
-        Ok(a.into_iter().map(TAccount::remote).collect())
-    }
-
-    async fn pull(&self, token: &str, accounts: &[String], from: NaiveDate) -> Result<Pulled, ProviderError> {
-        let mut p = Pulled::default();
-        for ext in accounts {
-            for t in self.transactions(token, ext, from).await? {
-                let Some(amount) = parse_amount(&t.amount) else { continue };
-                let payee = t.details.as_ref().and_then(|d| d.counterparty.as_ref()).and_then(|c| c.name.clone()).filter(|n| !n.trim().is_empty()).unwrap_or(t.description);
-                p.txs.push(RemoteTx { id: t.id, account: ext.clone(), date: t.date, amount, payee });
-            }
-            if let Some(bal) = self.balance(token, ext).await? {
-                // Teller reports what's owed on a card as a positive balance.
-                p.balances.push((ext.clone(), bal));
-            }
-        }
-        Ok(p)
-    }
-
-    async fn balance(&self, token: &str, account: &str) -> Result<Option<Cents>, ProviderError> {
-        let b: TBalance = self.get(token, &format!("/accounts/{account}/balances")).await?;
-        Ok(b.ledger.or(b.available).as_deref().and_then(parse_amount))
-    }
-
-    /// Posted transactions on or after `from`, newest first.
-    async fn transactions(&self, token: &str, account: &str, from: NaiveDate) -> Result<Vec<TTx>, ProviderError> {
-        let mut out: Vec<TTx> = Vec::new();
-        let mut from_id: Option<String> = None;
-        for _ in 0..50 {
-            let path = match &from_id {
-                Some(id) => format!("/accounts/{account}/transactions?count=250&from_id={id}"),
-                None => format!("/accounts/{account}/transactions?count=250"),
-            };
-            let page: Vec<TTx> = self.get(token, &path).await?;
-            let done = page.is_empty() || page.iter().any(|t| t.date < from);
-            let last = page.last().map(|t| t.id.clone());
-            out.extend(page.into_iter().filter(|t| t.date >= from));
-            if done || last.is_none() || last == from_id {
-                break;
-            }
-            from_id = last;
-        }
-        Ok(out.into_iter().filter(|t| t.status != "pending").collect())
-    }
 }
 
 // ----------------------------------------------------------------------
@@ -635,17 +481,17 @@ fn first_of(d: NaiveDate) -> NaiveDate {
     d.with_day(1).unwrap_or(d)
 }
 
-pub const TELLER: &str = "teller";
 pub const SIMPLEFIN: &str = "simplefin";
 pub const PLAID: &str = "plaid";
 
-/// "Teller", "SimpleFIN", "Plaid".
+/// "SimpleFIN", "Plaid" (or the stored name of a provider that's gone).
 #[must_use]
-pub fn provider_name(p: &str) -> &'static str {
+pub fn provider_name(p: &str) -> &str {
     match p {
         SIMPLEFIN => "SimpleFIN",
         PLAID => "Plaid",
-        _ => "Teller",
+        "teller" => "Teller",
+        other => other,
     }
 }
 
@@ -655,19 +501,7 @@ pub fn provider_name(p: &str) -> &'static str {
 #[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, Deserialize)]
 pub struct SavedProviders {
     #[serde(default)]
-    pub teller: Option<SavedTeller>,
-    #[serde(default)]
     pub plaid: Option<SavedPlaid>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, Deserialize)]
-pub struct SavedTeller {
-    pub app_id: String,
-    pub environment: String,
-    #[serde(default)]
-    pub cert_pem: Option<String>,
-    #[serde(default)]
-    pub key_pem: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, Deserialize)]
@@ -681,26 +515,6 @@ pub struct SavedPlaid {
 const PROVIDERS_SETTING: &str = "bank_providers";
 
 impl crate::AppState {
-    /// Teller settings in effect: saved in the app, else from the environment.
-    #[must_use]
-    pub fn teller_cfg(&self) -> Option<crate::config::TellerConfig> {
-        if let Some(s) = self.providers.read().ok().and_then(|p| p.teller.clone()) {
-            return Some(crate::config::TellerConfig {
-                app_id: s.app_id,
-                environment: s.environment,
-                api: crate::config::teller_api(),
-                connect_js: crate::config::teller_connect_js(),
-                cert: None,
-                key: None,
-                cert_pem: s.cert_pem,
-                key_pem: s.key_pem,
-                sync_hours: self.cfg.bank_sync_hours,
-                from_env: false,
-            });
-        }
-        if self.ignore_env_providers() { None } else { self.cfg.teller.clone() }
-    }
-
     #[must_use]
     pub fn plaid_cfg(&self) -> Option<crate::config::PlaidConfig> {
         if let Some(s) = self.providers.read().ok().and_then(|p| p.plaid.clone()) {
@@ -749,11 +563,6 @@ impl crate::AppState {
         Ok(())
     }
 
-    pub fn teller(&self) -> AppResult<Teller> {
-        let cfg = self.teller_cfg().ok_or_else(|| AppError::bad(t("bank.not_configured")))?;
-        Teller::new(&cfg).map_err(AppError::Internal)
-    }
-
     pub fn plaid(&self) -> AppResult<Plaid> {
         self.plaid_cfg().as_ref().map(Plaid::new).ok_or_else(|| AppError::bad(t("bank.not_configured")))
     }
@@ -789,7 +598,7 @@ async fn provider_accounts(st: &Shared, link: &BankLink, token: &str) -> Result<
     match link.provider.as_str() {
         SIMPLEFIN => SimpleFin::new().accounts(token).await,
         PLAID => st.plaid().map_err(app)?.accounts(token).await,
-        _ => st.teller().map_err(app)?.accounts(token).await,
+        _ => Err(ProviderError::Other(t("bank.provider_gone"))),
     }
 }
 
@@ -846,7 +655,7 @@ async fn pull(st: &Shared, user: &UserRecord, wallet: &Wallet, link: &BankLink, 
             SimpleFin::new().pull(token, &exts, from, &cards).await?
         }
         PLAID => st.plaid().map_err(internal)?.pull(token, &exts, link.import_from, link.cursor.clone()).await?,
-        _ => st.teller().map_err(internal)?.pull(token, &exts, from).await?,
+        _ => return Err(ProviderError::Other(t("bank.provider_gone"))),
     };
     let seen = st.store.bank_seen(&user.id).await.map_err(|e| internal(e.into()))?;
     let mut per_month: BTreeMap<NaiveDate, Vec<BankTx>> = BTreeMap::new();

@@ -181,7 +181,7 @@ async fn storage_behaviour() {
     .unwrap();
     w.links.push(BankLink {
         id: Id::generate(),
-        provider: "teller".into(),
+        provider: "plaid".into(),
         enrollment_id: "enr_1".into(),
         institution: "Test Bank".into(),
         access_token: "sealed".into(),
