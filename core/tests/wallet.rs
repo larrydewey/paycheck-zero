@@ -246,3 +246,43 @@ fn deleting_an_account_removes_its_goals_and_adjustments() {
     assert!(f.w.goals.is_empty());
     assert!(f.w.adjustments.iter().all(|a| a.account_id != f.visa));
 }
+
+#[test]
+fn retirement_accounts_track_contributions_and_growth() {
+    let mut f = fixture();
+    let k401 = f.w.add_account("401(k)", AccountKind::Retirement, c(4_000_000), d(2026, 1, 1), None).unwrap();
+    let ira = f.w.add_account("Roth IRA", AccountKind::Retirement, Cents::ZERO, d(2026, 1, 1), None).unwrap();
+    assert!(AccountKind::Retirement.is_invested() && !AccountKind::Retirement.is_spendable());
+    // Payroll contributions never pass through the budget.
+    f.w.add_contribution(&k401, c(50_000), d(2026, 9, 4)).unwrap();
+    assert_eq!(f.w.add_contribution(&f.checking, c(100), d(2026, 9, 4)).map_err(|e| e.code()), Err("INVARIANT_VIOLATION"));
+    assert_eq!(f.w.add_contribution(&k401, Cents::ZERO, d(2026, 9, 4)), Err(DomainError::NonPositiveAmount));
+    // A Roth contribution from checking is a transfer; linked to a line it's planned saving.
+    f.m.add_transaction(transfer(d(2026, 9, 5), 25_000, &f.checking, &ira, Some(&f.ef))).unwrap();
+    let months = [f.m.clone()];
+    assert_eq!(f.m.line_spent(&f.ef), c(25_000));
+    // Updating from the statement records market growth, not a correction.
+    let delta = f.w.reconcile(&k401, c(4_120_000), &months, d(2026, 9, 30)).unwrap();
+    assert_eq!(delta, c(70_000));
+    assert_eq!(f.w.adjustments.last().unwrap().kind, AdjustmentKind::Growth);
+    let s = f.w.invested_summary(&k401, &months, 2026);
+    assert_eq!(s.balance, c(4_120_000));
+    assert_eq!(s.contributed, c(50_000));
+    assert_eq!(s.growth, c(70_000));
+    let r = f.w.invested_summary(&ira, &months, 2026);
+    assert_eq!(r.contributed, c(25_000));
+    assert_eq!(r.balance, c(25_000));
+    assert_eq!(f.w.invested_summary(&k401, &months, 2025).contributed, Cents::ZERO);
+    // Display order: cash, then invested, then cards.
+    let groups: Vec<AccountGroup> = f.w.accounts_sorted().iter().map(|a| a.kind.group()).collect();
+    let mut sorted = groups.clone();
+    sorted.sort();
+    assert_eq!(groups, sorted);
+    // Mistakes can be removed; opening balances can't.
+    let growth = f.w.adjustments.last().unwrap().id.clone();
+    f.w.delete_adjustment(&growth).unwrap();
+    assert_eq!(f.w.balance(&k401, &months), c(4_050_000));
+    let opening = f.w.adjustments.iter().find(|a| a.kind == AdjustmentKind::Opening).unwrap().id.clone();
+    assert!(f.w.delete_adjustment(&opening).is_err());
+    assert_eq!(f.w.account_activity(&k401, &months).len(), 2);
+}

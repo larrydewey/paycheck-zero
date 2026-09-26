@@ -829,7 +829,7 @@ pub(super) fn tx_fields(c: &Ctx, m: &Month, prefix: &str, parts: &[&Transaction]
             label for=(id("payee")) { (t("tx.payee")) }
             input id=(id("payee")) type="text" name="payee" maxlength="200" value=[first.and_then(|x| x.payee.clone())];
         }
-        @if !wallet.accounts_sorted().is_empty() {
+        @if wallet.accounts_sorted().iter().any(|a| a.kind.is_spendable()) {
             div class="field wide" {
                 label for=(id("account")) { (t("tx.account")) }
                 select id=(id("account")) name="account_id" data-remember-account=[first.is_none().then_some("1")] {
@@ -892,15 +892,23 @@ pub(super) fn tx_fields(c: &Ctx, m: &Month, prefix: &str, parts: &[&Transaction]
     }
 }
 
-/// `<option>`s for an account picker: bank and cash, then cards.
+/// `<option>`s for an account picker: bank and cash, then retirement and
+/// investments (transfers only), then cards. A transaction picker
+/// (`allow_none`) only offers accounts you spend from.
 pub(super) fn account_options(wallet: &Wallet, selected: Option<&Id>, allow_none: bool) -> Markup {
     let accts = wallet.accounts_sorted();
-    let (cash, cards): (Vec<&&Account>, Vec<&&Account>) = accts.iter().partition(|a| !a.kind.is_card());
+    let of = |g: AccountGroup| -> Vec<&&Account> { accts.iter().filter(|a| a.kind.group() == g).collect() };
+    let (cash, invested, cards) = (of(AccountGroup::Cash), of(AccountGroup::Invested), of(AccountGroup::Card));
     html! {
         @if allow_none { option value="" { (t("tx.no_account")) } }
         @if !cash.is_empty() {
             optgroup label=(t("accounts.group_cash")) {
                 @for a in &cash { option value=(a.id) selected[selected == Some(&a.id)] { (a.name) } }
+            }
+        }
+        @if !invested.is_empty() && (!allow_none || invested.iter().any(|a| selected == Some(&a.id))) {
+            optgroup label=(t("accounts.group_invested")) {
+                @for a in &invested { option value=(a.id) selected[selected == Some(&a.id)] { (a.name) } }
             }
         }
         @if !cards.is_empty() {

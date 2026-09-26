@@ -36,18 +36,33 @@ fn bar(p: i64, class: &str, label: &str) -> Markup {
     }
 }
 
-/// Totals for the summary: (cash and bank, owed on cards).
-fn totals(w: &Wallet, all: &[Month]) -> (Cents, Cents) {
-    let mut cash = Cents::ZERO;
-    let mut owed = Cents::ZERO;
+/// Totals for the summary.
+struct Totals {
+    cash: Cents,
+    invested: Cents,
+    owed: Cents,
+}
+
+impl Totals {
+    fn net(&self) -> Cents {
+        self.cash + self.invested - self.owed
+    }
+}
+
+fn totals(w: &Wallet, all: &[Month]) -> Totals {
+    let mut t = Totals { cash: Cents::ZERO, invested: Cents::ZERO, owed: Cents::ZERO };
     for a in w.accounts_sorted() {
-        if a.kind.is_card() {
-            owed += w.owed(&a.id, all);
-        } else {
-            cash += w.balance(&a.id, all);
+        match a.kind.group() {
+            AccountGroup::Card => t.owed += w.owed(&a.id, all),
+            AccountGroup::Invested => t.invested += w.balance(&a.id, all),
+            AccountGroup::Cash => t.cash += w.balance(&a.id, all),
         }
     }
-    (cash, owed)
+    t
+}
+
+fn signed(c: &Ctx, v: Cents) -> String {
+    if v.is_positive() { format!("+{}", c.money(v)) } else { c.money(v) }
 }
 
 fn reconciled_meta(c: &Ctx, a: &Account) -> Markup {
@@ -89,6 +104,21 @@ fn account_row(c: &Ctx, m: &Month, w: &Wallet, all: &[Month], a: &Account, enc: 
                 }
                 div class="row-amount" { span class="num neg" data-col="owed" { (c.money(s.owed)) } }
             }
+        } @else if a.kind.is_invested() {
+            @let s = w.invested_summary(&a.id, all, m.year_month.year());
+            li class="row account invested-account" data-account=(a.name) {
+                button type="button" class="row-main" data-on:click=(open) aria-label=(tf("accounts.details", &[("name", &a.name)])) {
+                    span class="row-name" { span class="acct-icon" { (icon("growth")) } (a.name) }
+                    span class="row-meta" {
+                        (kind_label(a.kind))
+                        @if s.contributed.is_positive() { " · " (tf("invest.contributed_short", &[("amount", &c.money(s.contributed))])) }
+                        @if !s.growth.is_zero() {
+                            " · " span class=(if s.growth.is_negative() { "neg" } else { "pos" }) data-col="growth" { (tf("invest.growth_short", &[("amount", &signed(c, s.growth))])) }
+                        }
+                    }
+                }
+                div class="row-amount" { span class="num" data-col="balance" { (c.money(s.balance)) } }
+            }
         } @else {
             @let bal = w.balance(&a.id, all);
             li class="row account" data-account=(a.name) {
@@ -107,18 +137,23 @@ pub fn render_accounts(c: &Ctx, m: &Month, archived: bool, w: &Wallet, all: &[Mo
     let view = View::Accounts { month: m.id.clone() };
     let enc = view.encode();
     let accts = w.accounts_sorted();
-    let (cash, cards): (Vec<&Account>, Vec<&Account>) = accts.iter().partition(|a| !a.kind.is_card());
-    let (cash_total, owed_total) = totals(w, all);
+    let group = |g: AccountGroup| -> Vec<&Account> { accts.iter().copied().filter(|a| a.kind.group() == g).collect() };
+    let (cash, invested, cards) = (group(AccountGroup::Cash), group(AccountGroup::Invested), group(AccountGroup::Card));
+    let tot = totals(w, all);
     html! {
         div class="split-layout" {
         div class="side" {
             h1 { (t("accounts.title")) span class="visually-hidden" { " · " (month_label(m.year_month)) } }
             @if !accts.is_empty() {
                 section class="summary card" aria-label=(t("accounts.summary")) {
+                    div class="net-worth" data-card="net" {
+                        span class="stat-label" { (t("accounts.net_worth")) }
+                        span class=(if tot.net().is_negative() { "net-value neg" } else { "net-value" }) { (c.money(tot.net())) }
+                    }
                     div class="summary-stats" {
-                        div data-card="cash" { span class="stat-label" { (t("accounts.cash_total")) } span class="stat-value" { (c.money(cash_total)) } }
-                        div data-card="owed" { span class="stat-label" { (t("accounts.owed_total")) } span class="stat-value" { (c.money(owed_total)) } }
-                        div data-card="net" { span class="stat-label" { (t("accounts.net")) } span class=(if (cash_total - owed_total).is_negative() { "stat-value neg" } else { "stat-value" }) { (c.money(cash_total - owed_total)) } }
+                        div data-card="cash" { span class="stat-label" { (t("accounts.cash_total")) } span class="stat-value" { (c.money(tot.cash)) } }
+                        div data-card="invested" { span class="stat-label" { (t("accounts.invested_total")) } span class="stat-value" { (c.money(tot.invested)) } }
+                        div data-card="owed" { span class="stat-label" { (t("accounts.owed_total")) } span class="stat-value" { (c.money(tot.owed)) } }
                     }
                     p class="summary-note" { (t("accounts.summary_note")) }
                 }
@@ -140,6 +175,13 @@ pub fn render_accounts(c: &Ctx, m: &Month, archived: bool, w: &Wallet, all: &[Mo
                 section aria-labelledby="cash-h" id="cash-accounts" {
                     div class="section-head" { h2 id="cash-h" { (t("accounts.group_cash")) } }
                     ul class="rows card" { @for a in &cash { (account_row(c, m, w, all, a, &enc)) } }
+                }
+            }
+            @if !invested.is_empty() {
+                section aria-labelledby="inv-h" id="invested-accounts" {
+                    div class="section-head" { h2 id="inv-h" { (t("accounts.group_invested")) } }
+                    ul class="rows card" { @for a in &invested { (account_row(c, m, w, all, a, &enc)) } }
+                    p class="muted small" { (t("invest.explain")) }
                 }
             }
             @if !cards.is_empty() {
@@ -172,9 +214,9 @@ pub fn accounts_card(c: &Ctx, m: &Month, w: &Wallet, all: &[Month]) -> Markup {
                 p class="muted small" { (t("accounts.prompt")) }
                 a class="btn small" href=(href) { (t("accounts.add_first")) }
             } @else {
-                @let (cash, owed) = totals(w, all);
+                @let tot = totals(w, all);
                 ul class="mini-list acct-mini" {
-                    @for a in accts.iter().take(5) {
+                    @for a in accts.iter().take(6) {
                         li data-account=(a.name) {
                             span { (a.name) }
                             @if a.kind.is_card() {
@@ -186,8 +228,8 @@ pub fn accounts_card(c: &Ctx, m: &Month, w: &Wallet, all: &[Month]) -> Markup {
                     }
                 }
                 p class="acct-net" {
-                    span { (t("accounts.net")) }
-                    strong class=(if (cash - owed).is_negative() { "num neg" } else { "num" }) data-card="net" { (c.money(cash - owed)) }
+                    span { (t("accounts.net_worth")) }
+                    strong class=(if tot.net().is_negative() { "num neg" } else { "num" }) data-card="net" { (c.money(tot.net())) }
                 }
             }
         }
@@ -444,7 +486,10 @@ pub async fn account_sheet(State(st): State<Shared>, Extension(user): Extension<
     let card = a.kind.is_card();
     let bal = w.balance(&id, &all);
     let summary = month.as_ref().filter(|_| card).map(|m| w.card_summary(&id, &all, m));
-    let first_cash = w.accounts_sorted().into_iter().find(|x| !x.kind.is_card()).map(|x| x.id.clone());
+    let first_cash = w.accounts_sorted().into_iter().find(|x| x.kind.group() == AccountGroup::Cash).map(|x| x.id.clone());
+    if a.kind.is_invested() {
+        return Sse::new().patch(sheet(&a.name, Some(&kind_label(a.kind)), invested_sheet(&c, &view, &w, &all, &a, month.as_ref(), first_cash.as_ref())));
+    }
     Sse::new().patch(sheet(&a.name, Some(&kind_label(a.kind)), html! {
         div class="sheet-stats" {
             @if let Some(s) = &summary {
@@ -508,15 +553,118 @@ pub async fn account_sheet(State(st): State<Shared>, Extension(user): Extension<
             }
         }
 
+        (edit_section(&a, &view, !txs.is_empty()))
+    }))
+}
+
+fn adjustment_label(k: AdjustmentKind) -> String {
+    t(&format!("invest.adj_{}", k.as_str()))
+}
+
+/// A retirement or investment account: its value, this year's
+/// contributions and growth, and ways to record both.
+fn invested_sheet(c: &Ctx, view: &View, w: &Wallet, all: &[Month], a: &Account, month: Option<&Month>, first_cash: Option<&Id>) -> Markup {
+    let id = &a.id;
+    let year = month.map_or(c.today.year(), |m| m.year_month.year());
+    let s = w.invested_summary(id, all, year);
+    let activity = w.account_activity(id, all);
+    let enc = view.encode();
+    html! {
+        div class="sheet-stats" {
+            div class="sheet-stat" { span class="stat-label" { (t("accounts.balance")) } span class="stat-value" data-col="balance" { (c.money(s.balance)) } }
+            div class="sheet-stat" { span class="stat-label" { (tf("invest.contributed_year", &[("year", &year.to_string())])) } span class="stat-value" data-col="contributed" { (c.money(s.contributed)) } }
+            div class="sheet-stat" { span class="stat-label" { (tf("invest.growth_year", &[("year", &year.to_string())])) }
+                span class=(if s.growth.is_negative() { "stat-value neg" } else if s.growth.is_positive() { "stat-value pos" } else { "stat-value" }) data-col="growth" { (signed(c, s.growth)) } }
+        }
+        @if let (Some(m), Some(from)) = (month, first_cash) {
+            button type="button" class="btn block"
+                data-on:click=(open_sheet(&format!("/ui/sheet/transfer/new/{}?view={enc}&to={id}&from={from}", m.id))) {
+                (icon("transfer")) " " (t("invest.contribute_transfer"))
+            }
+        }
+
+        section class="sheet-section" aria-labelledby="inv-upd-h" {
+            h3 id="inv-upd-h" { (t("invest.update_title")) }
+            form class="stack" data-on:submit__prevent=(post_form_guarded(&format!("/ui/accounts/{id}/reconcile"))) {
+                (view_input(view))
+                label for="inv-balance" { (t("invest.update_label")) }
+                div class="inline-field" {
+                    input id="inv-balance" type="text" inputmode="decimal" class="money" name="balance" required autocomplete="off" value=(crate::money::plain(s.balance));
+                    button type="submit" class="btn primary" { (t("accounts.reconcile")) }
+                }
+                p class="hint" { (t("invest.update_hint")) }
+            }
+        }
+
+        section class="sheet-section" aria-labelledby="inv-con-h" {
+            h3 id="inv-con-h" { (t("invest.contribution_title")) }
+            form class="stack" id="contribution-form" data-clear data-on:submit__prevent=(post_form_guarded(&format!("/ui/accounts/{id}/contribution"))) {
+                (view_input(view))
+                div class="two-col" {
+                    div class="field" {
+                        label for="inv-amount" { (t("tx.amount")) }
+                        input id="inv-amount" type="text" inputmode="decimal" class="money" name="amount" required placeholder="0.00" autocomplete="off";
+                    }
+                    div class="field" {
+                        label for="inv-date" { (t("tx.date")) }
+                        input id="inv-date" type="date" name="date" required value=(c.today.to_string());
+                    }
+                }
+                p class="hint" { (t("invest.contribution_hint")) }
+                span class="field-error" aria-live="polite" {}
+                button type="submit" class="btn primary" { (t("invest.contribution_add")) }
+            }
+        }
+
+        section class="sheet-section" aria-labelledby="inv-act-h" {
+            h3 id="inv-act-h" { (t("invest.activity")) }
+            @if activity.is_empty() { p class="muted small" { (t("accounts.no_tx")) } }
+            ul class="mini-list activity" {
+                @for item in activity.iter().take(12) {
+                    @match item {
+                        Activity::Tx(x) => {
+                            @let effect = if x.transfer_account_id.as_ref() == Some(id) { -x.amount } else { x.amount };
+                            li {
+                                span { span class="mini-title" { (x.payee.clone().unwrap_or_else(|| t("transfer.title"))) }
+                                    span class="mini-sub" { (short_date(x.date)) " · " (transfer_route(w, x)) } }
+                                span class=(if effect.is_positive() { "num pos" } else { "num" }) { (signed(c, effect)) }
+                            }
+                        },
+                        Activity::Adjustment(adj) => {
+                            li data-adjustment=(adj.kind.as_str()) {
+                                span { span class="mini-title" { (adjustment_label(adj.kind)) } span class="mini-sub" { (short_date(adj.date)) } }
+                                span class="adj-end" {
+                                    span class=(if adj.amount.is_negative() { "num neg" } else { "num pos" }) { (signed(c, adj.amount)) }
+                                    @if matches!(adj.kind, AdjustmentKind::Contribution | AdjustmentKind::Growth) {
+                                        form class="inline" data-on:submit__prevent=(post_form(&format!("/ui/adjustments/{}/delete", adj.id))) {
+                                            (view_input(view))
+                                            button type="submit" class="icon-btn small-icon" data-confirm=(t("invest.delete_confirm"))
+                                                aria-label=(tf("invest.delete_label", &[("what", &adjustment_label(adj.kind)), ("date", &short_date(adj.date))])) { (icon("trash")) }
+                                        }
+                                    }
+                                }
+                            }
+                        },
+                    }
+                }
+            }
+        }
+        (edit_section(a, view, w.is_used(id, all)))
+    }
+}
+
+/// Rename, card details, reorder, archive or delete.
+fn edit_section(a: &Account, view: &View, has_history: bool) -> Markup {
+    html! {
         section class="sheet-section" aria-labelledby="acct-edit-h" {
             h3 id="acct-edit-h" { (t("accounts.edit")) }
-            form class="stack" data-on:submit__prevent=(post_form(&format!("/ui/accounts/{id}/edit"))) {
-                (view_input(&view))
+            form class="stack" data-on:submit__prevent=(post_form(&format!("/ui/accounts/{}/edit", a.id))) {
+                (view_input(view))
                 div class="field" {
                     label for="ae-name" { (t("accounts.name")) }
                     input id="ae-name" type="text" name="name" value=(a.name) required maxlength="100";
                 }
-                @if card {
+                @if a.kind.is_card() {
                     div class="two-col" {
                         div class="field" {
                             label for="ae-limit" { (t("cards.limit")) }
@@ -535,30 +683,30 @@ pub async fn account_sheet(State(st): State<Shared>, Extension(user): Extension<
                 button type="submit" class="btn primary" { (t("common.save")) }
             }
             div class="sheet-actions" {
-                form class="inline" data-on:submit__prevent=(post_form(&format!("/ui/accounts/{id}/move"))) {
-                    (view_input(&view)) input type="hidden" name="direction" value="up";
+                form class="inline" data-on:submit__prevent=(post_form(&format!("/ui/accounts/{}/move", a.id))) {
+                    (view_input(view)) input type="hidden" name="direction" value="up";
                     button type="submit" class="btn small" aria-label=(tf("accounts.move_up", &[("name", &a.name)])) { (icon("up")) " " (t("common.move_up")) }
                 }
-                form class="inline" data-on:submit__prevent=(post_form(&format!("/ui/accounts/{id}/move"))) {
-                    (view_input(&view)) input type="hidden" name="direction" value="down";
+                form class="inline" data-on:submit__prevent=(post_form(&format!("/ui/accounts/{}/move", a.id))) {
+                    (view_input(view)) input type="hidden" name="direction" value="down";
                     button type="submit" class="btn small" aria-label=(tf("accounts.move_down", &[("name", &a.name)])) { (icon("down")) " " (t("common.move_down")) }
                 }
-                @if txs.is_empty() {
-                    form class="inline" data-on:submit__prevent=(post_form(&format!("/ui/accounts/{id}/delete"))) {
-                        (view_input(&view))
+                @if !has_history {
+                    form class="inline" data-on:submit__prevent=(post_form(&format!("/ui/accounts/{}/delete", a.id))) {
+                        (view_input(view))
                         button type="submit" class="btn small danger" aria-label=(tf("accounts.delete", &[("name", &a.name)])) data-confirm=(tf("accounts.delete_confirm", &[("name", &a.name)])) {
                             (icon("trash")) " " (t("common.delete"))
                         }
                     }
                 } @else {
-                    form class="inline" data-on:submit__prevent=(post_form(&format!("/ui/accounts/{id}/archive"))) {
-                        (view_input(&view))
+                    form class="inline" data-on:submit__prevent=(post_form(&format!("/ui/accounts/{}/archive", a.id))) {
+                        (view_input(view))
                         button type="submit" class="btn small" data-confirm=(tf("accounts.archive_confirm", &[("name", &a.name)])) { (t("accounts.archive")) }
                     }
                 }
             }
         }
-    }))
+    }
 }
 
 /// Prefill for a new transfer (e.g. "Pay $120 to Visa from Checking").
@@ -893,11 +1041,21 @@ pub async fn reconcile_account(State(st): State<Shared>, Extension(user): Extens
     };
     let today = st.today_for(&user);
     let currency = user.currency.clone();
-    wallet_action(&st, &user, &headers, view, move |w, all| Ok(w.reconcile(&id, actual, all, today)?), move |delta, _| {
-        if delta.is_zero() {
+    wallet_action(&st, &user, &headers, view, move |w, all| {
+        let invested = w.account(&id).is_some_and(|a| a.kind.is_invested());
+        Ok((w.reconcile(&id, actual, all, today)?, invested))
+    }, move |(delta, invested), _| {
+        let delta = *delta;
+        if *invested {
+            let msg = if delta.is_zero() { t("invest.updated_same") } else { tf("invest.updated", &[("amount", &{
+                let s = crate::money::format(delta, &currency);
+                if delta.is_positive() { format!("+{s}") } else { s }
+            })]) };
+            vec![toast(ToastKind::Success, &msg, None)]
+        } else if delta.is_zero() {
             vec![toast(ToastKind::Success, &t("accounts.reconciled_match"), None)]
         } else {
-            vec![toast(ToastKind::Success, &tf("accounts.reconciled_adjusted", &[("amount", &crate::money::format(*delta, &currency))]), None)]
+            vec![toast(ToastKind::Success, &tf("accounts.reconciled_adjusted", &[("amount", &crate::money::format(delta, &currency))]), None)]
         }
     })
     .await
@@ -926,6 +1084,28 @@ pub async fn delete_account(State(st): State<Shared>, Extension(user): Extension
         Ok(w.delete_account(&id)?)
     }, |_, _| vec![toast(ToastKind::Success, &t("accounts.deleted"), None)])
     .await
+}
+
+pub async fn add_contribution(State(st): State<Shared>, Extension(user): Extension<AuthUser>, headers: HeaderMap, Path(id): Path<Id>, Form(f): F) -> Sse {
+    let user = user.0;
+    let view = view_of(&f, fallback_view(&user));
+    let parsed = money_field(&f, "amount").and_then(|a| {
+        chrono::NaiveDate::parse_from_str(field(&f, "date"), "%Y-%m-%d").map(|d| (a, d)).map_err(|_| AppError::bad(t("err.date")))
+    });
+    let (amount, date) = match parsed {
+        Ok(v) => v,
+        Err(e) => return failed(&st, &user, &headers, &view, &e).await,
+    };
+    wallet_action(&st, &user, &headers, view, move |w, _| Ok(w.add_contribution(&id, amount, date)?), |_, _| {
+        vec![toast(ToastKind::Success, &t("invest.contribution_saved"), None)]
+    })
+    .await
+}
+
+pub async fn delete_adjustment(State(st): State<Shared>, Extension(user): Extension<AuthUser>, headers: HeaderMap, Path(id): Path<Id>, Form(f): F) -> Sse {
+    let user = user.0;
+    let view = view_of(&f, fallback_view(&user));
+    wallet_action(&st, &user, &headers, view, move |w, _| Ok(w.delete_adjustment(&id)?), |_, _| vec![toast(ToastKind::Success, &t("invest.deleted"), None)]).await
 }
 
 fn transfer_from_form(f: &HashMap<String, String>, id: Id) -> AppResult<Transaction> {

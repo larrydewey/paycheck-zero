@@ -127,6 +127,18 @@ The owner chose all four recommended designs, and asked that transfers be first-
 - **CSV export.** Gains `account` and `transfer_account` columns.
 - **Fix.** Quick-add rows no longer shift the layout under the next tap after a submit.
 
+## Retirement and investment accounts (2026-09-25)
+
+- **New kinds: Retirement** (401(k), IRA) **and Investment** (brokerage), shown in their own "Retirement & investments" group.
+- **Net worth.** The Accounts screen leads with net worth (cash + invested − cards owed).
+- **Updating a balance** from a statement records the difference as market growth, not spending and not a correction.
+- **Payroll contributions** (pre-tax, never part of take-home pay) are recorded on the account and don't touch the budget.
+- **Contributions from checking** are transfers ("Contribute from checking"). Linking one to a budget line makes it planned saving.
+- **Each account** shows what was added and its growth this calendar year, plus an activity list. Contribution and growth entries can be deleted.
+- **Transaction picker.** Retirement accounts aren't offered for everyday spending.
+- **Schema v4** rebuilds `accounts` / `account_adjustments` to widen their CHECK constraints (create, copy, drop, rename). Tested on a copy of real data.
+- **Fix.** Desktop toasts no longer cover the floating Add button.
+
 ## Known limitations
 
 - Playwright's WebKit build needs Ubuntu 24.04 libraries. On this Omarchy host it runs through Playwright's Docker image automatically (`e2e/global-setup.ts`).

@@ -722,7 +722,7 @@ impl Store {
             });
         }
         for r in sqlx::query(&self.sql(
-            "SELECT x.id, x.account_id, x.date, x.amount, x.kind FROM account_adjustments x JOIN accounts a ON a.id = x.account_id WHERE a.user_id = ? ORDER BY x.date, x.created_at, x.id",
+            "SELECT x.id, x.account_id, x.date, x.amount, x.kind FROM account_adjustments x JOIN accounts a ON a.id = x.account_id WHERE a.user_id = ? ORDER BY x.created_at, x.id",
         ))
         .bind(user.as_str())
         .fetch_all(&self.pool)

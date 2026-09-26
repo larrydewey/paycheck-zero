@@ -24,10 +24,29 @@ pub enum AccountKind {
     Savings,
     Cash,
     CreditCard,
+    /// 401(k), 403(b), IRA, HSA investments…
+    Retirement,
+    /// A brokerage account.
+    Investment,
+}
+
+/// How accounts are grouped on screen.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum AccountGroup {
+    Cash,
+    Invested,
+    Card,
 }
 
 impl AccountKind {
-    pub const ALL: [AccountKind; 4] = [AccountKind::Checking, AccountKind::Savings, AccountKind::Cash, AccountKind::CreditCard];
+    pub const ALL: [AccountKind; 6] = [
+        AccountKind::Checking,
+        AccountKind::Savings,
+        AccountKind::Cash,
+        AccountKind::CreditCard,
+        AccountKind::Retirement,
+        AccountKind::Investment,
+    ];
 
     #[must_use]
     pub fn as_str(self) -> &'static str {
@@ -36,6 +55,8 @@ impl AccountKind {
             AccountKind::Savings => "savings",
             AccountKind::Cash => "cash",
             AccountKind::CreditCard => "credit_card",
+            AccountKind::Retirement => "retirement",
+            AccountKind::Investment => "investment",
         }
     }
 
@@ -47,6 +68,30 @@ impl AccountKind {
     #[must_use]
     pub fn is_card(self) -> bool {
         self == AccountKind::CreditCard
+    }
+
+    /// Retirement and investment accounts: their value moves with the
+    /// market, and they aren't used for everyday spending.
+    #[must_use]
+    pub fn is_invested(self) -> bool {
+        matches!(self, AccountKind::Retirement | AccountKind::Investment)
+    }
+
+    /// Can pay for things directly (bank, cash, cards).
+    #[must_use]
+    pub fn is_spendable(self) -> bool {
+        !self.is_invested()
+    }
+
+    #[must_use]
+    pub fn group(self) -> AccountGroup {
+        if self.is_card() {
+            AccountGroup::Card
+        } else if self.is_invested() {
+            AccountGroup::Invested
+        } else {
+            AccountGroup::Cash
+        }
     }
 }
 
@@ -75,6 +120,11 @@ pub enum AdjustmentKind {
     Opening,
     /// A correction made while reconciling with the bank.
     Reconcile,
+    /// Money added straight from payroll (e.g. a pre-tax 401(k)
+    /// contribution): it never passed through the budget.
+    Contribution,
+    /// Market gains or losses on an investment account.
+    Growth,
 }
 
 impl AdjustmentKind {
@@ -83,6 +133,8 @@ impl AdjustmentKind {
         match self {
             AdjustmentKind::Opening => "opening",
             AdjustmentKind::Reconcile => "reconcile",
+            AdjustmentKind::Contribution => "contribution",
+            AdjustmentKind::Growth => "growth",
         }
     }
 
@@ -91,6 +143,8 @@ impl AdjustmentKind {
         match s {
             "opening" => Some(AdjustmentKind::Opening),
             "reconcile" => Some(AdjustmentKind::Reconcile),
+            "contribution" => Some(AdjustmentKind::Contribution),
+            "growth" => Some(AdjustmentKind::Growth),
             _ => None,
         }
     }
@@ -239,6 +293,35 @@ pub struct CardSummary {
     pub utilization: Option<i64>,
 }
 
+/// A retirement or investment account for a calendar year.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InvestedSummary {
+    pub balance: Cents,
+    /// Payroll contributions plus transfers in, this year.
+    pub contributed: Cents,
+    /// Transfers out (withdrawals), this year.
+    pub withdrawn: Cents,
+    /// Market gains (or losses, negative) this year.
+    pub growth: Cents,
+}
+
+/// One line of an account's history: a transaction or an adjustment.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Activity<'a> {
+    Tx(&'a Transaction),
+    Adjustment(&'a Adjustment),
+}
+
+impl Activity<'_> {
+    #[must_use]
+    pub fn date(&self) -> NaiveDate {
+        match self {
+            Activity::Tx(t) => t.date,
+            Activity::Adjustment(a) => a.date,
+        }
+    }
+}
+
 /// Everything that spans months: accounts, their adjustments, and goals.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Wallet {
@@ -295,11 +378,12 @@ impl Wallet {
         self.accounts.iter_mut().find(|a| &a.id == id).ok_or_else(|| DomainError::not_found("account", id))
     }
 
-    /// Open accounts in display order: bank and cash first, then cards.
+    /// Open accounts in display order: bank and cash, then retirement and
+    /// investments, then cards.
     #[must_use]
     pub fn accounts_sorted(&self) -> Vec<&Account> {
         let mut v: Vec<&Account> = self.accounts.iter().filter(|a| !a.archived).collect();
-        v.sort_by_key(|a| (a.kind.is_card(), a.sort_order, a.name.to_lowercase()));
+        v.sort_by_key(|a| (a.kind.group(), a.sort_order, a.name.to_lowercase()));
         v
     }
 
@@ -368,8 +452,8 @@ impl Wallet {
     }
 
     pub fn move_account(&mut self, id: &Id, up: bool) -> Result<(), DomainError> {
-        let kind = self.account(id).ok_or_else(|| DomainError::not_found("account", id))?.kind.is_card();
-        let order: Vec<Id> = self.accounts_sorted().into_iter().filter(|a| a.kind.is_card() == kind).map(|a| a.id.clone()).collect();
+        let group = self.account(id).ok_or_else(|| DomainError::not_found("account", id))?.kind.group();
+        let order: Vec<Id> = self.accounts_sorted().into_iter().filter(|a| a.kind.group() == group).map(|a| a.id.clone()).collect();
         let pos = order.iter().position(|x| x == id).unwrap_or(0);
         let other = if up { pos.checked_sub(1) } else { Some(pos + 1).filter(|p| *p < order.len()) };
         if let Some(o) = other {
@@ -423,10 +507,68 @@ impl Wallet {
         let target = if kind.is_card() { -actual } else { actual };
         let delta = target - self.balance(id, months);
         if !delta.is_zero() {
-            self.adjustments.push(Adjustment { id: Id::generate(), account_id: id.clone(), date: today, amount: delta, kind: AdjustmentKind::Reconcile });
+            // For investments the difference is the market, not a mistake.
+            let kind = if kind.is_invested() { AdjustmentKind::Growth } else { AdjustmentKind::Reconcile };
+            self.adjustments.push(Adjustment { id: Id::generate(), account_id: id.clone(), date: today, amount: delta, kind });
         }
         self.account_mut(id)?.reconciled_on = Some(today);
         Ok(delta)
+    }
+
+    /// Records money added to a retirement or investment account straight
+    /// from payroll (it never reached the budget).
+    pub fn add_contribution(&mut self, id: &Id, amount: Cents, date: NaiveDate) -> Result<(), DomainError> {
+        let kind = self.account(id).ok_or_else(|| DomainError::not_found("account", id))?.kind;
+        if !kind.is_invested() {
+            return Err(DomainError::Invariant("contributions are for retirement and investment accounts".into()));
+        }
+        if !amount.is_positive() {
+            return Err(DomainError::NonPositiveAmount);
+        }
+        self.adjustments.push(Adjustment { id: Id::generate(), account_id: id.clone(), date, amount, kind: AdjustmentKind::Contribution });
+        Ok(())
+    }
+
+    /// Removes a contribution or growth entry (e.g. entered by mistake).
+    pub fn delete_adjustment(&mut self, id: &Id) -> Result<(), DomainError> {
+        let found = self.adjustments.iter().any(|a| &a.id == id && matches!(a.kind, AdjustmentKind::Contribution | AdjustmentKind::Growth));
+        if !found {
+            return Err(DomainError::not_found("adjustment", id));
+        }
+        self.adjustments.retain(|a| &a.id != id);
+        Ok(())
+    }
+
+    /// A retirement or investment account for the calendar year of `year`.
+    #[must_use]
+    pub fn invested_summary(&self, id: &Id, months: &[Month], year: i32) -> InvestedSummary {
+        let in_year = |d: NaiveDate| d.year() == year;
+        let adj = |k: AdjustmentKind| -> Cents {
+            self.adjustments.iter().filter(|a| &a.account_id == id && a.kind == k && in_year(a.date)).map(|a| a.amount).sum()
+        };
+        let transfers_in: Cents = all_transactions(months)
+            .filter(|t| t.transfer_account_id.as_ref() == Some(id) && in_year(t.date))
+            .map(|t| t.amount.abs())
+            .sum();
+        let transfers_out: Cents = all_transactions(months)
+            .filter(|t| t.account_id.as_ref() == Some(id) && t.is_transfer() && in_year(t.date))
+            .map(|t| t.amount.abs())
+            .sum();
+        InvestedSummary {
+            balance: self.balance(id, months),
+            contributed: adj(AdjustmentKind::Contribution) + transfers_in,
+            withdrawn: transfers_out,
+            growth: adj(AdjustmentKind::Growth),
+        }
+    }
+
+    /// Everything that changed an account, newest first.
+    #[must_use]
+    pub fn account_activity<'a>(&'a self, id: &Id, months: &'a [Month]) -> Vec<Activity<'a>> {
+        let mut v: Vec<Activity> = self.account_transactions(id, months).into_iter().map(Activity::Tx).collect();
+        v.extend(self.adjustments.iter().filter(|a| &a.account_id == id).map(Activity::Adjustment));
+        v.sort_by_key(|a| std::cmp::Reverse(a.date()));
+        v
     }
 
     /// Transactions on an account (either side of a transfer), newest first.

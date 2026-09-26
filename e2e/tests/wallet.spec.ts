@@ -101,7 +101,7 @@ test.describe("accounts and credit cards", () => {
     await sh.getByLabel("From").selectOption({ label: "Checking" });
     await sh.getByLabel("To").selectOption({ label: "Visa" });
     await sh.getByLabel("Amount", { exact: true }).fill("75");
-    await sh.getByText("Paying down older debt?").click();
+    await sh.getByText("Count it in your budget?").click();
     await sh.getByLabel("Budget line").selectOption({ label: "Visa" });
     await sh.getByRole("button", { name: "Save transfer" }).click();
     await expect(pz.toast(page)).toContainText("Transfer saved.");
@@ -247,5 +247,59 @@ test.describe("appearance", () => {
     await expect(page.getByRole("radio", { name: "Dark" })).toBeChecked();
     await page.getByRole("radio", { name: "Match device" }).check();
     await expect(html).not.toHaveAttribute("data-theme", /.+/);
+  });
+});
+
+test.describe("retirement and investments", () => {
+  test("contributions, market growth and a Roth transfer from checking", async ({ page, seed, login }) => {
+    const s = await seed("wallet");
+    await login();
+    pz.acceptDialogs(page);
+    await pz.accounts(page, s);
+    const k = acct(page, "401(k)");
+    await expect(page.locator("#invested-accounts")).toContainText("Retirement & investments");
+    await expect(k.locator("[data-col=balance]")).toHaveText("$42,300.00");
+    await expect(k).toContainText("$300.00 in this year");
+    await expect(page.locator('[data-card="invested"]')).toContainText("$42,300.00");
+    await expect(page.locator('[data-card="net"]')).toContainText("$48,792.80");
+
+    // Update from the statement: the difference is growth, not spending.
+    await pz.openSheet(page, "401(k) details");
+    let sh = pz.sheet(page);
+    await sh.getByLabel("Balance on your latest statement").fill("43,000");
+    await sh.getByRole("button", { name: "Update" }).click();
+    await expect(pz.toast(page)).toContainText("Balance updated: +$700.00 growth.");
+    await expect(k.locator("[data-col=growth]")).toHaveText("+$700.00 growth");
+
+    // A payroll contribution.
+    await pz.openSheet(page, "401(k) details");
+    sh = pz.sheet(page);
+    await sh.getByLabel("Amount", { exact: true }).fill("300");
+    await sh.getByRole("button", { name: "Add contribution" }).click();
+    await expect(pz.toast(page)).toContainText("Contribution added.");
+    await expect(k.locator("[data-col=balance]")).toHaveText("$43,300.00");
+    await expect(k).toContainText("$600.00 in this year");
+
+    // Remove the growth entry again.
+    await pz.openSheet(page, "401(k) details");
+    await pz.sheet(page).getByRole("button", { name: /^Delete Market growth on/ }).click();
+    await expect(k.locator("[data-col=balance]")).toHaveText("$42,600.00");
+
+    // Contribute from checking: a transfer, counted as planned saving when linked.
+    await pz.openSheet(page, "401(k) details");
+    await pz.sheet(page).getByRole("button", { name: "Contribute from checking" }).click();
+    sh = pz.sheet(page);
+    await expect(sh.getByLabel("To")).toHaveValue(/.+/);
+    await sh.getByLabel("Amount", { exact: true }).fill("100");
+    await sh.getByText("Count it in your budget?").click();
+    await sh.getByLabel("Budget line").selectOption({ label: "Emergency Fund" });
+    await sh.getByRole("button", { name: "Save transfer" }).click();
+    await expect(page.locator("#toasts")).toContainText("Transfer saved.");
+    await expect(k.locator("[data-col=balance]")).toHaveText("$42,700.00");
+    await expect(acct(page, "Checking").locator("[data-col=balance]")).toHaveText("$2,310.00");
+
+    // Retirement accounts aren't offered for everyday spending.
+    const form = await pz.addTx(page);
+    await expect(form.getByLabel("Account").locator("option", { hasText: "401(k)" })).toHaveCount(0);
   });
 });

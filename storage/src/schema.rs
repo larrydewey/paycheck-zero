@@ -14,7 +14,46 @@
 //! - `refresh_tokens` and `sync_ops` support auth and offline sync.
 
 /// Ordered migrations: (version, statements).
-pub const MIGRATIONS: &[(i64, &[&str])] = &[(1, V1), (2, V2), (3, V3)];
+pub const MIGRATIONS: &[(i64, &[&str])] = &[(1, V1), (2, V2), (3, V3), (4, V4)];
+
+/// v4: retirement and investment accounts, with payroll contributions and
+/// market growth as adjustment kinds. CHECK constraints can't be altered
+/// portably, so both tables are rebuilt and renamed (renames carry the
+/// foreign key along in SQLite, PostgreSQL and MariaDB).
+const V4: &[&str] = &[
+    r#"CREATE TABLE accounts_v4 (
+    id              VARCHAR(36) NOT NULL PRIMARY KEY,
+    user_id         VARCHAR(36) NOT NULL,
+    name            VARCHAR(100) NOT NULL,
+    kind            VARCHAR(16) NOT NULL CHECK (kind IN ('checking', 'savings', 'cash', 'credit_card', 'retirement', 'investment')),
+    sort_order      BIGINT NOT NULL DEFAULT 0,
+    archived        BIGINT NOT NULL DEFAULT 0 CHECK (archived IN (0, 1)),
+    credit_limit    BIGINT CHECK (credit_limit IS NULL OR credit_limit >= 0),
+    apr_bp          BIGINT CHECK (apr_bp IS NULL OR apr_bp >= 0),
+    minimum_payment BIGINT CHECK (minimum_payment IS NULL OR minimum_payment >= 0),
+    reconciled_on   VARCHAR(10),
+    created_at      VARCHAR(40) NOT NULL,
+    updated_at      VARCHAR(40) NOT NULL,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+)"#,
+    "INSERT INTO accounts_v4 (id, user_id, name, kind, sort_order, archived, credit_limit, apr_bp, minimum_payment, reconciled_on, created_at, updated_at) SELECT id, user_id, name, kind, sort_order, archived, credit_limit, apr_bp, minimum_payment, reconciled_on, created_at, updated_at FROM accounts",
+    r#"CREATE TABLE account_adjustments_v4 (
+    id              VARCHAR(36) NOT NULL PRIMARY KEY,
+    account_id      VARCHAR(36) NOT NULL,
+    date            VARCHAR(10) NOT NULL,
+    amount          BIGINT NOT NULL,
+    kind            VARCHAR(12) NOT NULL CHECK (kind IN ('opening', 'reconcile', 'contribution', 'growth')),
+    created_at      VARCHAR(40) NOT NULL,
+    FOREIGN KEY (account_id) REFERENCES accounts_v4(id) ON DELETE CASCADE
+)"#,
+    "INSERT INTO account_adjustments_v4 (id, account_id, date, amount, kind, created_at) SELECT id, account_id, date, amount, kind, created_at FROM account_adjustments",
+    "DROP TABLE account_adjustments",
+    "DROP TABLE accounts",
+    "ALTER TABLE accounts_v4 RENAME TO accounts",
+    "ALTER TABLE account_adjustments_v4 RENAME TO account_adjustments",
+    "CREATE INDEX idx_accounts_user ON accounts(user_id)",
+    "CREATE INDEX idx_adjustments_account ON account_adjustments(account_id)",
+];
 
 /// v3: accounts (bank, cash, credit cards), their balance adjustments,
 /// goals, and the account / transfer target on transactions.

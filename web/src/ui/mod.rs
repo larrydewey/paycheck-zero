@@ -62,6 +62,8 @@ pub fn routes(state: Shared) -> Router<Shared> {
         .route("/ui/accounts/{id}/archive", post(accounts::archive_account))
         .route("/ui/accounts/{id}/move", post(accounts::move_account))
         .route("/ui/accounts/{id}/delete", post(accounts::delete_account))
+        .route("/ui/accounts/{id}/contribution", post(accounts::add_contribution))
+        .route("/ui/adjustments/{id}/delete", post(accounts::delete_adjustment))
         .route("/ui/months/{id}/transfers", post(accounts::add_transfer))
         .route("/ui/transfers/{id}", post(accounts::update_transfer))
         .route("/ui/goals", post(accounts::add_goal))
@@ -506,6 +508,7 @@ pub fn icon(name: &str) -> Markup {
         "card" => "M3 6h18v12H3z M3 10h18 M7 15h3",
         "bank" => "M3 10l9-6 9 6 M5 10v8 M9 10v8 M15 10v8 M19 10v8 M3 20h18",
         "transfer" => "M4 8h14l-3-3 M20 16H6l3 3",
+        "growth" => "M3 17l6-6 4 4 8-8 M15 7h6v6",
         _ => "",
     };
     let width = if matches!(name, "grip" | "more") { "3" } else { "2" };

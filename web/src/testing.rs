@@ -133,6 +133,8 @@ async fn reset(State(st): State<Shared>, Json(r): Json<ResetReq>) -> AppResult<J
             let checking = w.add_account("Checking", AccountKind::Checking, usd(2_450), opened, None)?;
             w.add_account("Savings", AccountKind::Savings, usd(5_000), opened, None)?;
             let visa = w.add_account("Visa", AccountKind::CreditCard, usd(820), opened, Some(usd(5_000)))?;
+            let k401 = w.add_account("401(k)", AccountKind::Retirement, usd(42_000), opened, None)?;
+            w.add_contribution(&k401, usd(300), d(2026, 9, 4))?;
             w.set_card_details(&visa, Some(usd(5_000)), Some(2_199), Some(usd(35)))?;
             for t in &mut m.transactions {
                 t.account_id = Some(if t.payee.as_deref() == Some("Shell") { checking.clone() } else { visa.clone() });

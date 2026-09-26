@@ -88,6 +88,10 @@ test("tour", async ({ page, seed, login }, info) => {
   await sheet.getByText("Check against your bank").waitFor();
   await shot("w-sheet-checking", false);
   await closeSheet();
+  await page.getByRole("button", { name: "401(k) details" }).click();
+  await sheet.getByText("Add a payroll contribution").waitFor();
+  await shot("w-sheet-401k", false);
+  await closeSheet();
   await page.getByRole("button", { name: "Transfer", exact: true }).click();
   await sheet.locator("#transfer-form").waitFor();
   await shot("w-sheet-transfer", false);

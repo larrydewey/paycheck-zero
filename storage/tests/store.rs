@@ -150,6 +150,10 @@ async fn storage_behaviour() {
     let visa = w.add_account("Visa", AccountKind::CreditCard, Cents::new(82_000), d(2026, 9, 1), Some(Cents::new(500_000))).unwrap();
     w.set_card_details(&visa, Some(Cents::new(500_000)), Some(1999), Some(Cents::new(3_500))).unwrap();
     w.reconcile(&chk, Cents::new(240_000), &[], d(2026, 9, 5)).unwrap();
+    let k = w.add_account("401(k)", AccountKind::Retirement, Cents::new(4_000_000), d(2026, 9, 1), None).unwrap();
+    w.add_contribution(&k, Cents::new(50_000), d(2026, 9, 4)).unwrap();
+    w.reconcile(&k, Cents::new(4_100_000), &[], d(2026, 9, 30)).unwrap();
+    w.add_account("Brokerage", AccountKind::Investment, Cents::new(100_000), d(2026, 9, 1), None).unwrap();
     w.add_goal(Goal {
         id: Id::generate(),
         name: "Emergency fund".into(),
@@ -179,7 +183,7 @@ async fn storage_behaviour() {
     w.delete_account(&visa).unwrap();
     s.save_wallet(&u.id, &w).await.unwrap();
     let back = s.load_wallet(&u.id).await.unwrap();
-    assert_eq!(back.accounts.len(), 1);
+    assert_eq!(back.accounts.len(), 3);
     assert_eq!(back.goals.len(), 1, "goals tracking a deleted account go with it");
     assert_eq!(back.balance(&chk, &[]), Cents::new(240_000));
 
