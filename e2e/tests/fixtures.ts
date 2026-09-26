@@ -57,6 +57,18 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
           // (use PZ_WORKERS=1: workers would share that database).
           PZ_DATABASE_URL: process.env.PZ_E2E_DATABASE_URL ?? `sqlite://${path.join(dir, "pz.db")}?mode=rwc`,
           PZ_TEST_MODE: "1",
+          // Bank sync talks to the fake Teller built into test mode.
+          PZ_TELLER_APP_ID: "app_test",
+          PZ_TELLER_ENV: "sandbox",
+          PZ_TELLER_API: `http://127.0.0.1:${port}/__test/teller`,
+          PZ_TELLER_CONNECT_JS: "/__test/teller/connect.js",
+          PZ_TELLER_SYNC_HOURS: "0",
+          PZ_DATA_KEY: "11".repeat(32),
+          PZ_PLAID_CLIENT_ID: "cid",
+          PZ_PLAID_SECRET: "sec",
+          PZ_PLAID_ENV: "sandbox",
+          PZ_PLAID_API: `http://127.0.0.1:${port}/__test/plaid`,
+          PZ_PLAID_LINK_JS: "/__test/plaid/link.js",
           PZ_JWT_SECRET: "e2e-secret-e2e-secret-e2e-secret-e2e",
           RUST_LOG: "warn",
         },
@@ -131,6 +143,10 @@ export const pz = {
   async transactions(page: Page, s: SeedResult, ym = "2026-09") {
     await page.goto(`/months/${s.months[ym].id}/transactions`);
     await waitForContent(page);
+  },
+  /** Sets the fake Teller's state (disconnected bank, extra transaction). */
+  async teller(server: { url: string }, state: { disconnected?: boolean; extra?: boolean }) {
+    await fetch(server.url + "/__test/teller/state", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(state) });
   },
   async accounts(page: Page, s: SeedResult, ym = "2026-09") {
     await page.goto(`/months/${s.months[ym].id}/accounts`);

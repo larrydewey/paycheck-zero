@@ -1291,6 +1291,7 @@ impl Month {
                 split_group: Some(group_id.clone()),
                 account_id: account.clone(),
                 transfer_account_id: None,
+                external_id: None,
             })
             .collect();
         for t in &new {

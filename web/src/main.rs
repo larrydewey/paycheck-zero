@@ -31,6 +31,10 @@ async fn main() {
         }
     };
     tracing::info!("PaycheckZero listening on http://{bind}");
+    if let Some(t) = &state.cfg.teller {
+        tracing::info!(environment = %t.environment, "bank sync (Teller) is on");
+        paycheckzero_web::bank::spawn_background_sync(state.clone());
+    }
     let app = paycheckzero_web::app(state);
     if let Err(e) = axum::serve(listener, app).with_graceful_shutdown(shutdown()).await {
         tracing::error!("server error: {e}");

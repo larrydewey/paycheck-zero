@@ -831,6 +831,7 @@ fn entry_from_form(f: &HashMap<String, String>, id: Id, currency: &str) -> AppRe
             split_group: None,
             account_id: opt_id(f, "account_id"),
             transfer_account_id: None,
+            external_id: None,
         }));
     }
     let mut parts = Vec::new();

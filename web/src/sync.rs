@@ -56,6 +56,7 @@ impl TxData {
             split_group: None,
             account_id: self.account_id.filter(|i| !i.as_str().is_empty()),
             transfer_account_id: None,
+            external_id: None,
         }
     }
 

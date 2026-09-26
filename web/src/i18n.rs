@@ -52,6 +52,8 @@ mod tests {
             include_str!("ui/plan.rs"),
             include_str!("ui/sheets.rs"),
             include_str!("ui/accounts.rs"),
+            include_str!("ui/bank.rs"),
+            include_str!("bank.rs"),
             include_str!("ui/actions.rs"),
             include_str!("error.rs"),
             include_str!("export.rs"),

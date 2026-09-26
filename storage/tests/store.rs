@@ -41,6 +41,7 @@ fn sample_month(ym: NaiveDate) -> Month {
         split_group: Some(Id::new("g-1")),
         account_id: None,
         transfer_account_id: None,
+        external_id: None,
     })
     .unwrap();
     m
@@ -178,8 +179,25 @@ async fn storage_behaviour() {
         sort_order: 0,
     })
     .unwrap();
+    w.links.push(BankLink {
+        id: Id::generate(),
+        provider: "teller".into(),
+        enrollment_id: "enr_1".into(),
+        institution: "Test Bank".into(),
+        access_token: "sealed".into(),
+        status: LinkStatus::Active,
+        last_error: None,
+        import_from: d(2026, 9, 1),
+        last_sync: None,
+        cursor: None,
+    });
+    w.accounts[0].external_id = Some("acc_1".into());
+    w.accounts[0].link_id = Some(w.links[0].id.clone());
     s.save_wallet(&u.id, &w).await.unwrap();
     assert_eq!(s.load_wallet(&u.id).await.unwrap(), w);
+    s.mark_bank_seen(&u.id, &["txn_1".into(), "txn_2".into()]).await.unwrap();
+    s.mark_bank_seen(&u.id, &["txn_2".into()]).await.unwrap();
+    assert_eq!(s.bank_seen(&u.id).await.unwrap().len(), 2);
     w.delete_account(&visa).unwrap();
     s.save_wallet(&u.id, &w).await.unwrap();
     let back = s.load_wallet(&u.id).await.unwrap();

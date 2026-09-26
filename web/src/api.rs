@@ -630,6 +630,7 @@ impl TxReq {
             split_group: self.split_group,
             account_id: None,
             transfer_account_id: None,
+            external_id: None,
         }
     }
 }

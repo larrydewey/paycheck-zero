@@ -2,6 +2,7 @@
 //! exports and offline sync on top of the pure domain crate.
 
 pub mod api;
+pub mod bank;
 pub mod auth;
 pub mod config;
 pub mod error;

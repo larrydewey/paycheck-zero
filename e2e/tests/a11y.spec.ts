@@ -130,3 +130,23 @@ test.describe("accessibility: accounts, goals, transfers", () => {
     }
   });
 });
+
+test("accessibility: bank connection sheets", async ({ page, seed, login }) => {
+  const s = await seed("basic");
+  await login();
+  await pz.accounts(page, s);
+  await pz.openSheet(page, "Connect a bank");
+  await audit(page);
+  await page.getByRole("button", { name: "Continue with Teller" }).click();
+  await expect(pz.sheet(page).getByRole("heading", { name: "Accounts at Test Bank" })).toBeVisible();
+  await audit(page);
+  await pz.sheet(page).getByRole("button", { name: "Import" }).click();
+  await expect(page.locator("#bank-links")).toBeVisible();
+  await audit(page);
+  await pz.openSheet(page, "Test Bank connection");
+  await audit(page);
+  await pz.closeSheet(page);
+  await page.goto("/settings");
+  await waitForContent(page);
+  await audit(page);
+});

@@ -665,3 +665,19 @@ details.more-options > summary { cursor: pointer; font-weight: 650; color: var(-
 .activity .adj-end { display: inline-flex; align-items: center; gap: 4px; }
 .icon-btn.small-icon { width: 32px; height: 32px; }
 .icon-btn.small-icon .icon { width: 16px; height: 16px; }
+
+/* ------------------------------------------------------------------ bank */
+.bank-points { list-style: none; padding: 0; margin: 0 0 14px; display: grid; gap: 8px; font-size: 0.92rem; }
+.bank-points .icon { color: var(--primary-strong); }
+.provider-h { margin: 8px 0 8px; }
+.providers { display: grid; gap: 10px; }
+.provider { border: 1px solid var(--line); border-radius: 14px; padding: 12px 14px; }
+.provider h4 { margin: 0 0 2px; font-size: 1rem; }
+.provider p { margin: 0 0 10px; }
+.provider textarea { width: 100%; min-height: 72px; font: inherit; font-size: 0.85rem; border-radius: 10px; border: 1px solid var(--input-border); background: var(--input-bg); color: var(--text); padding: 8px 10px; }
+.map-row select { width: 100%; }
+.kind-override summary { color: var(--primary-strong); cursor: pointer; padding: 4px 0; }
+.provider-status { list-style: none; padding: 0; margin: 0; display: grid; gap: 8px; font-size: 0.9rem; }
+.provider-status code { font-size: 0.8rem; }
+.synced { color: var(--ok); }
+.synced .icon { width: 0.9em; height: 0.9em; }

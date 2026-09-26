@@ -52,6 +52,7 @@ fn tx(amount: i64, line: Option<&Id>, paycheck: Option<&Id>) -> Transaction {
         split_group: None,
         account_id: None,
         transfer_account_id: None,
+        external_id: None,
     }
 }
 

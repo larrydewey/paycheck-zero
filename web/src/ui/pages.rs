@@ -63,7 +63,7 @@ pub async fn render_view(st: &Shared, user: &UserRecord, headers: &HeaderMap, vi
             let months = st.all_months(user).await?;
             render_months(&c, &metas, &months, *archived)
         }
-        View::Settings => render_settings(&c),
+        View::Settings => html! { (render_settings(&c)) (super::bank::settings_card(st)) },
         other => {
             let Some(mid) = other.month() else { return Ok(Err("/months".into())) };
             let loaded = match st.load(user, mid).await {

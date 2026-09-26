@@ -151,6 +151,33 @@ Owner feedback: each paycheck should show only what that paycheck is doing, and 
   - A "See the whole month" link leads to Budget.
 - Lines this paycheck doesn't fund yet are added through Assign or New line. Quick-add on Plan requires an amount.
 
+## Bank sync: Teller, SimpleFIN, Plaid (2026-09-25)
+
+All providers are optional and share one pipeline:
+- **Provider layer.** Each provider (`web/src/bank.rs`) is reduced to the same accounts, transactions and balances.
+- **Import rules.** Importing (`core/src/bank.rs`, unit-tested) follows one set of rules:
+  - dedupe by bank id, plus a `bank_seen` ledger;
+  - link hand-entered transactions (same amount, ±3 days);
+  - learn lines from the last transaction with the same payee;
+  - tag spending to the current paycheck, and deposits that look like a paycheck (±3 days, ±25%), which records the actual;
+  - pair an outflow and an inflow across connected accounts into one transfer.
+- **After import:** each account is reconciled to the bank balance.
+
+Providers:
+- **Teller:** Connect in the browser, then mTLS API calls.
+- **SimpleFIN:** paste a setup token, which is claimed once for an access URL. No server config, so it's always available.
+- **Plaid:** a Link token from the server, a public-token exchange, `/transactions/sync` with a stored cursor, and removed transactions deleted.
+
+Behavior:
+- Pending transactions are skipped.
+- Months that don't exist yet are reported and imported later.
+- Expired logins show "Sign in again": Teller re-runs Connect with the enrollment, Plaid uses update mode, and SimpleFIN takes a new token.
+- The Connect and Link windows open after the sheet closes (a modal sheet would block them).
+- Tokens are sealed with ChaCha20-Poly1305 using `PZ_DATA_KEY` (or an auto-created key file).
+- Schema v5 adds `external_id` columns, `bank_links` and `bank_seen`.
+- Test mode includes fake Teller, SimpleFIN and Plaid servers, so the E2E suite covers every flow without real banks.
+- Fix: incremental sync looks back 30 days from the app's "today" (it had used the wall clock).
+
 ## Known limitations
 
 - Playwright's WebKit build needs Ubuntu 24.04 libraries. On this Omarchy host it runs through Playwright's Docker image automatically (`e2e/global-setup.ts`).

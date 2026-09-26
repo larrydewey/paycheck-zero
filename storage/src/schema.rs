@@ -14,7 +14,40 @@
 //! - `refresh_tokens` and `sync_ops` support auth and offline sync.
 
 /// Ordered migrations: (version, statements).
-pub const MIGRATIONS: &[(i64, &[&str])] = &[(1, V1), (2, V2), (3, V3), (4, V4)];
+pub const MIGRATIONS: &[(i64, &[&str])] = &[(1, V1), (2, V2), (3, V3), (4, V4), (5, V5)];
+
+/// v5: bank sync. Imported transactions and linked accounts keep the bank's
+/// id; `bank_links` holds connections (tokens encrypted by the web layer);
+/// `bank_seen` remembers every bank transaction already handled so a sync
+/// never imports one twice, even after it was merged into a transfer.
+const V5: &[&str] = &[
+    "ALTER TABLE transactions ADD COLUMN external_id VARCHAR(100)",
+    "ALTER TABLE accounts ADD COLUMN external_id VARCHAR(100)",
+    "ALTER TABLE accounts ADD COLUMN link_id VARCHAR(36)",
+    r#"CREATE TABLE bank_links (
+    id              VARCHAR(36) NOT NULL PRIMARY KEY,
+    user_id         VARCHAR(36) NOT NULL,
+    provider        VARCHAR(20) NOT NULL,
+    enrollment_id   VARCHAR(100) NOT NULL,
+    institution     VARCHAR(200) NOT NULL,
+    access_token    VARCHAR(1000) NOT NULL,
+    status          VARCHAR(20) NOT NULL,
+    last_error      VARCHAR(1000),
+    import_from     VARCHAR(10) NOT NULL,
+    last_sync       VARCHAR(40),
+    cursor          VARCHAR(4000),
+    created_at      VARCHAR(40) NOT NULL,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+)"#,
+    r#"CREATE TABLE bank_seen (
+    user_id         VARCHAR(36) NOT NULL,
+    external_id     VARCHAR(100) NOT NULL,
+    created_at      VARCHAR(40) NOT NULL,
+    PRIMARY KEY (user_id, external_id),
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+)"#,
+    "CREATE INDEX idx_transactions_external ON transactions(external_id)",
+];
 
 /// v4: retirement and investment accounts, with payroll contributions and
 /// market growth as adjustment kinds. CHECK constraints can't be altered
@@ -239,6 +272,8 @@ const V1: &[&str] = &[
 
 /// Tables in child-first order (for resets).
 pub const TABLES_CHILD_FIRST: &[&str] = &[
+    "bank_seen",
+    "bank_links",
     "goals",
     "account_adjustments",
     "accounts",

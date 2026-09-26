@@ -124,7 +124,11 @@ fn account_row(c: &Ctx, m: &Month, w: &Wallet, all: &[Month], a: &Account, enc: 
             li class="row account" data-account=(a.name) {
                 button type="button" class="row-main" data-on:click=(open) aria-label=(tf("accounts.details", &[("name", &a.name)])) {
                     span class="row-name" { span class="acct-icon" { (icon(if a.kind == AccountKind::Cash { "wallet" } else { "bank" })) } (a.name) }
-                    span class="row-meta" { (kind_label(a.kind)) " · " (reconciled_meta(c, a)) }
+                    span class="row-meta" {
+                        (kind_label(a.kind)) " · "
+                        @if a.link_id.is_some() { span class="synced" { (icon("check")) " " (tf("bank.synced_on", &[("date", &a.reconciled_on.map_or_else(|| "—".into(), short_date))])) } }
+                        @else { (reconciled_meta(c, a)) }
+                    }
                 }
                 div class="row-amount" { span class=(if bal.is_negative() { "num neg" } else { "num" }) data-col="balance" { (c.money(bal)) } }
             }
@@ -159,13 +163,17 @@ pub fn render_accounts(c: &Ctx, m: &Month, archived: bool, w: &Wallet, all: &[Mo
                 }
             }
             div class="action-row" {
-                button type="button" class="btn primary" data-on:click=(open_sheet(&format!("/ui/sheet/account/new?view={enc}"))) { (icon("plus")) " " (t("accounts.add")) }
+                @if !archived {
+                    button type="button" class="btn primary" data-on:click=(open_sheet(&format!("/ui/sheet/bank/connect?view={enc}"))) { (icon("bank")) " " (t("bank.connect")) }
+                }
+                button type="button" class="btn" data-on:click=(open_sheet(&format!("/ui/sheet/account/new?view={enc}"))) { (icon("plus")) " " (t("accounts.add")) }
                 @if accts.len() >= 2 && !archived {
                     button type="button" class="btn" data-on:click=(open_sheet(&format!("/ui/sheet/transfer/new/{}?view={enc}", m.id))) { (icon("transfer")) " " (t("transfer.button")) }
                 }
             }
         }
         div class="main-col" {
+            (super::bank::links_section(c, w, &enc))
             @if accts.is_empty() {
                 (empty_state(&t("accounts.empty_title"), &t("accounts.empty_body"), Some(html! {
                     button type="button" class="btn primary" data-on:click=(open_sheet(&format!("/ui/sheet/account/new?view={enc}"))) { (t("accounts.add_first")) }
@@ -1131,6 +1139,7 @@ fn transfer_from_form(f: &HashMap<String, String>, id: Id) -> AppResult<Transact
         split_group: None,
         account_id: Some(from),
         transfer_account_id: Some(to),
+        external_id: None,
     })
 }
 

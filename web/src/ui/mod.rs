@@ -5,6 +5,7 @@
 
 pub mod accounts;
 pub mod actions;
+pub mod bank;
 pub mod pages;
 pub mod plan;
 pub mod sheets;
@@ -66,6 +67,15 @@ pub fn routes(state: Shared) -> Router<Shared> {
         .route("/ui/adjustments/{id}/delete", post(accounts::delete_adjustment))
         .route("/ui/months/{id}/transfers", post(accounts::add_transfer))
         .route("/ui/transfers/{id}", post(accounts::update_transfer))
+        .route("/ui/sheet/bank/connect", get(bank::connect_sheet))
+        .route("/ui/sheet/bank/{id}", get(bank::link_sheet))
+        .route("/ui/sheet/bank/{id}/map", get(bank::map_sheet_handler))
+        .route("/ui/bank/enroll", post(bank::enroll))
+        .route("/ui/bank/simplefin", post(bank::simplefin_enroll))
+        .route("/ui/bank/plaid/enroll", post(bank::plaid_enroll))
+        .route("/ui/bank/{id}/map", post(bank::map_accounts))
+        .route("/ui/bank/{id}/sync", post(bank::sync_now))
+        .route("/ui/bank/{id}/delete", post(bank::disconnect))
         .route("/ui/goals", post(accounts::add_goal))
         .route("/ui/goals/{id}", post(accounts::update_goal))
         .route("/ui/goals/{id}/delete", post(accounts::delete_goal))

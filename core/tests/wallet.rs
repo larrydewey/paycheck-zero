@@ -23,6 +23,7 @@ fn tx(date: NaiveDate, amount: i64, line: Option<&Id>, account: Option<&Id>) -> 
         split_group: None,
         account_id: account.cloned(),
         transfer_account_id: None,
+        external_id: None,
     }
 }
 

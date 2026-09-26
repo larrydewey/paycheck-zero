@@ -111,6 +111,12 @@ pub struct Account {
     pub minimum_payment: Option<Cents>,
     /// The last day the balance was checked against the bank.
     pub reconciled_on: Option<NaiveDate>,
+    /// Bank sync: the bank's id for this account and the connection it
+    /// comes through.
+    #[serde(default)]
+    pub external_id: Option<String>,
+    #[serde(default)]
+    pub link_id: Option<Id>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -322,12 +328,66 @@ impl Activity<'_> {
     }
 }
 
-/// Everything that spans months: accounts, their adjustments, and goals.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LinkStatus {
+    Active,
+    /// The bank needs you to sign in again.
+    NeedsReconnect,
+    /// The last sync failed for another reason (see `last_error`).
+    Error,
+}
+
+impl LinkStatus {
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            LinkStatus::Active => "active",
+            LinkStatus::NeedsReconnect => "needs_reconnect",
+            LinkStatus::Error => "error",
+        }
+    }
+
+    #[must_use]
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "active" => Some(LinkStatus::Active),
+            "needs_reconnect" => Some(LinkStatus::NeedsReconnect),
+            "error" => Some(LinkStatus::Error),
+            _ => None,
+        }
+    }
+}
+
+/// A connection to a bank through a data provider (Teller).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BankLink {
+    pub id: Id,
+    pub provider: String,
+    pub enrollment_id: String,
+    pub institution: String,
+    /// The provider's access token, encrypted by the web layer.
+    pub access_token: String,
+    pub status: LinkStatus,
+    pub last_error: Option<String>,
+    /// Transactions dated before this aren't imported.
+    pub import_from: NaiveDate,
+    /// RFC 3339 time of the last successful sync.
+    pub last_sync: Option<String>,
+    /// Provider paging state (Plaid's transactions cursor).
+    #[serde(default)]
+    pub cursor: Option<String>,
+}
+
+/// Everything that spans months: accounts, their adjustments, goals and
+/// bank connections.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Wallet {
     pub accounts: Vec<Account>,
     pub adjustments: Vec<Adjustment>,
     pub goals: Vec<Goal>,
+    #[serde(default)]
+    pub links: Vec<BankLink>,
 }
 
 fn clean_name(name: &str) -> Result<String, DomainError> {
@@ -388,6 +448,34 @@ impl Wallet {
     }
 
     #[must_use]
+    pub fn link(&self, id: &Id) -> Option<&BankLink> {
+        self.links.iter().find(|l| &l.id == id)
+    }
+
+    pub fn link_mut(&mut self, id: &Id) -> Result<&mut BankLink, DomainError> {
+        self.links.iter_mut().find(|l| &l.id == id).ok_or_else(|| DomainError::not_found("bank connection", id))
+    }
+
+    /// Accounts that sync through a connection.
+    #[must_use]
+    pub fn linked_accounts(&self, link: &Id) -> Vec<&Account> {
+        self.accounts.iter().filter(|a| a.link_id.as_ref() == Some(link) && !a.archived).collect()
+    }
+
+    /// Disconnects a bank. Its accounts stay (with their history); they
+    /// just stop syncing.
+    pub fn remove_link(&mut self, id: &Id) -> Result<(), DomainError> {
+        self.link_mut(id)?;
+        self.links.retain(|l| &l.id != id);
+        for a in &mut self.accounts {
+            if a.link_id.as_ref() == Some(id) {
+                a.link_id = None;
+            }
+        }
+        Ok(())
+    }
+
+    #[must_use]
     pub fn goal(&self, id: &Id) -> Option<&Goal> {
         self.goals.iter().find(|g| &g.id == id)
     }
@@ -418,6 +506,8 @@ impl Wallet {
             apr_bp: None,
             minimum_payment: None,
             reconciled_on: Some(today),
+            external_id: None,
+            link_id: None,
         });
         let signed = if kind.is_card() { -balance } else { balance };
         if !signed.is_zero() {

@@ -4,6 +4,7 @@
 //! zero-based validation, reports and suggestions. It has **no** web or
 //! database dependencies (spec §7.1). All money is integer [`Cents`].
 
+pub mod bank;
 pub mod copy;
 pub mod error;
 pub mod id;

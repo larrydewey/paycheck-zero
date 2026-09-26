@@ -50,6 +50,27 @@ docker run -p 8080:8080 -v pz-data:/data -e PZ_JWT_SECRET=... paycheckzero
 | `PZ_SECURE_COOKIES` | `false`                              | Set `true` behind HTTPS |
 | `PZ_TEST_MODE`      | `false`                              | Enables `/__test/*` (database reset). **Never in production.** |
 | `RUST_LOG`          | `info`                               | |
+| `PZ_DATA_KEY`       | from `PZ_DATA_KEY_FILE`              | 64 hex chars; encrypts stored bank tokens |
+| `PZ_DATA_KEY_FILE`  | `paycheckzero.key`                   | Created on first start (mode 0600). Back it up with the database; without it, banks need reconnecting |
+| `PZ_BANK_SYNC_HOURS`| `6`                                  | Background bank sync interval; `0` turns it off |
+
+### Bank sync (optional)
+
+Connect banks from the **Accounts** tab. Every provider is optional and you can mix them. Transactions are:
+- imported once;
+- matched to ones you typed in yourself;
+- sorted into the line the same payee had last time;
+- tagged to the current paycheck.
+
+Card payments seen from both accounts become one transfer, and balances are reconciled to the bank's.
+
+| Provider | What you need | Server settings |
+|----------|---------------|-----------------|
+| **SimpleFIN Bridge** | An account at [bridge.simplefin.org](https://bridge.simplefin.org) (about $15/year). Link your banks there, create a setup token, paste it in PaycheckZero | None |
+| **Teller** | A free app at [teller.io](https://teller.io), plus the client certificate and key from its dashboard | `PZ_TELLER_APP_ID`, `PZ_TELLER_ENV` (`sandbox`, `development`, `production`), `PZ_TELLER_CERT`, `PZ_TELLER_KEY` (PEM file paths) |
+| **Plaid** | A [Plaid](https://plaid.com) developer account (production access needs Plaid's approval) | `PZ_PLAID_CLIENT_ID`, `PZ_PLAID_SECRET`, `PZ_PLAID_ENV` (`sandbox`, `production`), optional `PZ_PLAID_COUNTRIES` (default `US`) |
+
+Settings shows which providers are on. Access tokens are stored encrypted with the data key.
 
 ## Architecture
 

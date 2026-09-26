@@ -219,6 +219,10 @@ pub struct Transaction {
     /// down debt that was never budgeted).
     #[serde(default)]
     pub transfer_account_id: Option<Id>,
+    /// Set on transactions imported from a bank (the bank's own id), so a
+    /// sync never adds the same transaction twice.
+    #[serde(default)]
+    pub external_id: Option<String>,
 }
 
 impl Transaction {

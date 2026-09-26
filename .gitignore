@@ -21,3 +21,7 @@ node_modules/
 test-results/
 playwright-report/
 e2e/.run/
+paycheckzero.key
+*.key
+*.db.bak*
+*.bak-before-*
