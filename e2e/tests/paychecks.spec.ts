@@ -11,17 +11,26 @@ test.describe("paycheck view (primary)", () => {
     await expect(page.locator('[data-stat="unassigned"]')).toHaveText("$400.00");
     await expect(page.locator('[data-stat="tagged"]')).toHaveText("$97.20");
     await expect(page.locator('[data-stat="budget-left"]')).toHaveText("$1,514.80");
-    await expect(page.locator('[data-stat="rolling"]')).toHaveText("$1,475.00");
-    await expect(page.locator("#zero-status")).toContainText("$1,875.00 left to assign this month");
     await expect(pz.line(page, "Rent")).toBeVisible();
-    // Every line shows, including ones this paycheck doesn't fund.
-    await expect(page.getByLabel("Planned for Electric from this paycheck")).toHaveValue("0.00");
-    // Categories without lines are one tap from their first line.
-    await expect(page.locator('[data-category-empty="Giving"]')).toBeVisible();
+    // Only this paycheck: its lines, its amounts, its spending.
+    await expect(pz.line(page, "Electric")).toHaveCount(0);
+    await expect(pz.category(page, "Debt")).toHaveCount(0);
+    await expect(page.locator("#zero-status")).toHaveCount(0);
     const food = pz.category(page, "Food");
     await expect(food.locator("summary [data-col=this]")).toContainText("$300.00");
-    await expect(food.locator("summary [data-col=planned]")).toContainText("$600.00");
+    await expect(food.locator("summary [data-col=remaining]")).toContainText("$214.80");
+    const groceries = pz.line(page, "Groceries");
+    await expect(groceries.locator("[data-col=planned]")).toHaveText("$300.00");
+    await expect(groceries.locator("[data-col=spent]")).toHaveText("$85.20");
+    await expect(groceries.locator("[data-col=remaining]")).toHaveText("$214.80");
+    // Gas spending that wasn't tagged to this paycheck stays on Budget.
+    await expect(pz.line(page, "Gas").locator("[data-col=spent]")).toHaveText("$0.00");
+    await page.getByRole("link", { name: "See the whole month" }).click();
+    await waitForContent(page);
     await expect(pz.line(page, "Groceries").locator("[data-col=remaining]")).toContainText("$514.80");
+    await expect(pz.line(page, "Electric")).toBeVisible();
+    await page.goBack();
+    await waitForContent(page);
     await pz.lineSheet(page, "Groceries");
     await expect(pz.sheet(page).getByLabel("Groceries from the Sep 4 paycheck")).toHaveValue("300.00");
     await expect(pz.sheet(page).getByLabel("Groceries from the Sep 18 paycheck")).toHaveValue("300.00");
@@ -33,17 +42,23 @@ test.describe("paycheck view (primary)", () => {
     await input.press("Enter");
     await expect(pz.sts(page)).toHaveText("$587.50");
     await expect(pz.category(page, "Housing").locator("summary [data-col=this]")).toContainText("$1,000.50");
-    await expect(page.locator("#zero-status")).toContainText("$2,074.50 left");
     await expect(input).toHaveValue("1000.50");
+    await expect(page.getByRole("button", { name: "Assign $599.50" })).toBeVisible();
   });
 
-  test("setting a line to 0 removes the allocation", async ({ page }) => {
+  test("setting a line to 0 takes it off this paycheck", async ({ page }) => {
     const input = page.getByLabel("Planned for Gas from this paycheck");
     await input.fill("0");
     await input.press("Enter");
-    await expect(pz.line(page, "Gas")).toHaveClass(/unfunded/);
-    await expect(input).toHaveValue("0.00");
+    await expect(pz.line(page, "Gas")).toHaveCount(0);
+    await expect(pz.category(page, "Transportation")).toHaveCount(0);
     await expect(pz.sts(page)).toHaveText("$488.00");
+    // Funding it again goes through Assign.
+    await pz.openSheet(page, "Assign $500.00");
+    await pz.sheet(page).getByLabel("Expense line").selectOption({ label: "Gas" });
+    await pz.sheet(page).getByLabel("Amount", { exact: true }).fill("60");
+    await pz.sheet(page).getByRole("button", { name: "Assign", exact: true }).click();
+    await expect(page.getByLabel("Planned for Gas from this paycheck")).toHaveValue("60.00");
   });
 
   test("over-allocation is blocked in the browser before sending", async ({ page }) => {
@@ -110,7 +125,7 @@ test.describe("paycheck view (primary)", () => {
     const input = page.getByLabel("Planned for Groceries from this paycheck");
     await input.fill("450");
     await input.press("Enter");
-    await expect(pz.category(page, "Food").locator("summary [data-col=planned]")).toContainText("$750.00");
+    await expect(pz.category(page, "Food").locator("summary [data-col=this]")).toContainText("$450.00");
     await pz.overview(page, s);
     await expect(pz.line(page, "Groceries").locator("[data-col=planned]")).toHaveText("$750.00");
     await pz.lineSheet(page, "Groceries");
@@ -133,7 +148,7 @@ test.describe("paycheck view (primary)", () => {
     await expect(pz.toast(page)).toContainText("Funding was reduced for: Gas.");
     await expect(pz.toast(page)).toContainText("Re-balance the $1,475.00 difference");
     await expect(page.locator('[data-stat="assigned"]')).toHaveText("$1,500.00");
-    await expect(page.getByLabel("Planned for Gas from this paycheck")).toHaveValue("0.00");
+    await expect(pz.line(page, "Gas")).toHaveCount(0);
   });
 
   test("skipping a paycheck deletes its allocations", async ({ page }) => {
@@ -142,7 +157,7 @@ test.describe("paycheck view (primary)", () => {
     await pz.sheet(page).getByRole("button", { name: "Skip this paycheck" }).click();
     await expect(page.getByText("This paycheck is skipped.")).toBeVisible();
     await expect(pz.sts(page)).toHaveText("$0.00");
-    await expect(page.locator("#zero-status")).toContainText("$1,475.00 left to assign");
+    await expect(page.locator("#funding li.line")).toHaveCount(0);
     await expect(page.locator(".chip.active")).toContainText("Skipped");
   });
 
@@ -211,19 +226,6 @@ test.describe("paycheck view (primary)", () => {
     await expect(pz.category(page, "Kids")).toBeVisible();
     await expect(page.getByLabel("Planned for Allowance from this paycheck")).toHaveValue("20.00");
     await expect(pz.sts(page)).toHaveText("$333.00");
-  });
-
-  test("filter to only the lines this paycheck funds (remembered)", async ({ page }) => {
-    const toggle = page.getByRole("button", { name: "Only lines this paycheck funds" });
-    await toggle.click();
-    await expect(toggle).toHaveAttribute("aria-pressed", "true");
-    await expect(pz.line(page, "Electric")).toBeHidden();
-    await expect(pz.category(page, "Debt")).toBeHidden();
-    await expect(pz.line(page, "Rent")).toBeVisible();
-    await page.reload();
-    await expect(pz.line(page, "Electric")).toBeHidden();
-    await page.getByRole("button", { name: "Only lines this paycheck funds" }).click();
-    await expect(pz.line(page, "Electric")).toBeVisible();
   });
 
   test("navigating between paychecks", async ({ page }) => {

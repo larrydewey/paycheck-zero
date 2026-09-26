@@ -721,3 +721,20 @@ fn moving_a_category_steps_past_empty_ones() {
     assert_eq!(after[0], "Food");
     fx.m.check_invariants().unwrap();
 }
+
+#[test]
+fn a_paycheck_on_its_own_shows_only_its_lines_and_amounts() {
+    let mut f = fixture();
+    f.m.set_allocation(&f.p1, &f.rent, c(60_000)).unwrap();
+    f.m.set_allocation(&f.p2, &f.rent, c(40_000)).unwrap();
+    f.m.set_allocation(&f.p2, &f.food, c(30_000)).unwrap();
+    f.m.add_transaction(tx(-2_500, Some(&f.rent), Some(&f.p1))).unwrap();
+    f.m.add_transaction(tx(-9_999, Some(&f.rent), None)).unwrap();
+    let v = f.m.funding_views(&f.p1);
+    assert_eq!(v.len(), 1, "only categories this paycheck funds");
+    let rent = &v[0].lines[0];
+    assert_eq!((rent.planned, rent.spent, rent.remaining), (c(60_000), c(2_500), c(57_500)));
+    assert_eq!(v[0].this_paycheck, c(60_000));
+    assert_eq!(v[0].remaining, c(57_500));
+    assert!(f.m.funding_views(&f.p2).iter().flat_map(|c| &c.lines).any(|l| l.id == f.food));
+}

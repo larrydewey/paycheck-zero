@@ -285,6 +285,16 @@ impl Month {
             .sum()
     }
 
+    /// Spending on a line tagged to a paycheck.
+    #[must_use]
+    pub fn paycheck_line_spent(&self, paycheck: &Id, line: &Id) -> Cents {
+        self.transactions
+            .iter()
+            .filter(|t| t.paycheck_id.as_ref() == Some(paycheck) && t.expense_line_id.as_ref() == Some(line) && t.is_spending())
+            .map(|t| t.amount.abs())
+            .sum()
+    }
+
     /// Tagged spending per line for a paycheck: (line or None, amount spent).
     fn tagged_by_line(&self, paycheck: &Id) -> Vec<(Option<Id>, Cents)> {
         let mut out: Vec<(Option<Id>, Cents)> = Vec::new();

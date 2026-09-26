@@ -139,6 +139,18 @@ The owner chose all four recommended designs, and asked that transfers be first-
 - **Schema v4** rebuilds `accounts` / `account_adjustments` to widen their CHECK constraints (create, copy, drop, rename). Tested on a copy of real data.
 - **Fix.** Desktop toasts no longer cover the floating Add button.
 
+## Plan is one paycheck on its own (2026-09-25)
+
+Owner feedback: each paycheck should show only what that paycheck is doing, and the monthly view covers all of them.
+
+- Plan now lists only the lines this paycheck funds.
+- A line's Planned is this paycheck's share, and Spent is spending tagged to this paycheck.
+- Categories without funding from this paycheck, empty-category chips and the "only funded" toggle are gone.
+- The month-wide items moved to Budget: the zero status, overspending, needs-a-line alerts and the "available from today" stat. Exceptions:
+  - While a variance is open or the month is locked, the zero status and variance panel still show on Plan, because they hold the re-lock flow.
+  - A "See the whole month" link leads to Budget.
+- Lines this paycheck doesn't fund yet are added through Assign or New line. Quick-add on Plan requires an amount.
+
 ## Known limitations
 
 - Playwright's WebKit build needs Ubuntu 24.04 libraries. On this Omarchy host it runs through Playwright's Docker image automatically (`e2e/global-setup.ts`).

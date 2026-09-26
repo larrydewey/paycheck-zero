@@ -17,8 +17,6 @@ test.describe("overspending warnings", () => {
     await expect(pz.line(page, "Gas")).toHaveClass(/over/);
     await expect(pz.line(page, "Gas")).toContainText("Over by $52.30");
     await expect(pz.category(page, "Transportation").locator(".cat-over")).toBeVisible();
-    await pz.paycheck(page, s, 0);
-    await expect(pz.line(page, "Gas")).toContainText("Over by $52.30");
   });
 
   test("negative Safe to Spend is called out", async ({ page, seed, login }) => {

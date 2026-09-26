@@ -32,8 +32,8 @@
   "cat.spent": "spent",
   "assign.button": "Assign {amount}",
   "assign.title": "Assign from the {date} paycheck",
-  "plan.empty_title": "Let's give this paycheck some jobs",
-  "plan.empty_body": "Add your first line (like Rent or Groceries) and how much of this paycheck it gets.",
+  "plan.empty_title": "This paycheck hasn't been given any jobs yet",
+  "plan.empty_body": "Tap Assign to choose what it pays for, or add a new line below. Budget shows the whole month.",
   "plan.new_line": "New line",
   "plan.manage_income": "Manage income and paychecks",
   "budget.spent": "Spent",
@@ -759,5 +759,6 @@
   "invest.adj_growth": "Market growth",
   "invest.delete_label": "Delete {what} on {date}",
   "invest.delete_confirm": "Delete this entry? The balance will change by the same amount.",
-  "invest.deleted": "Entry deleted."
+  "invest.deleted": "Entry deleted.",
+  "plan.whole_month": "See the whole month"
 }

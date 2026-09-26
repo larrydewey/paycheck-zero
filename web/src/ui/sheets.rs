@@ -511,7 +511,7 @@ pub async fn new_line(State(st): State<Shared>, Extension(user): Extension<AuthU
             @if let Some(f) = free {
                 div class="field" {
                     label for="nl-amount" { (t("newline.amount")) }
-                    input id="nl-amount" type="text" inputmode="decimal" class="money" name="amount" placeholder="0.00" autocomplete="off" data-max-cents=(f.get());
+                    input id="nl-amount" type="text" inputmode="decimal" class="money" name="amount" placeholder="0.00" autocomplete="off" required data-max-cents=(f.get());
                     p class="hint" { (tf("fund.available", &[("amount", &c.money(f))])) }
                 }
             }

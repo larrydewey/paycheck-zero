@@ -236,7 +236,7 @@ fieldset.segmented legend { flex-basis: 100%; }
 .hero-note.ok { display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: center; }
 .hero-hint { font-weight: 500; font-size: 0.85rem; }
 .hero-warn { display: inline-flex; gap: 6px; align-items: center; margin: 0 0 10px; background: rgb(0 0 0 / 24%); border-radius: 10px; padding: 6px 10px; font-size: 0.88rem; font-weight: 650; }
-.hero-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin: 0; }
+.hero-stats { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; margin: 0; }
 .hero-stats div { background: rgb(0 0 0 / 16%); border-radius: 12px; padding: 8px 10px; min-width: 0; }
 .hero-stats dt { font-size: 0.72rem; line-height: 1.25; }
 .hero-stats dd { margin: 2px 0 0; font-weight: 750; font-variant-numeric: tabular-nums; font-size: 0.95rem; }

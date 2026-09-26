@@ -89,7 +89,7 @@ fn add_line_row(m: &Month, view: &View, cat: &CategoryView, pid: Option<&Id>, ma
             input type="text" name="name" required maxlength="100" placeholder=(t("line.add_placeholder")) aria-label=(tf("line.add_label", &[("category", &cat.name)]));
             @if pid.is_some() {
                 span class="add-extra" {
-                    input type="text" inputmode="decimal" class="money" name="amount" placeholder="0.00" autocomplete="off"
+                    input type="text" inputmode="decimal" class="money" name="amount" placeholder="0.00" autocomplete="off" required
                         data-max-cents=[max] aria-label=(tf("line.add_from_this_label", &[("category", &cat.name)]));
                 }
             }
@@ -168,6 +168,17 @@ pub(super) fn month_alerts(c: &Ctx, m: &Month, archived: bool, view: &View, offe
     }
 }
 
+/// Plan's alerts are about this paycheck; month-wide status lives on
+/// Budget. The month's zero status only shows here while re-assigning a
+/// variance (it holds the re-lock button).
+fn paycheck_alerts(c: &Ctx, m: &Month, archived: bool, view: &View) -> Markup {
+    html! {
+        @if archived || (m.is_locked() && !m.reassigning) || m.reassigning || m.has_variance() {
+            (month_alerts(c, m, archived, view, false))
+        }
+    }
+}
+
 /// "3 transactions need a line" with a way to fix them.
 fn needs_line_alert(c: &Ctx, m: &Month) -> Markup {
     let needing: Vec<&Transaction> = m.transactions.iter().filter(|t| t.needs_line()).collect();
@@ -239,8 +250,9 @@ pub fn render_paycheck(c: &Ctx, m: &Month, archived: bool, pid: &Id, wallet: &Wa
     let enc = view.encode();
     let editable = m.allocations_editable() && !archived && p.status != PaycheckStatus::Skipped;
     let structure = !m.is_locked() && !archived;
-    let cats = m.paycheck_category_views(pid);
-    let (shown, empty): (Vec<&CategoryView>, Vec<&CategoryView>) = cats.iter().partition(|c| !c.lines.is_empty());
+    // This paycheck on its own: only the lines it funds, with its share,
+    // its spending and what's left of it. Budget shows the whole month.
+    let shown = m.funding_views(pid);
     let has_lines = !shown.is_empty();
     html! {
         h1 class="visually-hidden" { (tf("paycheck.heading", &[("date", &short_date(p.date)), ("name", &v.income_line_name)])) }
@@ -287,22 +299,16 @@ pub fn render_paycheck(c: &Ctx, m: &Month, archived: bool, pid: &Id, wallet: &Wa
             dl class="hero-stats" {
                 div { dt { (t("paycheck.budget_left")) } dd data-stat="budget-left" { (c.money(v.budget_left)) } }
                 div { dt { (t("paycheck.tagged")) } dd data-stat="tagged" { (c.money(v.tagged_expense)) } }
-                div { dt { (t("paycheck.rolling")) } dd data-stat="rolling" { (c.money(m.rolling_available(c.today))) } }
             }
         }
 
-        (month_alerts(c, m, archived, &view, false))
-        (needs_line_alert(c, m))
+        (paycheck_alerts(c, m, archived, &view))
         }
         div class="main-col" {
-        section class=(if c.only_funded { "funding only-funded" } else { "funding" }) id="funding" aria-labelledby="funding-h" {
+        section class="funding" id="funding" aria-labelledby="funding-h" {
             div class="section-head" {
                 h2 id="funding-h" { (t("paycheck.funds")) }
-                @if has_lines {
-                    button type="button" class="chip-toggle" data-only-funded aria-pressed=(if c.only_funded { "true" } else { "false" }) {
-                        (t("paycheck.only_funded"))
-                    }
-                }
+                a class="small" href=(format!("/months/{}/overview", m.id)) { (t("plan.whole_month")) }
             }
             @if !has_lines {
                 div class="empty soft" {
@@ -311,8 +317,7 @@ pub fn render_paycheck(c: &Ctx, m: &Month, archived: bool, pid: &Id, wallet: &Wa
                 }
             }
             @for cat in &shown {
-                @let funded = cat.lines.iter().any(|l| l.this_paycheck.is_positive());
-                div class=(if funded { "cat-wrap" } else { "cat-wrap unfunded" }) {
+                div class="cat-wrap" {
                     details class="category" data-category=(cat.name) data-cat-id=(cat.id) open[c.is_open(&cat.name)] {
                         summary {
                             span class="cat-name" { (cat.name)
@@ -323,9 +328,9 @@ pub fn render_paycheck(c: &Ctx, m: &Month, archived: bool, pid: &Id, wallet: &Wa
                             span class="cat-sum" {
                                 span class="num" data-col="this" { (c.money(cat.this_paycheck)) }
                                 span class="cat-sub" {
-                                    span data-col="planned" { (c.money(cat.planned)) } " " (t("cat.planned")) " · "
-                                    span class=(if cat.remaining.is_negative() { "neg" } else { "" }) data-col="remaining" { (c.money(cat.remaining)) } " " (t("row.left"))
-                                    span class="visually-hidden" data-col="spent" { (c.money(cat.spent)) }
+                                    span class=(if cat.remaining.is_negative() { "neg" } else { "" }) data-col="remaining" { (c.money(cat.remaining.abs())) }
+                                    " " (if cat.remaining.is_negative() { t("row.over") } else { t("row.left") })
+                                    @if cat.spent.is_positive() { " · " span data-col="spent" { (c.money(cat.spent)) } " " (t("cat.spent")) }
                                 }
                             }
                         }
@@ -334,7 +339,7 @@ pub fn render_paycheck(c: &Ctx, m: &Month, archived: bool, pid: &Id, wallet: &Wa
                                 @let form = editable.then(|| amount_form(
                                     &format!("/ui/paychecks/{}/lines/{}", pid, l.id), &view, l.this_paycheck,
                                     &tf("line.planned_label", &[("name", &l.name)]), Some((l.this_paycheck + v.unallocated).get())));
-                                (line_row(c, l, &format!("/ui/sheet/line/{}?view={enc}&pid={pid}", l.id), form, l.this_paycheck, !l.this_paycheck.is_positive()))
+                                (line_row(c, l, &format!("/ui/sheet/line/{}?view={enc}&pid={pid}", l.id), form, l.this_paycheck, false))
                             }
                         }
                         @if structure {
@@ -343,7 +348,6 @@ pub fn render_paycheck(c: &Ctx, m: &Month, archived: bool, pid: &Id, wallet: &Wa
                     }
                 }
             }
-            @if structure { (empty_cats(m, &empty, &format!("view={enc}&pid={pid}"))) }
             @if structure {
                 button type="button" class="btn ghost wide-btn" data-on:click=(open_sheet(&format!("/ui/sheet/new-line/{}?view={enc}&pid={pid}", m.id))) {
                     (icon("plus")) " " (t("plan.new_line"))

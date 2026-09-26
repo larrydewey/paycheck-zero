@@ -40,6 +40,6 @@ test("variance in a draft month can be applied directly", async ({ page, seed, l
   await pz.sheet(page).getByRole("button", { name: "Record actual" }).click();
   await expect(page.locator("#variance-panel")).toContainText("Net difference between actual and planned income: $100.00.");
   await page.locator("#variance-panel").getByRole("button", { name: "Use actual as planned" }).click();
-  await expect(page.locator("#zero-status")).toContainText("$100.00 left to assign");
+  await expect(page.getByRole("button", { name: "Assign $100.00" })).toBeVisible();
   await expect(page.locator("#variance-panel")).toHaveCount(0);
 });

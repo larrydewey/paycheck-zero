@@ -16,6 +16,7 @@ test("changing currency converts every amount with the given rate", async ({ pag
   await pz.paycheck(page, s, 0);
   await expect(page.locator('[data-stat="planned"]')).toHaveText("€1,000.00");
   await expect(pz.sts(page)).toHaveText("-€6.00");
+  await pz.overview(page, s);
   await expect(page.locator("#zero-status")).toContainText("Every dollar has a job");
 });
 

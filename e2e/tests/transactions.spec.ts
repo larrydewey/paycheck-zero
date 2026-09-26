@@ -38,6 +38,8 @@ test.describe("transactions", () => {
     await expect(pz.toast(page)).toContainText("Transaction saved.");
     await pz.paycheck(page, s, 0);
     await expect(pz.sts(page)).toHaveText("$388.00");
+    await expect(pz.line(page, "Gas").locator("[data-col=spent]")).toHaveText("$0.00");
+    await pz.overview(page, s);
     await expect(pz.line(page, "Gas").locator("[data-col=spent]")).toContainText("$50.00");
   });
 

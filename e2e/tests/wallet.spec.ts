@@ -140,8 +140,8 @@ test.describe("transactions that need a line", () => {
     const s = await seed("basic");
     await login();
     await expect(page.locator(".btab-icon [data-badge=needs-line], .tab [data-badge=needs-line]").filter({ visible: true })).toHaveText("1");
-    await expect(page.locator("#needs-line-alert")).toContainText("1 transaction(s) ($12.00) need a line.");
     await pz.overview(page, s);
+    await expect(page.locator("#needs-line-alert")).toContainText("1 transaction(s) ($12.00) need a line.");
     await page.locator("#needs-line-alert").getByRole("link", { name: "Sort them" }).click();
     await waitForContent(page);
     await expect(page).toHaveURL(/show=needs-line/);

@@ -165,7 +165,10 @@ impl Month {
             .collect()
     }
 
-    /// Only the lines a paycheck funds, grouped by category (paycheck view).
+    /// The paycheck on its own (Plan): only the lines it funds, with its
+    /// amounts. Planned is what this paycheck puts in, Spent is spending
+    /// tagged to this paycheck, and Remaining is what's left of its share.
+    /// The whole month lives in [`Month::category_views`].
     #[must_use]
     pub fn funding_views(&self, paycheck: &Id) -> Vec<CategoryView> {
         self.categories_sorted()
@@ -175,7 +178,13 @@ impl Month {
                     .lines_of(&c.id)
                     .into_iter()
                     .filter(|l| self.allocation_for(paycheck, &l.id).is_some())
-                    .map(|l| self.line_view(l, Some(paycheck)))
+                    .map(|l| {
+                        let mut v = self.line_view(l, Some(paycheck));
+                        v.planned = v.this_paycheck;
+                        v.spent = self.paycheck_line_spent(paycheck, &l.id);
+                        v.remaining = v.planned - v.spent;
+                        v
+                    })
                     .collect();
                 (!lines.is_empty()).then(|| self.category_view(c, lines))
             })
