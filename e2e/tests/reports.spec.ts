@@ -1,4 +1,10 @@
-import { test, expect, pz } from "./fixtures";
+import { test, expect, pz, waitForContent } from "./fixtures";
+
+async function openCompare(page: import("@playwright/test").Page) {
+  await page.getByRole("link", { name: "Compare", exact: true }).click();
+  await waitForContent(page);
+  await expect(page.locator("#mom")).toBeVisible();
+}
 
 const row = (page: import("@playwright/test").Page, table: string, key: string) => page.locator(`#${table} tr[data-row="${key}"]`);
 
@@ -38,6 +44,7 @@ test.describe("reports (seeded history)", () => {
   });
 
   test("month over month compares with August", async ({ page }) => {
+    await openCompare(page);
     await expect(row(page, "mom", "income")).toContainText("$4,000.00$0.00$4,000.00$4,050.00".replace(/\$/g, "$"));
     await expect(row(page, "mom", "expenses")).toContainText("$137.20");
     await expect(row(page, "mom", "expenses")).toContainText("$1,337.20");
@@ -45,6 +52,7 @@ test.describe("reports (seeded history)", () => {
   });
 
   test("year to date sums January through September", async ({ page }) => {
+    await openCompare(page);
     await expect(page.getByText("Jan 1, 2026 through September 2026 (2 month(s) with data).")).toBeVisible();
     await expect(row(page, "ytd", "income")).toContainText("$8,000.00");
     await expect(row(page, "ytd", "income")).toContainText("$4,050.00");
@@ -52,6 +60,7 @@ test.describe("reports (seeded history)", () => {
   });
 
   test("year over year compares with September 2025", async ({ page }) => {
+    await openCompare(page);
     await expect(row(page, "yoy", "income")).toContainText("$3,000.00");
     await expect(row(page, "yoy", "cat:Food")).toContainText("$450.00");
     await expect(row(page, "yoy", "cat:Other")).toContainText("$1,500.00");
@@ -64,6 +73,7 @@ test("reports for a future month show plan and zero actuals", async ({ page, see
   await login();
   await pz.reports(page, s);
   await expect(page.locator('[data-card="income"]')).toContainText("Received $0.00");
+  await openCompare(page);
   await expect(page.getByText("No budget exists for August 2026")).toBeVisible();
   await expect(page.getByText("No budget exists for September 2025")).toBeVisible();
 });

@@ -12,7 +12,8 @@ test.describe("field behaviour", () => {
     await input.press("Enter");
     await expect(input).toHaveValue("680.00");
     await expect(pz.category(page, "Housing").locator("summary [data-col=this]")).toContainText("$680.00");
-    const amt = page.getByLabel("Amount", { exact: true });
+    const form = await pz.addTx(page);
+    const amt = form.getByLabel("Amount", { exact: true });
     await amt.fill("(100+20)/3");
     await amt.blur();
     await expect(amt).toHaveValue("40.00");
@@ -30,12 +31,12 @@ test.describe("field behaviour", () => {
     const input = page.getByLabel("Planned for Gas from this paycheck");
     await input.click();
     await input.fill("75");
-    await page.getByRole("heading", { name: "Your budget, from this paycheck" }).hover();
+    await page.getByRole("heading", { name: "What this paycheck pays for" }).hover();
     await expect(pz.sts(page)).toHaveText("$413.00");
   });
 
   test("add forms clear after a successful submit", async ({ page }) => {
-    await page.getByRole("link", { name: "Month overview" }).click();
+    await page.getByRole("link", { name: "Budget" }).first().click();
     const input = page.getByLabel("New line in Food", { exact: true });
     await input.fill("Snacks");
     await input.press("Enter");
@@ -43,16 +44,18 @@ test.describe("field behaviour", () => {
     await expect(input).toHaveValue("");
     await page.getByLabel("New category").fill("Pets");
     await page.getByRole("button", { name: "Add category" }).click();
-    await expect(pz.category(page, "Pets")).toBeVisible();
+    await expect(page.locator('[data-category-empty="Pets"]')).toBeVisible();
     await expect(page.getByLabel("New category")).toHaveValue("");
   });
 
   test("a rejected add keeps what you typed", async ({ page }) => {
-    await page.getByLabel("Expense line").selectOption({ label: "Electric" });
-    const amt = page.getByLabel("Amount", { exact: true });
+    await pz.openSheet(page, "Assign $400.00");
+    const sh = pz.sheet(page);
+    await sh.getByLabel("Expense line").selectOption({ label: "Electric" });
+    const amt = sh.getByLabel("Amount", { exact: true });
     await page.evaluate(() => document.querySelectorAll("[data-max-cents]").forEach((e) => e.removeAttribute("data-max-cents")));
     await amt.fill("999");
-    await page.getByRole("button", { name: "Assign" }).click();
+    await sh.getByRole("button", { name: "Assign", exact: true }).click();
     await expect(pz.toast(page)).toContainText("over-allocate");
     await expect(amt).toHaveValue("999");
   });

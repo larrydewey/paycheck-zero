@@ -114,10 +114,39 @@ fn static_routes() -> Router<Shared> {
             "/manifest.webmanifest",
             static_route!("/manifest.webmanifest", "manifest.webmanifest", "application/manifest+json"),
         )
-        .route(
-            "/sw.js",
-            get(|| async { asset(include_bytes!("../static/sw.js"), "text/javascript", "no-cache") }),
-        )
+        .route("/sw.js", get(service_worker))
+}
+
+/// A short hash of the bundled static assets; it changes with every release.
+fn asset_version() -> &'static str {
+    static V: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
+        // FNV-1a over the assets the service worker caches.
+        let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+        for part in [
+            &include_bytes!("../static/app.js")[..],
+            &include_bytes!("../static/app.css")[..],
+            &include_bytes!("../static/datastar.js")[..],
+            &include_bytes!("../static/icon.svg")[..],
+            &include_bytes!("../static/manifest.webmanifest")[..],
+        ] {
+            for b in part {
+                h ^= u64::from(*b);
+                h = h.wrapping_mul(0x0100_0000_01b3);
+            }
+        }
+        format!("{h:016x}")
+    });
+    &V
+}
+
+async fn service_worker() -> Response {
+    static SW: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
+        include_str!("../static/sw.js").replace("__PZ_ASSET_VERSION__", asset_version())
+    });
+    let mut r = SW.as_str().into_response();
+    r.headers_mut().insert(CONTENT_TYPE, HeaderValue::from_static("text/javascript"));
+    r.headers_mut().insert(CACHE_CONTROL, HeaderValue::from_static("no-cache"));
+    r
 }
 
 /// The whole application router.

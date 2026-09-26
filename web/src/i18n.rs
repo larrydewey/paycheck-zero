@@ -49,6 +49,8 @@ mod tests {
         let sources = [
             include_str!("ui/mod.rs"),
             include_str!("ui/pages.rs"),
+            include_str!("ui/plan.rs"),
+            include_str!("ui/sheets.rs"),
             include_str!("ui/actions.rs"),
             include_str!("error.rs"),
             include_str!("export.rs"),

@@ -18,11 +18,11 @@ test.describe("auth", () => {
     await expect(page).toHaveURL(/\/income\?welcome=1$/);
     await waitForContent(page);
     await expect(page.getByRole("heading", { name: "Welcome! Start with your paycheck." })).toBeVisible();
-    await expect(page.getByRole("heading", { name: "September 2026 income" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Income", exact: true })).toBeVisible();
     // Add the first paycheck; we land on it, ready to fund.
     await page.getByLabel("Name").fill("Day Job");
-    await page.getByLabel("Amount per paycheck").fill("1,500");
-    await page.getByLabel("Schedule").selectOption("semi_monthly");
+    await page.getByLabel("Take-home per paycheck").fill("1,500");
+    await page.getByLabel("How often").selectOption("semi_monthly");
     await page.getByLabel("Days of the month").fill("1, 15");
     await page.getByRole("button", { name: "Add income" }).click();
     await expect(page).toHaveURL(/\/paychecks\//);
@@ -65,9 +65,9 @@ test.describe("auth", () => {
     await seed("basic", { access_ttl: 1 });
     await login();
     await page.waitForTimeout(2200);
-    await page.getByRole("link", { name: "Month overview" }).click();
+    await page.getByRole("link", { name: "Budget", exact: true }).click();
     await waitForContent(page);
-    await expect(page.getByRole("heading", { name: "September 2026 overview" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Budget · September 2026" })).toBeVisible();
   });
 
   test("log out of all devices ends other sessions", async ({ browser, page, seed, login }) => {

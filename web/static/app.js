@@ -319,7 +319,121 @@
     document.cookie = "pz_only_funded=" + (on ? "1" : "0") + "; path=/; SameSite=Lax; max-age=31536000";
   });
 
-  window.pz = { clearDone: clearDone, checkSplit: checkSplit, cents: cents, fmt: fmt, guard: guard, t: t, fillIncome: fillIncome, toast: toast, resetInline: resetInline };
+  // Bottom sheet: opens instantly with a placeholder, content streams in.
+  var sheetOpener = null;
+  /** Opens the sheet; returns false (so the caller skips its request) when
+   *  offline, in which case an offline copy of the sheet is shown if there is one. */
+  function openSheet(url) {
+    var d = byId("sheet");
+    if (!d) return false;
+    sheetOpener = document.activeElement;
+    var body = byId("sheet-body");
+    var online = navigator.onLine;
+    var offline = online ? null : offlineSheet(String(url || ""));
+    if (offline) { body.replaceWith(offline); }
+    else if (!online) { body.innerHTML = '<div class="sheet-head"><h2 id="sheet-title">' + escapeHtml(t("offline_title")) + '</h2><button type="button" class="icon-btn" data-close-dialog aria-label="' + escapeHtml(t("close")) + '">×</button></div><div class="sheet-content"><p>' + escapeHtml(t("online_only")) + "</p></div>"; }
+    else body.innerHTML = '<div class="sheet-loading" aria-busy="true"><div class="sk sk-title"></div><div class="sk sk-row"></div><div class="sk sk-row"></div></div>';
+    var toasts = byId("toasts"); if (toasts) d.appendChild(toasts); // keep messages above the sheet
+    if (!d.open) d.showModal();
+    d.classList.remove("closing");
+    return online;
+  }
+
+  /** Builds a sheet from the offline templates a month page carries. */
+  function offlineSheet(url) {
+    var path = url.split("?")[0];
+    var tpl, node;
+    if (path.indexOf("/ui/sheet/tx/new/") === 0) {
+      tpl = byId("offline-tx");
+      return tpl ? tpl.content.firstElementChild.cloneNode(true) : null;
+    }
+    if (path.indexOf("/ui/sheet/paycheck/") === 0) {
+      tpl = byId("offline-paycheck");
+      if (!tpl || tpl.dataset.paycheck !== path.split("/").pop()) return null;
+      return tpl.content.firstElementChild.cloneNode(true);
+    }
+    if (path.indexOf("/ui/sheet/tx/") === 0) {
+      var id = path.split("/").pop();
+      var row = document.querySelector('#tx-list li.tx[data-tx="' + id + '"]');
+      tpl = byId("offline-tx");
+      if (!row || !row.dataset.base || !tpl) return null;
+      var base = JSON.parse(row.dataset.base);
+      node = tpl.content.firstElementChild.cloneNode(true);
+      var title = node.querySelector("#sheet-title"); if (title) title.textContent = t("edit_tx");
+      var form = node.querySelector("form");
+      form.removeAttribute("id"); form.removeAttribute("data-clear"); form.removeAttribute("data-on:submit__prevent");
+      form.dataset.offline = "update_transaction"; form.dataset.tx = id; form.dataset.base = row.dataset.base;
+      var set = function (name, v) { var el = form.querySelector('[name="' + name + '"]'); if (el) el.value = v == null ? "" : v; };
+      var abs = Math.abs(base.amount);
+      set("amount", Math.floor(abs / 100) + "." + String(abs % 100).padStart(2, "0"));
+      set("payee", base.payee); set("notes", base.notes); set("date", base.date);
+      set("part_line_0", base.expense_line_id); set("part_paycheck_0", base.paycheck_id);
+      var dir = form.querySelector('input[name="direction"][value="' + (base.amount > 0 ? "income" : "expense") + '"]'); if (dir) dir.checked = true;
+      var save = form.querySelector('button[type="submit"]'); if (save) save.textContent = t("save");
+      var del = document.createElement("form");
+      del.className = "dialog-danger"; del.dataset.offline = "delete_transaction"; del.dataset.month = form.dataset.month;
+      del.dataset.tx = id; del.dataset.base = row.dataset.base;
+      del.innerHTML = '<button type="submit" class="btn small danger" data-confirm="' + escapeHtml(t("delete_tx_confirm")) + '">' + escapeHtml(t("delete_tx")) + "</button>";
+      form.after(del);
+      return node;
+    }
+    return null;
+  }
+  function closeSheet() {
+    var d = byId("sheet");
+    if (!d || !d.open) return;
+    var toasts = byId("toasts"); if (toasts) document.body.appendChild(toasts);
+    d.close();
+    if (sheetOpener && document.contains(sheetOpener)) { try { sheetOpener.focus({ preventScroll: true }); } catch (_) {} }
+  }
+  document.addEventListener("click", function (e) {
+    var d = byId("sheet");
+    // Tap on the backdrop closes the sheet.
+    if (d && e.target === d) closeSheet();
+  });
+  document.addEventListener("close", function (e) {
+    if (e.target && e.target.id === "sheet") { var toasts = byId("toasts"); if (toasts && toasts.parentElement !== document.body) document.body.appendChild(toasts); }
+  }, true);
+  // Swipe the sheet down to dismiss (phones).
+  (function () {
+    var startY = null, dy = 0;
+    document.addEventListener("touchstart", function (e) {
+      var d = byId("sheet"); if (!d || !d.open) return;
+      var grip = e.target instanceof Element && (e.target.closest(".sheet-grip") || e.target.closest(".sheet-head"));
+      if (!grip) return;
+      startY = e.touches[0].clientY; dy = 0;
+    }, { passive: true });
+    document.addEventListener("touchmove", function (e) {
+      if (startY === null) return;
+      dy = Math.max(0, e.touches[0].clientY - startY);
+      byId("sheet").style.transform = "translateY(" + dy + "px)";
+    }, { passive: true });
+    document.addEventListener("touchend", function () {
+      if (startY === null) return;
+      var d = byId("sheet"); d.style.transform = "";
+      if (dy > 90) closeSheet();
+      startY = null;
+    });
+  })();
+
+  // Live filter for lists with a search box (Spending).
+  document.addEventListener("input", function (e) {
+    var el = e.target;
+    if (!(el instanceof HTMLInputElement) || !el.dataset.filterList) return;
+    var q = el.value.trim().toLowerCase();
+    var list = byId(el.dataset.filterList);
+    if (!list) return;
+    var shown = 0;
+    list.querySelectorAll("li.tx").forEach(function (li) {
+      var hit = !q || (li.dataset.search || li.textContent.toLowerCase()).indexOf(q) >= 0;
+      li.hidden = !hit; if (hit) shown++;
+    });
+    list.querySelectorAll("li.tx-day").forEach(function (h) { h.hidden = !!q; });
+    var empty = document.querySelector('[data-empty-for="' + el.dataset.filterList + '"]');
+    if (empty) empty.hidden = shown !== 0;
+  });
+
+  window.pz = { openSheet: openSheet, closeSheet: closeSheet, clearDone: clearDone, checkSplit: checkSplit, cents: cents, fmt: fmt, guard: guard, t: t, fillIncome: fillIncome, toast: toast, resetInline: resetInline };
 
   // ------------------------------------------------------------------
   // Confirmations: buttons with data-confirm open a styled, accessible dialog.
@@ -367,7 +481,7 @@
       // Close a dialog before the server re-renders the page: a morph that
       // drops `open` from a modal dialog would leave the page inert.
       var dlg = form.closest && form.closest("dialog");
-      if (dlg && dlg.open) dlg.close();
+      if (dlg && dlg.open && dlg.id !== "sheet") dlg.close();
       form.classList.add("is-busy"); form.setAttribute("aria-busy", "true");
       inflight++;
       if (!barTimer) barTimer = setTimeout(function () { if (inflight > 0) bar(true); }, 150);
@@ -378,79 +492,6 @@
     }
   });
 
-  // Drag and drop (overview): reorder lines, move lines between categories,
-  // reorder categories. Keyboard users keep the move up/down buttons.
-  var drag = null;
-  function dndForm() { return byId("dnd-form"); }
-  function place(kind, id, category, index) {
-    var f = dndForm(); if (!f) return;
-    f.elements.kind.value = kind; f.elements.id.value = id;
-    f.elements.category_id.value = category || ""; f.elements.index.value = String(index);
-    f.requestSubmit();
-  }
-  document.addEventListener("mousedown", function (e) {
-    var g = e.target instanceof Element && e.target.closest(".dnd .grip");
-    if (!g) return;
-    var host = g.closest("li.line") || g.closest("details.category");
-    if (host) host.setAttribute("draggable", "true");
-  });
-  document.addEventListener("dragstart", function (e) {
-    var el = e.target;
-    if (!(el instanceof Element) || !el.closest(".dnd")) return;
-    if (el.matches("li.line[data-line-id]")) drag = { kind: "line", el: el, id: el.dataset.lineId };
-    else if (el.matches("details.category[data-cat-id]")) drag = { kind: "category", el: el, id: el.dataset.catId };
-    else return;
-    el.classList.add("dragging");
-    e.dataTransfer.effectAllowed = "move";
-    e.dataTransfer.setData("text/plain", drag.id);
-  });
-  function dropTarget(e) {
-    if (!drag || !(e.target instanceof Element)) return null;
-    if (drag.kind === "line") return e.target.closest(".dnd li.line[data-line-id]") || e.target.closest(".dnd details.category[data-cat-id]");
-    return e.target.closest(".dnd details.category[data-cat-id]");
-  }
-  function clearMarks() { document.querySelectorAll(".drop-before,.drop-after,.drop-into").forEach(function (x) { x.classList.remove("drop-before", "drop-after", "drop-into"); }); }
-  document.addEventListener("dragover", function (e) {
-    var tgt = dropTarget(e);
-    if (!tgt || tgt === drag.el) return;
-    e.preventDefault();
-    clearMarks();
-    var r = tgt.getBoundingClientRect();
-    if (drag.kind === "line" && tgt.matches("details.category")) tgt.classList.add("drop-into");
-    else tgt.classList.add(e.clientY < r.top + r.height / 2 ? "drop-before" : "drop-after");
-  });
-  document.addEventListener("drop", function (e) {
-    var tgt = dropTarget(e);
-    if (!tgt || tgt === drag.el) return;
-    e.preventDefault();
-    var after = tgt.classList.contains("drop-after");
-    clearMarks();
-    if (drag.kind === "line") {
-      if (tgt.matches("details.category")) { place("line", drag.id, tgt.dataset.catId, 0); return; }
-      var cat = tgt.dataset.catId;
-      var lines = Array.prototype.slice.call(tgt.parentElement.querySelectorAll("li.line[data-line-id]")).filter(function (x) { return x !== drag.el; });
-      place("line", drag.id, cat, lines.indexOf(tgt) + (after ? 1 : 0));
-    } else {
-      var cats = Array.prototype.slice.call(document.querySelectorAll(".dnd details.category[data-cat-id]")).filter(function (x) { return x !== drag.el; });
-      place("category", drag.id, "", cats.indexOf(tgt) + (after ? 1 : 0));
-    }
-  });
-  document.addEventListener("dragend", function () {
-    clearMarks();
-    if (drag) { drag.el.classList.remove("dragging"); drag.el.removeAttribute("draggable"); }
-    drag = null;
-  });
-  // Category grips are added client-side (drag is a mouse enhancement).
-  function addCategoryGrips() {
-    document.querySelectorAll(".dnd details.category > summary .cat-name").forEach(function (s) {
-      if (s.querySelector(".grip")) return;
-      var g = document.createElement("span");
-      g.className = "grip"; g.setAttribute("aria-hidden", "true"); g.title = t("drag");
-      g.innerHTML = '<svg class="icon" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><path d="M9 6h.01 M15 6h.01 M9 12h.01 M15 12h.01 M9 18h.01 M15 18h.01"/></svg>';
-      s.prepend(g);
-    });
-  }
-  new MutationObserver(addCategoryGrips).observe(document.documentElement, { childList: true, subtree: true });
 
   // Category collapse state, remembered for the session (spec §14.7).
   document.addEventListener("toggle", function (e) {
@@ -487,7 +528,7 @@
     if (!target) return;
     if (target.closest("[data-retry]")) { window.location.reload(); }
     var closer = target.closest("[data-close-dialog]");
-    if (closer) { var dlg = closer.closest("dialog"); if (dlg) dlg.close(); }
+    if (closer) { var dlg = closer.closest("dialog"); if (dlg && dlg.id === "sheet") closeSheet(); else if (dlg) dlg.close(); }
   });
 
   // If Datastar never starts (old browser, blocked script), say so instead of
@@ -640,22 +681,23 @@
 
   function optimistic(form, op) {
     var badge = '<span class="badge">' + escapeHtml(t("pending")) + "</span>";
-    var dlg = form.closest("dialog"); if (dlg && dlg.open) dlg.close();
+    var dlg = form.closest("dialog"); if (dlg && dlg.id === "sheet") closeSheet(); else if (dlg && dlg.open) dlg.close();
     if (op.kind === "create_transaction") {
       var list = byId("tx-list");
       if (!list) {
         list = document.createElement("ul"); list.id = "tx-list"; list.className = "tx-list card";
         var empty = document.querySelector("section[aria-labelledby=tx-list-h] .empty");
-        if (empty) empty.replaceWith(list); else form.closest("section").after(list);
+        var host = document.querySelector("section[aria-labelledby=tx-list-h]");
+        if (empty) empty.replaceWith(list); else if (host) host.appendChild(list); else document.body.appendChild(list);
       }
       var li = document.createElement("li");
       li.className = "tx pending";
-      li.innerHTML = '<span class="tx-date">' + escapeHtml(op.tx.date) + '</span><div class="tx-main"><span class="tx-payee">' +
-        escapeHtml(op.tx.payee || "") + " " + badge + '</span></div><span class="tx-amt num">' + escapeHtml(fmt(op.tx.amount)) + "</span>";
+      li.innerHTML = '<div class="tx-open"><span class="tx-main"><span class="tx-payee">' + escapeHtml(op.tx.payee || "") + " " + badge +
+        '</span><span class="tx-meta">' + escapeHtml(op.tx.date) + '</span></span><span class="tx-amt num">' + escapeHtml(fmt(op.tx.amount)) + "</span></div>";
       list.prepend(li);
       form.reset();
     } else if (op.kind === "update_transaction" || op.kind === "delete_transaction") {
-      var row = form.closest("li.tx");
+      var row = form.dataset.tx ? document.querySelector('#tx-list li.tx[data-tx="' + form.dataset.tx + '"]') : null;
       if (row) { row.classList.add("pending"); var p = row.querySelector(".tx-payee"); if (p) p.insertAdjacentHTML("beforeend", " " + badge); }
     } else if (op.kind === "set_actual") {
       form.insertAdjacentHTML("beforeend", " " + badge);
@@ -669,6 +711,10 @@
   // Offline submissions are queued instead of sent.
   document.addEventListener("submit", function (e) {
     var form = e.target;
+    if (navigator.onLine && form instanceof HTMLFormElement && form.dataset.offline && !form.hasAttribute("data-on:submit__prevent")) {
+      // Built offline, but the connection is back: reopen the real sheet.
+      e.preventDefault(); e.stopImmediatePropagation(); closeSheet(); toast("warning", t("back_online")); return;
+    }
     if (navigator.onLine || !(form instanceof HTMLFormElement) || !form.dataset.offline) return;
     e.preventDefault();
     e.stopImmediatePropagation();

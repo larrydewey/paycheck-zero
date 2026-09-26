@@ -2,8 +2,10 @@ import AxeBuilder from "@axe-core/playwright";
 import { test, expect, pz, waitForContent } from "./fixtures";
 
 async function audit(page: import("@playwright/test").Page) {
+  // Let entrance animations settle so contrast is measured on the final colours.
+  await page.evaluate(() => Promise.all(document.getAnimations().filter((a) => a.effect?.getTiming().iterations !== Infinity).map((a) => a.finished.catch(() => null))));
   const r = await new AxeBuilder({ page }).withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"]).analyze();
-  const summary = r.violations.map((v) => `${v.id}: ${v.nodes.map((n) => n.target.join(" ")).slice(0, 3).join(", ")}`);
+  const summary = r.violations.map((v) => `${v.id}: ${v.nodes.map((n) => `${n.target.join(" ")} (${n.any[0]?.message ?? ""})`).slice(0, 3).join(", ")}`);
   expect(summary).toEqual([]);
 }
 
@@ -20,6 +22,16 @@ test.describe("accessibility (WCAG 2.1 AA via axe)", () => {
     const s = await seed("history");
     await login();
     await audit(page); // paycheck view
+    // Sheets
+    await pz.lineSheet(page, "Groceries");
+    await audit(page);
+    await pz.closeSheet(page);
+    await pz.openSheet(page, "Paycheck details");
+    await audit(page);
+    await pz.closeSheet(page);
+    await pz.addTx(page);
+    await audit(page);
+    await pz.closeSheet(page);
     await pz.overview(page, s);
     await audit(page);
     await pz.income(page, s);
@@ -43,9 +55,9 @@ test.describe("accessibility (WCAG 2.1 AA via axe)", () => {
     await waitForContent(page);
     await audit(page);
     await pz.paycheck(page, s, 0);
-    await page.getByText("Paycheck details").click();
-    await page.getByLabel("Amount actually received").fill("1900");
-    await page.getByRole("button", { name: "Record actual" }).click();
+    await pz.openSheet(page, "Paycheck details");
+    await pz.sheet(page).getByLabel("Amount actually received").fill("1900");
+    await pz.sheet(page).getByRole("button", { name: "Record actual" }).click();
     await expect(page.locator("#variance-panel")).toBeVisible();
     await audit(page);
   });
@@ -55,6 +67,12 @@ test.describe("accessibility (WCAG 2.1 AA via axe)", () => {
     await page.emulateMedia({ colorScheme: "dark" });
     await login();
     await audit(page);
+    await pz.openSheet(page, "Assign $400.00");
+    await audit(page);
+    await pz.closeSheet(page);
+    await pz.lineSheet(page, "Groceries");
+    await audit(page);
+    await pz.closeSheet(page);
     await pz.overview(page, s);
     await audit(page);
     await pz.transactions(page, s);
@@ -64,8 +82,9 @@ test.describe("accessibility (WCAG 2.1 AA via axe)", () => {
   });
 
   test("error toast and keyboard navigation", async ({ page, seed, login }) => {
-    await seed("basic");
+    const s = await seed("basic");
     await login();
+    await pz.overview(page, s);
     await page.getByRole("button", { name: "Lock month" }).click();
     await expect(pz.toast(page)).toBeVisible();
     await audit(page);

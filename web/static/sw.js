@@ -3,12 +3,15 @@
  * - Pages and their SSE content: network first, falling back to the last copy seen.
  * - Mutations, auth, API and sync requests are never cached.
  */
-const STATIC = "pz-static-v1";
-const PAGES = "pz-pages-v1";
+// The server stamps a hash of the bundled assets here, so every release
+// installs a fresh worker and drops the previous caches.
+const VERSION = "__PZ_ASSET_VERSION__";
+const STATIC = "pz-static-" + VERSION;
+const PAGES = "pz-pages-" + VERSION;
 const PRECACHE = ["/static/app.css", "/static/app.js", "/static/datastar.js", "/static/icon.svg", "/offline", "/manifest.webmanifest"];
 
 self.addEventListener("install", (event) => {
-  event.waitUntil(caches.open(STATIC).then((c) => c.addAll(PRECACHE)).then(() => self.skipWaiting()));
+  event.waitUntil(caches.open(STATIC).then((c) => c.addAll(PRECACHE.map((u) => new Request(u, { cache: "reload" })))).then(() => self.skipWaiting()));
 });
 
 self.addEventListener("activate", (event) => {

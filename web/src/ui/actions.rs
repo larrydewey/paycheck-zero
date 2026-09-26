@@ -78,7 +78,7 @@ fn impact_toasts(user: &UserRecord, m: &Month, impact: &Impact) -> Vec<Markup> {
 /// Standard response: re-render the view, then append toasts.
 async fn done(st: &Shared, user: &UserRecord, headers: &HeaderMap, view: &View, toasts: Vec<Markup>) -> Sse {
     // Success: empty the "add something" form that was just submitted.
-    let mut sse = content_sse(st, user, headers, view).await.script("pz.clearDone()");
+    let mut sse = content_sse(st, user, headers, view).await.script("pz.clearDone(); pz.closeSheet()");
     for t in toasts {
         sse = sse.patch_into("#toasts", "append", t);
     }
@@ -626,19 +626,35 @@ pub async fn place(State(st): State<Shared>, Extension(user): Extension<AuthUser
 
 pub async fn add_line(State(st): State<Shared>, Extension(user): Extension<AuthUser>, headers: HeaderMap, Path(id): Path<Id>, Form(f): F) -> Sse {
     let view = view_of(&f, View::Overview { month: id.clone() });
-    let cat = Id::new(field(&f, "category_id"));
+    let cat_field = field(&f, "category_id").to_string();
+    let new_cat = field(&f, "new_category").to_string();
     let amount = match opt_money_field(&f, "amount") {
         Ok(a) => a.filter(|a| a.is_positive()),
         Err(e) => return failed(&st, &user.0, &headers, &view, &e).await,
     };
     let paycheck = opt_id(&f, "paycheck_id");
     month_action(&st, &user.0, &headers, view, Ok(id), |m| {
+        let cat = if cat_field == "__new" { m.add_category(&new_cat, CategoryKind::Standard)? } else { Id::new(cat_field) };
         let lid = m.add_expense_line(&cat, field(&f, "name"))?;
         if let (Some(a), Some(p)) = (amount, paycheck.as_ref()) {
             m.set_allocation(p, &lid, a)?;
         }
         Ok(lid)
     }, no_toasts)
+    .await
+}
+
+/// Line sheet: rename and/or move to another category in one save.
+pub async fn edit_line(State(st): State<Shared>, Extension(user): Extension<AuthUser>, headers: HeaderMap, Path(id): Path<Id>, Form(f): F) -> Sse {
+    let (mid, view) = owner_view(&st, &user.0, &f, Owner::ExpenseLine, &id).await;
+    let cat = opt_id(&f, "category_id");
+    month_action(&st, &user.0, &headers, view, mid, |m| {
+        m.rename_expense_line(&id, field(&f, "name"))?;
+        if let Some(c) = &cat {
+            m.set_line_category(&id, c)?;
+        }
+        Ok(())
+    }, |_, _| vec![toast(ToastKind::Success, &t("common.saved"), None)])
     .await
 }
 

@@ -5,6 +5,8 @@
 
 pub mod actions;
 pub mod pages;
+pub mod plan;
+pub mod sheets;
 
 use crate::auth;
 use crate::i18n::{client_bundle, t, tf};
@@ -38,6 +40,14 @@ pub fn routes(state: Shared) -> Router<Shared> {
         .route("/months/{id}/reports/export/{kind}", get(pages::report_csv))
         .route("/months/{id}/export.csv", get(pages::export_csv))
         .route("/months/{id}/snapshot.json", get(pages::export_snapshot))
+        .route("/ui/sheet/line/{id}", get(sheets::line))
+        .route("/ui/sheet/assign/{id}", get(sheets::assign))
+        .route("/ui/sheet/paycheck/{id}", get(sheets::paycheck))
+        .route("/ui/sheet/tx/new/{id}", get(sheets::tx_new))
+        .route("/ui/sheet/tx/{id}", get(sheets::tx_edit))
+        .route("/ui/sheet/category/{id}", get(sheets::category))
+        .route("/ui/sheet/new-line/{id}", get(sheets::new_line))
+        .route("/ui/lines/{id}/edit", post(actions::edit_line))
         .route("/settings", get(pages::settings_page))
         .route("/settings/content", get(pages::settings_content))
         .route("/ui/logout", post(actions::logout))
@@ -213,7 +223,7 @@ impl ReportQuery {
     #[must_use]
     pub fn tab(&self) -> &str {
         match self.tab.as_deref() {
-            Some(t @ ("trends" | "payees" | "export")) => t,
+            Some(t @ ("compare" | "trends" | "payees" | "export")) => t,
             _ => "summary",
         }
     }
@@ -433,9 +443,16 @@ pub fn icon(name: &str) -> Markup {
         "check" => "M5 12l5 5 9-10",
         "plus" => "M12 5v14 M5 12h14",
         "alert" => "M12 4l9 16H3z M12 10v4 M12 17h.01",
+        "gear" => "M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z",
+        "chevron" => "M9 6l6 6-6 6",
+        "chev-left" => "M15 6l-6 6 6 6",
+        "search" => "M11 18a7 7 0 1 0 0-14 7 7 0 0 0 0 14z M21 21l-4.3-4.3",
+        "more" => "M5 12h.01 M12 12h.01 M19 12h.01",
+        "close" => "M6 6l12 12 M18 6L6 18",
+        "wallet" => "M3 7h15a3 3 0 0 1 3 3v7a3 3 0 0 1-3 3H6a3 3 0 0 1-3-3z M3 7l12-3v3 M16 14h.01",
         _ => "",
     };
-    let width = if name == "grip" { "3" } else { "2" };
+    let width = if matches!(name, "grip" | "more") { "3" } else { "2" };
     html! {
         svg class=(format!("icon icon-{name}")) viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor"
             stroke-width=(width) stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false" {
@@ -447,43 +464,22 @@ pub fn icon(name: &str) -> Markup {
 struct NavTab {
     key: &'static str,
     label: String,
-    short: String,
+    icon: &'static str,
     href: String,
 }
 
-/// Section navigation within a month: tabs on wide screens, a bottom tab
-/// bar on phones.
-fn month_nav(month: &Id, active: &str, default_paycheck: Option<&Id>) -> Markup {
-    let tabs = [
+fn nav_tabs(month: &Id, default_paycheck: Option<&Id>) -> [NavTab; 4] {
+    [
         NavTab {
             key: "paycheck",
-            label: t("nav.paychecks"),
-            short: t("nav.paychecks_short"),
+            label: t("nav.plan"),
+            icon: "paychecks",
             href: default_paycheck.map_or_else(|| format!("/months/{month}"), |p| format!("/months/{month}/paychecks/{p}")),
         },
-        NavTab { key: "overview", label: t("nav.overview"), short: t("nav.overview_short"), href: format!("/months/{month}/overview") },
-        NavTab { key: "income", label: t("nav.income"), short: t("nav.income_short"), href: format!("/months/{month}/income") },
-        NavTab { key: "transactions", label: t("nav.transactions"), short: t("nav.transactions_short"), href: format!("/months/{month}/transactions") },
-        NavTab { key: "reports", label: t("nav.reports"), short: t("nav.reports_short"), href: format!("/months/{month}/reports") },
-    ];
-    let icon_of = |k: &str| icon(if k == "paycheck" { "paychecks" } else { k });
-    html! {
-        nav class="tabs" aria-label=(t("nav.sections")) {
-            @for tab in &tabs {
-                a href=(tab.href) class=(if tab.key == active { "tab active" } else { "tab" })
-                    aria-current=[(tab.key == active).then_some("page")] { (tab.label) }
-            }
-        }
-        nav class="bottom-tabs" aria-label=(t("nav.sections_mobile")) {
-            @for tab in &tabs {
-                a href=(tab.href) class=(if tab.key == active { "btab active" } else { "btab" })
-                    aria-current=[(tab.key == active).then_some("page")] aria-label=(tab.label) {
-                    (icon_of(tab.key))
-                    span { (tab.short) }
-                }
-            }
-        }
-    }
+        NavTab { key: "overview", label: t("nav.budget"), icon: "overview", href: format!("/months/{month}/overview") },
+        NavTab { key: "transactions", label: t("nav.spending"), icon: "transactions", href: format!("/months/{month}/transactions") },
+        NavTab { key: "reports", label: t("nav.insights"), icon: "reports", href: format!("/months/{month}/reports") },
+    ]
 }
 
 /// Header navigation data for month-scoped pages.
@@ -495,7 +491,7 @@ pub struct MonthHeader {
     pub default_paycheck: Option<Id>,
 }
 
-fn month_switcher(h: &MonthHeader, active: &str) -> Markup {
+fn month_switcher(h: &MonthHeader) -> Markup {
     let prev_ym = paycheckzero_core::report::previous_month(h.year_month);
     let next_ym = paycheckzero_core::recurrence::last_of_month(h.year_month).succ_opt().unwrap_or(h.year_month);
     let target = |id: &Option<Id>, ym: NaiveDate| match id {
@@ -504,26 +500,37 @@ fn month_switcher(h: &MonthHeader, active: &str) -> Markup {
     };
     html! {
         div class="month-switcher" {
-            a class="icon-btn" href=(target(&h.prev, prev_ym)) aria-label=(tf("nav.prev_month", &[("month", &month_label(prev_ym))])) { "‹" }
+            a class="icon-btn" href=(target(&h.prev, prev_ym)) aria-label=(tf("nav.prev_month", &[("month", &month_label(prev_ym))])) { (icon("chev-left")) }
             a class="month-name" href="/months" aria-label=(tf("nav.all_months_current", &[("month", &month_label(h.year_month))])) { (month_label(h.year_month)) }
-            a class="icon-btn" href=(target(&h.next, next_ym)) aria-label=(tf("nav.next_month", &[("month", &month_label(next_ym))])) { "›" }
+            a class="icon-btn" href=(target(&h.next, next_ym)) aria-label=(tf("nav.next_month", &[("month", &month_label(next_ym))])) { (icon("chevron")) }
         }
-        (month_nav(&h.id, active, h.default_paycheck.as_ref()))
     }
 }
 
-/// The page shell: header, offline/sync banners, skeleton content that
-/// loads itself over SSE, and the toast region.
+/// Datastar expression that opens the bottom sheet and loads `url` into it.
+#[must_use]
+pub fn open_sheet(url: &str) -> String {
+    format!("pz.openSheet('{url}') && @get('{url}')")
+}
+
+/// The page shell: app bar, section tabs (top on wide screens, bottom bar on
+/// phones), the floating add button, offline/sync banners, content that
+/// loads itself over SSE, the bottom sheet and the toast region.
 #[must_use]
 pub fn layout(user: Option<&UserRecord>, title: &str, header: Option<(&MonthHeader, &str)>, view: Option<&View>, body: Option<Markup>) -> Markup {
     let currency = user.map_or("USD", |u| u.currency.as_str());
+    let tabs = header.map(|(h, _)| nav_tabs(&h.id, h.default_paycheck.as_ref()));
+    let active = header.map_or("", |(_, a)| a);
     html! {
         (DOCTYPE)
         html lang="en" data-currency=(currency) {
             head {
                 meta charset="utf-8";
                 meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover";
-                meta name="theme-color" content="#0f766e";
+                meta name="theme-color" content="#0f766e" media="(prefers-color-scheme: light)";
+                meta name="theme-color" content="#0b1220" media="(prefers-color-scheme: dark)";
+                meta name="apple-mobile-web-app-capable" content="yes";
+                meta name="mobile-web-app-capable" content="yes";
                 meta name="description" content=(t("app.tagline"));
                 title { (title) " · " (t("app.name")) }
                 link rel="manifest" href="/manifest.webmanifest";
@@ -534,7 +541,7 @@ pub fn layout(user: Option<&UserRecord>, title: &str, header: Option<(&MonthHead
                 script src="/static/app.js" {}
                 script type="module" src="/static/datastar.js" {}
             }
-            body {
+            body class=(if header.is_some() { "has-tabs" } else { "" }) {
                 a class="skip-link" href="#content" { (t("common.skip")) }
                 div id="offline-banner" class="banner offline" role="status" hidden { (t("offline.banner")) }
                 div id="script-banner" class="banner offline" role="alert" hidden { (t("error.no_scripts")) }
@@ -542,17 +549,29 @@ pub fn layout(user: Option<&UserRecord>, title: &str, header: Option<(&MonthHead
                     span id="sync-text" {}
                     button type="button" class="link" id="sync-review" hidden { (t("sync.review")) }
                 }
-                header class="topbar" {
-                    a class="brand" href="/" {
-                        img src="/static/icon.svg" alt="" width="28" height="28";
-                        span { (t("app.name")) }
+                header class="appbar" {
+                    div class="appbar-row" {
+                        @if user.is_some() && header.is_none() {
+                            a class="back" href="/" { (icon("chev-left")) span { (t("nav.back")) } }
+                        } @else {
+                            a class="brand" href="/" aria-label=(t("app.name")) {
+                                img src="/static/icon.svg" alt="" width="30" height="30";
+                                span class="brand-name" { (t("app.name")) }
+                            }
+                        }
+                        @if let Some((h, _)) = header { (month_switcher(h)) } @else { span class="appbar-title" { (title) } }
+                        @if user.is_some() {
+                            a class="icon-btn settings-link" href="/settings" aria-label=(t("nav.settings")) { (icon("gear")) }
+                        } @else { span {} }
                     }
-                    @if user.is_some() {
-                        a class="settings-link" href="/settings" aria-label=(t("nav.settings")) { (t("nav.settings")) }
+                    @if let Some(tabs) = &tabs {
+                        nav class="tabs" aria-label=(t("nav.sections")) {
+                            @for tab in tabs {
+                                a href=(tab.href) class=(if tab.key == active { "tab active" } else { "tab" })
+                                    aria-current=[(tab.key == active).then_some("page")] { (tab.label) }
+                            }
+                        }
                     }
-                }
-                @if let Some((h, active)) = header {
-                    div class="subbar" { (month_switcher(h, active)) }
                 }
                 @match (view, body) {
                     (_, Some(b)) => { main id="content" tabindex="-1" { (b) } },
@@ -568,13 +587,51 @@ pub fn layout(user: Option<&UserRecord>, title: &str, header: Option<(&MonthHead
                     },
                     (None, None) => { main id="content" {} },
                 }
+                @if let (Some((h, _)), Some(v)) = (header, view) {
+                    button type="button" class="fab"
+                        data-on:click=(open_sheet(&format!("/ui/sheet/tx/new/{}?view={}", h.id, v.encode()))) {
+                        (icon("plus")) span class="fab-label" { (t("tx.add")) }
+                    }
+                }
+                @if let Some(tabs) = &tabs {
+                    nav class="bottom-tabs" aria-label=(t("nav.sections_mobile")) {
+                        @for tab in tabs {
+                            a href=(tab.href) class=(if tab.key == active { "btab active" } else { "btab" })
+                                aria-current=[(tab.key == active).then_some("page")] {
+                                (icon(tab.icon))
+                                span { (tab.label) }
+                            }
+                        }
+                    }
+                }
                 div id="toasts" class="toasts" aria-live="polite" {}
+                dialog id="sheet" class="sheet" aria-labelledby="sheet-title" {
+                    div class="sheet-grip" aria-hidden="true" {}
+                    div id="sheet-body" {}
+                }
                 dialog id="conflict-dialog" aria-labelledby="conflict-title" {
                     h2 id="conflict-title" { (t("sync.conflict_title")) }
                     div id="conflict-list" {}
                     button type="button" class="btn" data-close-dialog { (t("common.close")) }
                 }
             }
+        }
+    }
+}
+
+/// Common bottom-sheet frame: title, optional subtitle, close button, body.
+#[must_use]
+pub fn sheet(title: &str, subtitle: Option<&str>, body: Markup) -> Markup {
+    html! {
+        div id="sheet-body" {
+            div class="sheet-head" {
+                div {
+                    h2 id="sheet-title" { (title) }
+                    @if let Some(s) = subtitle { p class="sheet-sub" { (s) } }
+                }
+                button type="button" class="icon-btn" aria-label=(t("common.close")) data-close-dialog { (icon("close")) }
+            }
+            div class="sheet-content" { (body) }
         }
     }
 }

@@ -7,7 +7,7 @@ test.describe("offline & sync", () => {
     await pz.transactions(page, s);
     await context.setOffline(true);
     await expect(page.locator("#offline-banner")).toBeVisible();
-    const form = page.locator("#add-tx");
+    const form = await pz.addTx(page);
     await form.getByLabel("Amount", { exact: true }).fill("7.25");
     await form.getByLabel("Payee").fill("Bakery");
     await form.getByLabel("Expense line", { exact: true }).selectOption({ label: "Groceries" });
@@ -28,8 +28,7 @@ test.describe("offline & sync", () => {
     await pz.transactions(page, s);
     await context.setOffline(true);
     const row = page.locator("#tx-list li", { hasText: "Shell" });
-    await page.getByRole("button", { name: "Edit Shell on Sep 6" }).click();
-    const editDialog = page.getByRole("dialog", { name: "Edit transaction" });
+    const editDialog = await pz.editTx(page, "Edit Shell on Sep 6");
     await editDialog.getByLabel("Amount", { exact: true }).fill("41");
     await editDialog.getByRole("button", { name: "Save" }).click();
     await expect(row).toHaveClass(/pending/);
@@ -70,7 +69,8 @@ test.describe("offline & sync", () => {
       // hits, so assert offline readiness: the worker controls the page and
       // both the page shell and its content are cached.
       const ready = await page.evaluate(async (id) => {
-        const cache = await caches.open("pz-pages-v1");
+        const name = (await caches.keys()).find((k) => k.startsWith("pz-pages-"));
+        const cache = await caches.open(name ?? "none");
         const urls = (await cache.keys()).map((r) => new URL(r.url).pathname);
         return { controlled: !!navigator.serviceWorker.controller, urls };
       }, s.months["2026-09"].id);
@@ -82,7 +82,22 @@ test.describe("offline & sync", () => {
     await context.setOffline(true);
     await page.reload();
     await waitForContent(page);
-    await expect(page.getByRole("heading", { name: "September 2026 overview" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Budget · September 2026" })).toBeVisible();
     await expect(page.locator("#offline-banner")).toBeVisible();
+  });
+
+  test("offline sheets: record an actual, and other sheets say they need a connection", async ({ page, context, seed, login }) => {
+    await seed("basic");
+    await login();
+    await context.setOffline(true);
+    await pz.openSheet(page, "Paycheck details");
+    await pz.sheet(page).getByLabel("Amount actually received").fill("1990");
+    await pz.sheet(page).getByRole("button", { name: "Record actual" }).click();
+    await expect(page.locator("#sync-banner")).toContainText("1 pending sync");
+    await pz.lineSheet(page, "Groceries");
+    await expect(pz.sheet(page)).toContainText("This needs a connection.");
+    await pz.closeSheet(page);
+    await context.setOffline(false);
+    await expect(page.locator("#toasts")).toContainText("1 offline change(s) synced.");
   });
 });

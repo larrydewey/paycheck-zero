@@ -458,15 +458,23 @@ impl Month {
     /// Swaps a category with its neighbour (`up` = earlier in the list).
     pub fn move_category(&mut self, id: &Id, up: bool) -> Result<(), DomainError> {
         self.require_draft()?;
-        let order: Vec<Id> = self.categories_sorted().iter().map(|c| c.id.clone()).collect();
-        let pos = order.iter().position(|x| x == id).ok_or_else(|| DomainError::not_found("category", id))?;
-        let other = if up { pos.checked_sub(1) } else { Some(pos + 1).filter(|p| *p < order.len()) };
-        if let Some(o) = other {
+        // Categories with lines and empty ones are listed separately, so a
+        // move steps past the other kind until the visible order changes.
+        let has_lines = |m: &Self, c: &Id| m.expense_lines.iter().any(|l| &l.category_id == c);
+        let mine = has_lines(self, id);
+        loop {
+            let order: Vec<Id> = self.categories_sorted().iter().map(|c| c.id.clone()).collect();
+            let pos = order.iter().position(|x| x == id).ok_or_else(|| DomainError::not_found("category", id))?;
+            let other = if up { pos.checked_sub(1) } else { Some(pos + 1).filter(|p| *p < order.len()) };
+            let Some(o) = other else { break };
             let (a, b) = (order[pos].clone(), order[o].clone());
             let sa = self.category_mut(&a)?.sort_order;
             let sb = self.category_mut(&b)?.sort_order;
             self.category_mut(&a)?.sort_order = sb;
             self.category_mut(&b)?.sort_order = sa;
+            if has_lines(self, &b) == mine {
+                break;
+            }
         }
         Ok(())
     }

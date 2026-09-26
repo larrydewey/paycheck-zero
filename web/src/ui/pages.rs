@@ -72,21 +72,25 @@ pub async fn render_view(st: &Shared, user: &UserRecord, headers: &HeaderMap, vi
                 Err(e) => return Err(e),
             };
             let m = &loaded.month;
-            match other {
+            let body = match other {
                 View::Paycheck { paycheck, .. } => {
                     if m.paycheck(paycheck).is_none() {
                         return Ok(Err(format!("/months/{mid}")));
                     }
-                    render_paycheck(&c, m, loaded.archived, paycheck)
+                    super::plan::render_paycheck(&c, m, loaded.archived, paycheck)
                 }
-                View::Overview { .. } => render_overview(&c, m, loaded.archived),
+                View::Overview { .. } => super::plan::render_overview(&c, m, loaded.archived),
                 View::Income { welcome, .. } => render_income(&c, m, loaded.archived, *welcome),
-                View::Transactions { .. } => render_transactions(&c, m, loaded.archived),
+                View::Transactions { .. } => super::plan::render_transactions(&c, m, loaded.archived),
                 View::Reports { q, .. } => {
                     let all = st.all_months(user).await?;
                     render_reports(&c, m, &all, q)
                 }
                 View::Months { .. } | View::Settings => html! {},
+            };
+            html! {
+                (body)
+                @if !loaded.archived { (super::sheets::offline_templates(&c, m, other)) }
             }
         }
     }))
@@ -326,47 +330,9 @@ pub async fn export_snapshot(State(st): State<Shared>, Extension(user): Extensio
 // Shared month widgets
 // ----------------------------------------------------------------------
 
-/// Month-level zero status, lock and variance controls (spec §2.1, §2.9, §5).
-fn month_status(c: &Ctx, m: &Month, archived: bool, view: &View) -> Markup {
-    let diff = m.zero_difference();
-    let lock_url = format!("/ui/months/{}/lock", m.id);
-    html! {
-        section class="month-status" aria-label=(t("status.label")) {
-            @if archived {
-                p class="notice warn" { (icon("alert")) " " (t("status.archived")) }
-            }
-            @if m.is_locked() && !m.reassigning {
-                p class="pill locked" { (icon("lock")) " " (t("status.locked")) }
-            }
-            div id="zero-status" class=(if m.paychecks.is_empty() { "zero todo" } else if diff.is_zero() && m.has_variance() { "zero caution" } else if diff.is_zero() { "zero ok" } else { "zero todo" }) aria-live="polite" {
-                @if m.paychecks.is_empty() {
-                    span { (t("status.no_income")) }
-                } @else if diff.is_zero() && m.has_variance() {
-                    span { (t("status.zero_with_variance")) }
-                } @else if diff.is_zero() {
-                    span { (icon("check")) " " (t("status.zero")) }
-                } @else if diff.is_positive() {
-                    span { (tf("status.left_to_assign", &[("amount", &c.money(diff))])) }
-                } @else {
-                    span { (tf("status.over_assigned", &[("amount", &c.money(diff.abs()))])) }
-                }
-                @if !m.is_locked() && !archived && !m.paychecks.is_empty() {
-                    form class="inline" data-on:submit__prevent=(post_form(&lock_url)) {
-                        (view_input(view))
-                        button type="submit" class=(if diff.is_zero() { "btn primary" } else { "btn" }) aria-describedby="zero-status" { (icon("lock")) " " (t("status.lock")) }
-                    }
-                }
-            }
-            (overspent_banner(c, m, view))
-            @if (m.has_variance() || m.reassigning) && !archived {
-                (variance_panel(c, m, view))
-            }
-        }
-    }
-}
 
 /// Month-level banner listing every overspent line.
-fn overspent_banner(c: &Ctx, m: &Month, view: &View) -> Markup {
+pub(super) fn overspent_banner_pub(c: &Ctx, m: &Month, view: &View) -> Markup {
     let overs = overspent_lines(m);
     html! {
         @if !overs.is_empty() {
@@ -386,7 +352,7 @@ fn overspent_banner(c: &Ctx, m: &Month, view: &View) -> Markup {
 }
 
 /// Lines whose Spent exceeds Planned, worst first.
-fn overspent_lines(m: &Month) -> Vec<(String, Cents)> {
+pub(super) fn overspent_lines(m: &Month) -> Vec<(String, Cents)> {
     let mut v: Vec<(String, Cents)> = m
         .expense_lines
         .iter()
@@ -399,7 +365,7 @@ fn overspent_lines(m: &Month) -> Vec<(String, Cents)> {
     v
 }
 
-fn over_badge(c: &Ctx, l: &LineView) -> Markup {
+pub(super) fn over_badge(c: &Ctx, l: &LineView) -> Markup {
     let over = l.spent - l.planned;
     html! {
         @if over.is_positive() {
@@ -410,7 +376,7 @@ fn over_badge(c: &Ctx, l: &LineView) -> Markup {
 
 /// One panel for the whole variance flow (spec §2.9): what differs, the
 /// steps to bring the month back to zero, and where to look.
-fn variance_panel(c: &Ctx, m: &Month, view: &View) -> Markup {
+pub(super) fn variance_panel(c: &Ctx, m: &Month, view: &View) -> Markup {
     let report = variance_suggestions(m);
     let pending: Vec<&Paycheck> = m.paychecks_by_date().into_iter().filter(|p| p.has_variance()).collect();
     let step = |done: bool, active: bool, body: Markup| {
@@ -489,278 +455,14 @@ fn variance_panel(c: &Ctx, m: &Month, view: &View) -> Markup {
     }
 }
 
-fn category_details(c: &Ctx, cat: &CategoryView, summary_right: Markup, body: Markup) -> Markup {
-    html! {
-        details class="category" data-category=(cat.name) data-cat-id=(cat.id) open[c.is_open(&cat.name)] {
-            summary {
-                span class="cat-name" { (cat.name)
-                    @if cat.lines.iter().any(|l| l.spent > l.planned) {
-                        span class="cat-over" title=(t("over.category")) { (icon("alert")) span class="visually-hidden" { (t("over.category")) } }
-                    }
-                }
-                (summary_right)
-            }
-            (body)
-        }
-    }
-}
 
-fn triad(c: &Ctx, planned: Cents, spent: Cents, remaining: Cents) -> Markup {
-    html! {
-        span class="num" data-col="planned" data-label=(t("col.planned")) { (c.money(planned)) }
-        span class="num" data-col="spent" data-label=(t("col.spent")) { (c.money(spent)) }
-        span class=(if remaining.is_negative() { "num neg" } else { "num" }) data-col="remaining" data-label=(t("col.remaining")) { (c.money(remaining)) }
-    }
-}
 
 // ----------------------------------------------------------------------
 // Paycheck view (primary, spec §14.5)
 // ----------------------------------------------------------------------
 
-fn paycheck_strip(c: &Ctx, m: &Month, active: &Id) -> Markup {
-    html! {
-        nav class="paycheck-strip" aria-label=(t("paycheck.all")) {
-            @for p in m.paychecks_by_date() {
-                @let v = m.paycheck_view(p);
-                a href=(format!("/months/{}/paychecks/{}", m.id, p.id))
-                    class={ "chip" @if &p.id == active { " active" } @if v.status == PaycheckStatus::Skipped { " skipped" } @else if v.fully_allocated { " full" } }
-                    aria-current=[(&p.id == active).then_some("page")] {
-                    span class="chip-date" { (short_date(p.date)) }
-                    span class="chip-name" { (v.income_line_name) }
-                    span class="chip-amt" { (c.money(v.planned_amount)) }
-                    span class="chip-state" {
-                        @if v.status == PaycheckStatus::Skipped { (t("paycheck.skipped")) }
-                        @else if v.fully_allocated { (icon("check")) " " (t("paycheck.fully_assigned")) }
-                        @else { (tf("paycheck.left", &[("amount", &c.money(v.unallocated))])) }
-                    }
-                }
-            }
-            a class="chip add" href=(format!("/months/{}/income", m.id)) { "+ " (t("paycheck.add")) }
-        }
-    }
-}
-
-pub fn render_paycheck(c: &Ctx, m: &Month, archived: bool, pid: &Id) -> Markup {
-    let Some(p) = m.paycheck(pid) else { return html! {} };
-    let v = m.paycheck_view(p);
-    let view = View::Paycheck { month: m.id.clone(), paycheck: pid.clone() };
-    let editable = m.allocations_editable() && !archived && p.status != PaycheckStatus::Skipped;
-    let structure = !m.is_locked() && !archived;
-    let all_cats = m.paycheck_category_views(pid);
-    let targets: Vec<&ExpenseLine> =
-        m.expense_lines.iter().filter(|l| m.line_unfunded_target(&l.id).is_positive()).collect();
-    let fund_url = format!("/ui/months/{}/fund", m.id);
-    html! {
-        h1 class="visually-hidden" { (tf("paycheck.heading", &[("date", &short_date(p.date)), ("name", &v.income_line_name)])) }
-        (paycheck_strip(c, m, pid))
-        (month_status(c, m, archived, &view))
-
-        section class="hero" aria-labelledby="sts-label" {
-            p id="sts-label" class="hero-label" { (t("paycheck.safe_to_spend")) }
-            p id="safe-to-spend" class=(if v.safe_to_spend.is_negative() { "hero-amount neg" } else { "hero-amount" }) aria-live="polite" {
-                (c.money(v.safe_to_spend))
-            }
-            p class="hero-sub" { (tf("paycheck.hero_sub", &[("date", &short_date(p.date)), ("name", &v.income_line_name)])) }
-            @if v.safe_to_spend.is_negative() {
-                p class="hero-warn" role="status" { (icon("alert")) " " (tf("over.sts", &[("amount", &c.money(v.safe_to_spend.abs()))])) }
-            }
-            dl class="stats" {
-                div { dt { (t("paycheck.planned")) } dd data-stat="planned" { (c.money(v.planned_amount)) } }
-                div { dt { (t("paycheck.assigned")) } dd data-stat="assigned" { (c.money(v.allocated)) } }
-                div { dt { (t("paycheck.unassigned")) } dd data-stat="unassigned" { (c.money(v.unallocated)) } }
-                div { dt { (t("paycheck.tagged")) } dd data-stat="tagged" { (c.money(v.tagged_expense)) } }
-                div { dt { (t("paycheck.budget_left")) } dd data-stat="budget-left" { (c.money(v.budget_left)) } }
-                div { dt { (t("paycheck.rolling")) } dd data-stat="rolling" { (c.money(m.rolling_available(c.today))) } }
-            }
-        }
-
-        @if v.status == PaycheckStatus::Skipped {
-            p class="notice warn" { (t("paycheck.skipped_notice")) }
-        } @else if v.unallocated.is_positive() {
-            p class="notice todo" id="unassigned-nudge" role="status" { (tf("paycheck.nudge", &[("amount", &c.money(v.unallocated))])) }
-        } @else {
-            p class="notice ok" id="unassigned-nudge" {
-                (icon("check")) " " (t("paycheck.all_assigned"))
-                @if editable { " " span class="muted small" { (t("paycheck.all_assigned_hint")) } }
-            }
-        }
-
-        @if editable && !targets.is_empty() && v.unallocated.is_positive() {
-            section class="targets" aria-labelledby="targets-h" {
-                h2 id="targets-h" class="h3" { (t("targets.title")) }
-                ul {
-                    @for l in &targets {
-                        @let unfunded = m.line_unfunded_target(&l.id);
-                        @let amount = unfunded.min(v.unallocated);
-                        li {
-                            span { strong { (l.name) } " " (tf("targets.line", &[("target", &c.money(l.target_amount.unwrap_or_default())), ("unfunded", &c.money(unfunded))])) }
-                            form class="inline" data-on:submit__prevent=(post_form(&fund_url)) {
-                                (view_input(&view))
-                                input type="hidden" name="paycheck_id" value=(pid);
-                                input type="hidden" name="line_id" value=(l.id);
-                                input type="hidden" name="amount" value=(crate::money::plain(amount));
-                                button type="submit" class="btn small" { (tf("targets.fund", &[("amount", &c.money(amount))])) }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        @if editable && v.planned_amount.is_positive() {
-            @let tithe = m.tithe_amount(pid, 10);
-            @let current = m.categories.iter().find(|c| c.name.eq_ignore_ascii_case("Giving"))
-                .and_then(|c| m.lines_of(&c.id).into_iter().find(|l| l.name.eq_ignore_ascii_case("Tithe")))
-                .and_then(|l| m.allocation_for(pid, &l.id)).map_or(Cents::ZERO, |a| a.amount);
-            div class="quick-actions" {
-                @if current == tithe {
-                    span class="pill ok" { (icon("check")) " " (tf("give.done", &[("amount", &c.money(tithe))])) }
-                } @else {
-                    form class="inline" data-on:submit__prevent=(post_form(&format!("/ui/paychecks/{pid}/give"))) {
-                        (view_input(&view))
-                        button type="submit" class="btn" { (tf("give.button", &[("amount", &c.money(tithe))])) }
-                    }
-                }
-            }
-        }
-
-        section class=(if c.only_funded { "funding five only-funded" } else { "funding five" }) id="funding" aria-labelledby="funding-h" {
-            div class="section-head" {
-                h2 id="funding-h" { (t("paycheck.funds")) }
-                button type="button" class="chip-toggle" data-only-funded aria-pressed=(if c.only_funded { "true" } else { "false" }) {
-                    (t("paycheck.only_funded"))
-                }
-            }
-            @if all_cats.iter().all(|c| c.lines.is_empty()) && !structure {
-                (empty_state(&t("paycheck.empty_title"), &t("paycheck.empty_body"), None))
-            }
-            div class="grid-head" aria-hidden="true" {
-                span { (t("col.name")) } span { (t("col.this_paycheck")) } span { (t("col.planned")) } span { (t("col.spent")) } span { (t("col.remaining")) }
-            }
-            @for cat in &all_cats {
-                @let funded = cat.lines.iter().any(|l| l.this_paycheck.is_positive());
-                div class=(if funded { "cat-wrap" } else { "cat-wrap unfunded" }) {
-                (category_details(c, cat, html! {
-                    span class="num" data-col="this" data-label=(t("col.this_paycheck")) { (c.money(cat.this_paycheck)) }
-                    (triad(c, cat.planned, cat.spent, cat.remaining))
-                }, html! {
-                    ul class="lines" {
-                        @for l in &cat.lines {
-                            li class={ "line" @if l.spent > l.planned { " over" } @if !l.this_paycheck.is_positive() { " unfunded" } } id=(format!("line-{}", l.id)) data-line=(l.name) {
-                                div class="cell name" {
-                                    @if structure {
-                                        form data-on:submit__prevent=(post_form(&format!("/ui/lines/{}/rename", l.id))) {
-                                            (view_input(&view))
-                                            input type="text" name="name" value=(l.name) aria-label=(tf("line.name_label", &[("name", &l.name)])) data-on:change="el.form.requestSubmit()" required maxlength="100";
-                                        }
-                                    } @else {
-                                        span class="name-text" { (l.name) }
-                                    }
-                                    @if l.funders.len() > 1 {
-                                        span class="split-note" { (tf("line.split_note", &[("count", &l.funders.len().to_string())])) }
-                                    }
-                                    (over_badge(c, l))
-                                }
-                                div class="cell num" data-col="this" data-label=(t("col.this_paycheck")) {
-                                    @if editable {
-                                        form data-on:submit__prevent=(post_form_guarded(&format!("/ui/paychecks/{}/lines/{}", pid, l.id))) {
-                                            (view_input(&view))
-                                            (money_input("amount", Some(l.this_paycheck), &tf("line.planned_label", &[("name", &l.name)]), Some((l.this_paycheck + v.unallocated).get())))
-                                            span class="field-error" aria-live="polite" {}
-                                        }
-                                    } @else {
-                                        span { (c.money(l.this_paycheck)) }
-                                    }
-                                }
-                                span class="cell num" data-col="planned" data-label=(t("col.planned")) { (c.money(l.planned)) }
-                                span class="cell num" data-col="spent" data-label=(t("col.spent")) { (c.money(l.spent)) }
-                                span class=(if l.remaining.is_negative() { "cell num neg" } else { "cell num" }) data-col="remaining" data-label=(t("col.remaining")) { (c.money(l.remaining)) }
-                            }
-                        }
-                    }
-                    @if structure {
-                        form class="add-line" id=(format!("pc-add-line-{}", cat.id)) data-clear data-on:submit__prevent=(post_form_guarded(&format!("/ui/months/{}/lines", m.id))) {
-                            (view_input(&view))
-                            input type="hidden" name="category_id" value=(cat.id);
-                            input type="hidden" name="paycheck_id" value=(pid);
-                            span class="add-icon" aria-hidden="true" { (icon("plus")) }
-                            input type="text" name="name" required maxlength="100" placeholder=(t("line.add_placeholder")) aria-label=(tf("line.add_label", &[("category", &cat.name)]));
-                            @if editable {
-                                span class="add-extra" {
-                                    input type="text" inputmode="decimal" class="money" name="amount" placeholder="0.00" autocomplete="off"
-                                        data-max-cents=(v.unallocated.get()) aria-label=(tf("line.add_from_this_label", &[("category", &cat.name)]));
-                                }
-                            }
-                            button type="submit" class="btn small" { (t("line.add")) }
-                        }
-                    }
-                }))
-                }
-            }
-            @if structure {
-                form class="add-category" id="pc-add-category" data-clear data-on:submit__prevent=(post_form(&format!("/ui/months/{}/categories", m.id))) {
-                    (view_input(&view))
-                    label for="pc-new-category" { (t("category.add_label")) }
-                    input id="pc-new-category" type="text" name="name" required maxlength="100";
-                    button type="submit" class="btn" { (t("category.add")) }
-                }
-            }
-        }
-
-        @if editable && v.unallocated.is_positive() {
-            (fund_form(c, m, pid, &view, v.unallocated, structure))
-        }
-
-        details class="paycheck-settings" {
-            summary { (t("paycheck.details")) }
-            div class="settings-grid" {
-                @if structure {
-                    form data-on:submit__prevent=(post_form(&format!("/ui/paychecks/{pid}/planned"))) {
-                        (view_input(&view))
-                        label for="pc-planned" { (t("paycheck.planned_amount")) }
-                        div class="inline-field" {
-                            input id="pc-planned" type="text" inputmode="decimal" class="money" name="amount" value=(crate::money::plain(p.planned_amount)) required;
-                            button type="submit" class="btn" { (t("common.save")) }
-                        }
-                    }
-                }
-                @if !archived && p.status != PaycheckStatus::Skipped {
-                    form data-offline="actual" data-month=(m.id) data-paycheck=(pid)
-                        data-base-actual=[p.actual_amount.map(Cents::get)]
-                        data-on:submit__prevent=(post_form(&format!("/ui/paychecks/{pid}/actual"))) {
-                        (view_input(&view))
-                        label for="pc-actual" { (t("paycheck.actual_amount")) }
-                        div class="inline-field" {
-                            input id="pc-actual" type="text" inputmode="decimal" class="money" name="amount" value=[p.actual_amount.map(crate::money::plain)] placeholder=(t("paycheck.actual_placeholder"));
-                            button type="submit" class="btn" { (t("paycheck.record_actual")) }
-                        }
-                    }
-                }
-                @if structure {
-                    div class="danger-actions" {
-                    form data-on:submit__prevent=(post_form(&format!("/ui/paychecks/{pid}/status"))) {
-                        (view_input(&view))
-                        @if p.status == PaycheckStatus::Skipped {
-                            input type="hidden" name="status" value="planned";
-                            button type="submit" class="btn small" { (t("paycheck.unskip")) }
-                        } @else {
-                            input type="hidden" name="status" value="skipped";
-                            button type="submit" class="btn small" data-confirm=(t("paycheck.skip_confirm")) { (t("paycheck.skip")) }
-                        }
-                    }
-                    form data-on:submit__prevent=(post_form(&format!("/ui/paychecks/{pid}/delete"))) {
-                        (view_input(&view))
-                        button type="submit" class="btn small danger" data-confirm=(t("paycheck.delete_confirm")) { (icon("trash")) " " (t("paycheck.delete")) }
-                    }
-                    }
-                }
-            }
-        }
-    }
-}
-
 /// "Assign money from this paycheck": pick an existing line or create one.
-fn fund_form(c: &Ctx, m: &Month, pid: &Id, view: &View, unallocated: Cents, structure: bool) -> Markup {
+pub(super) fn fund_form(c: &Ctx, m: &Month, pid: &Id, view: &View, unallocated: Cents, structure: bool) -> Markup {
     let url = format!("/ui/months/{}/fund", m.id);
     let cats = m.categories_sorted();
     let default_cat = cats.first().map(|c| c.id.clone());
@@ -894,216 +596,6 @@ fn summary_cards(c: &Ctx, m: &Month) -> Markup {
     }
 }
 
-pub fn render_overview(c: &Ctx, m: &Month, archived: bool) -> Markup {
-    let view = View::Overview { month: m.id.clone() };
-    let structure = !m.is_locked() && !archived;
-    let alloc = m.allocations_editable() && !archived;
-    let cats = m.category_views();
-    let free: Cents = m.paychecks.iter().map(|p| m.paycheck_unallocated(&p.id)).sum();
-    let default_fund_pc = m
-        .paychecks_by_date()
-        .into_iter()
-        .find(|p| m.paycheck_unallocated(&p.id).is_positive())
-        .or_else(|| m.paychecks_by_date().into_iter().find(|p| p.status != PaycheckStatus::Skipped))
-        .map(|p| p.id.clone());
-    let move_btn = |url: String, dir: &str, label: String| {
-        html! {
-            form class="inline" data-on:submit__prevent=(post_form(&url)) {
-                (view_input(&view))
-                input type="hidden" name="direction" value=(dir);
-                button type="submit" class="icon-btn" aria-label=(label) { (icon(dir)) }
-            }
-        }
-    };
-    html! {
-        h1 { (tf("overview.title", &[("month", &month_label(m.year_month))])) }
-        (month_status(c, m, archived, &view))
-        (summary_cards(c, m))
-        p class="muted" { (t("overview.explain")) }
-        @if m.paychecks.is_empty() {
-            (empty_state(&t("overview.no_income_title"), &t("overview.no_income_body"),
-                Some(html! { a class="btn primary" href=(format!("/months/{}/income", m.id)) { (t("income.add")) } })))
-        }
-        @if structure {
-            form id="dnd-form" hidden data-on:submit__prevent=(post_form(&format!("/ui/months/{}/place", m.id))) {
-                (view_input(&view))
-                input type="hidden" name="kind";
-                input type="hidden" name="id";
-                input type="hidden" name="category_id";
-                input type="hidden" name="index";
-            }
-        }
-        section class=(if structure { "overview five dnd" } else { "overview five" }) aria-label=(t("overview.categories")) {
-            div class="grid-head" aria-hidden="true" {
-                span { (t("col.name")) } span { (t("col.planned")) } span { (t("col.spent")) } span { (t("col.remaining")) } span {}
-            }
-            @for cat in &cats {
-                (category_details(c, cat, html! {
-                    (triad(c, cat.planned, cat.spent, cat.remaining))
-                    span {}
-                }, html! {
-                    @if structure {
-                        details class="cat-tools" {
-                            summary { (tf("category.edit", &[("name", &cat.name)])) }
-                            div class="cat-tools-row" {
-                            form class="inline grow" data-on:submit__prevent=(post_form(&format!("/ui/categories/{}/rename", cat.id))) {
-                                (view_input(&view))
-                                input type="text" name="name" value=(cat.name) required maxlength="100" aria-label=(tf("category.name_label", &[("name", &cat.name)])) data-on:change="el.form.requestSubmit()";
-                            }
-                            (move_btn(format!("/ui/categories/{}/move", cat.id), "up", tf("category.move_up", &[("name", &cat.name)])))
-                            (move_btn(format!("/ui/categories/{}/move", cat.id), "down", tf("category.move_down", &[("name", &cat.name)])))
-                            form class="inline" data-on:submit__prevent=(post_form(&format!("/ui/categories/{}/delete", cat.id))) {
-                                (view_input(&view))
-                                button type="submit" class="icon-btn danger" aria-label=(tf("category.delete", &[("name", &cat.name)])) data-confirm=(tf("category.delete_confirm", &[("name", &cat.name)])) { (icon("trash")) }
-                            }
-                            }
-                        }
-                    }
-                    @if cat.lines.is_empty() && !structure {
-                        p class="muted small" { (t("category.empty")) }
-                    }
-                    ul class="lines" {
-                        @for l in &cat.lines {
-                            li class={ "line" @if l.spent > l.planned { " over" } } id=(format!("line-{}", l.id)) data-line=(l.name) data-line-id=[structure.then_some(&l.id)] data-cat-id=(cat.id) {
-                                div class="cell name" {
-                                    @if structure {
-                                        span class="grip" title=(t("line.drag")) aria-hidden="true" { (icon("grip")) }
-                                        form data-on:submit__prevent=(post_form(&format!("/ui/lines/{}/rename", l.id))) {
-                                            (view_input(&view))
-                                            input type="text" name="name" value=(l.name) required maxlength="100" aria-label=(tf("line.name_label", &[("name", &l.name)])) data-on:change="el.form.requestSubmit()";
-                                        }
-                                    } @else {
-                                        span class="name-text" { (l.name) }
-                                    }
-                                    (over_badge(c, l))
-                                    @if !l.funders.is_empty() {
-                                        span class="split-note" {
-                                            @for (i, f) in l.funders.iter().enumerate() {
-                                                @if i > 0 { " · " }
-                                                (tf("line.funder", &[("date", &short_date(f.date)), ("amount", &c.money(f.amount))]))
-                                            }
-                                        }
-                                    }
-                                    @if let Some(tgt) = l.target {
-                                        @if l.unfunded_target.is_positive() {
-                                            span class="split-note" { (tf("line.target_note", &[("target", &c.money(tgt)), ("unfunded", &c.money(l.unfunded_target))])) }
-                                        }
-                                    }
-                                }
-                                div class="cell num" data-col="planned" data-label=(t("col.planned")) {
-                                    @if alloc {
-                                        form data-on:submit__prevent=(post_form_guarded(&format!("/ui/lines/{}/planned", l.id))) {
-                                            (view_input(&view))
-                                            (money_input("amount", Some(l.planned), &tf("line.total_planned_label", &[("name", &l.name)]), Some((l.planned + free).get())))
-                                            span class="field-error" aria-live="polite" {}
-                                        }
-                                    } @else {
-                                        span { (c.money(l.planned)) }
-                                    }
-                                }
-                                span class="cell num" data-col="spent" data-label=(t("col.spent")) { (c.money(l.spent)) }
-                                span class=(if l.remaining.is_negative() { "cell num neg" } else { "cell num" }) data-col="remaining" data-label=(t("col.remaining")) { (c.money(l.remaining)) }
-                                @if structure {
-                                    div class="line-tools" {
-                                        (move_btn(format!("/ui/lines/{}/move", l.id), "up", tf("line.move_up", &[("name", &l.name)])))
-                                        (move_btn(format!("/ui/lines/{}/move", l.id), "down", tf("line.move_down", &[("name", &l.name)])))
-                                        form class="inline" data-on:submit__prevent=(post_form(&format!("/ui/lines/{}/delete", l.id))) {
-                                            (view_input(&view))
-                                            button type="submit" class="icon-btn danger" aria-label=(tf("line.delete", &[("name", &l.name)])) data-confirm=(tf("line.delete_confirm", &[("name", &l.name)])) { (icon("trash")) }
-                                        }
-                                    }
-                                }
-                                @if !m.paychecks.is_empty() {
-                                    details class="line-funding" data-line-funding=(l.id) {
-                                        summary { (tf("line.by_paycheck", &[("count", &l.funders.len().to_string())])) }
-                                        ul class="funding-list" {
-                                            @for p in m.paychecks_by_date() {
-                                                @let this = m.allocation_for(&p.id, &l.id).map_or(Cents::ZERO, |a| a.amount);
-                                                @let free = m.paycheck_unallocated(&p.id);
-                                                @let pname = m.income_line(&p.income_line_id).map(|x| x.name.clone()).unwrap_or_default();
-                                                li {
-                                                    span class="fund-pc" { strong { (short_date(p.date)) } " · " (pname)
-                                                        @if p.status == PaycheckStatus::Skipped { " · " (t("paycheck.skipped")) } }
-                                                    @if alloc && p.status != PaycheckStatus::Skipped {
-                                                        form data-on:submit__prevent=(post_form_guarded(&format!("/ui/paychecks/{}/lines/{}", p.id, l.id))) {
-                                                            (view_input(&view))
-                                                            (money_input("amount", Some(this), &tf("line.from_paycheck_label", &[("name", &l.name), ("date", &short_date(p.date))]), Some((this + free).get())))
-                                                            span class="field-error" aria-live="polite" {}
-                                                        }
-                                                        span class="muted small" { (tf("line.paycheck_left", &[("amount", &c.money(free))])) }
-                                                    } @else {
-                                                        span class="num" { (c.money(this)) }
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                                @if l.is_debt {
-                                    div class="debt" {
-                                        @if structure {
-                                            form class="debt-form" data-on:submit__prevent=(post_form(&format!("/ui/lines/{}/debt", l.id))) {
-                                                (view_input(&view))
-                                                label { (t("debt.balance")) " " input type="text" inputmode="decimal" name="current_balance" value=[l.current_balance.map(crate::money::plain)] data-on:change="el.form.requestSubmit()"; }
-                                                label { (t("debt.minimum")) " " input type="text" inputmode="decimal" name="minimum_payment" value=[l.minimum_payment.map(crate::money::plain)] data-on:change="el.form.requestSubmit()"; }
-                                            }
-                                        } @else {
-                                            span { (t("debt.balance")) " " (l.current_balance.map(|b| c.money(b)).unwrap_or_else(|| "—".into())) }
-                                            span { (t("debt.minimum")) " " (l.minimum_payment.map(|b| c.money(b)).unwrap_or_else(|| "—".into())) }
-                                        }
-                                        @if let Some(min) = l.minimum_payment {
-                                            @if l.planned < min {
-                                                span class="warn-text" { (tf("debt.below_minimum", &[("amount", &c.money(min - l.planned))])) }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    @if structure {
-                        form class="add-line" id=(format!("add-line-{}", cat.id)) data-clear data-on:submit__prevent=(post_form_guarded(&format!("/ui/months/{}/lines", m.id))) {
-                            (view_input(&view))
-                            input type="hidden" name="category_id" value=(cat.id);
-                            span class="add-icon" aria-hidden="true" { (icon("plus")) }
-                            input type="text" name="name" required maxlength="100" placeholder=(t("line.add_placeholder")) aria-label=(tf("line.add_label", &[("category", &cat.name)]));
-                            @if alloc && !m.paychecks.is_empty() {
-                                span class="add-extra" {
-                                    input type="text" inputmode="decimal" class="money" name="amount" placeholder="0.00" autocomplete="off"
-                                        aria-label=(tf("line.add_amount_label", &[("category", &cat.name)]));
-                                    select name="paycheck_id" aria-label=(tf("line.add_paycheck_label", &[("category", &cat.name)])) {
-                                        @for p in m.paychecks_by_date().into_iter().filter(|p| p.status != PaycheckStatus::Skipped) {
-                                            @let free = m.paycheck_unallocated(&p.id);
-                                            option value=(p.id) selected[Some(&p.id) == default_fund_pc.as_ref()] {
-                                                (tf("line.fund_option", &[("date", &short_date(p.date)), ("amount", &c.money(free))]))
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                            button type="submit" class="btn small" { (t("line.add")) }
-                        }
-                    }
-                }))
-            }
-        }
-        @if structure {
-            form class="add-category" id="add-category" data-clear data-on:submit__prevent=(post_form(&format!("/ui/months/{}/categories", m.id))) {
-                (view_input(&view))
-                label for="new-category" { (t("category.add_label")) }
-                input id="new-category" type="text" name="name" required maxlength="100";
-                button type="submit" class="btn" { (t("category.add")) }
-            }
-        }
-        section class="exports" aria-labelledby="export-h" {
-            h2 id="export-h" class="h3" { (t("export.title")) }
-            a class="btn" href=(format!("/months/{}/export.csv", m.id)) download { (t("export.csv")) }
-            " "
-            a class="btn" href=(format!("/months/{}/snapshot.json", m.id)) download { (t("export.snapshot")) }
-        }
-    }
-}
-
 // ----------------------------------------------------------------------
 // Income lines (spec §2.2)
 // ----------------------------------------------------------------------
@@ -1124,14 +616,14 @@ pub fn render_income(c: &Ctx, m: &Month, archived: bool, welcome: bool) -> Marku
     let view = View::Income { month: m.id.clone(), welcome: false };
     let structure = !m.is_locked() && !archived;
     html! {
-        h1 { (tf("income.title", &[("month", &month_label(m.year_month))])) }
+        h1 { (t("income.title")) }
         @if welcome || m.income_lines.is_empty() {
             div class="notice info welcome" {
                 h2 class="h3" { (t("onboarding.title")) }
                 p { (t("onboarding.body")) }
             }
         }
-        (month_status(c, m, archived, &view))
+        (super::plan::month_alerts(c, m, archived, &view, false))
         @if m.income_lines.is_empty() {
             (empty_state(&t("income.empty_title"), &t("income.empty_body"), None))
         }
@@ -1256,7 +748,7 @@ fn income_form(view: &View, url: &str, prefix: &str, line: Option<&IncomeLine>, 
 // Transactions (spec §2.8)
 // ----------------------------------------------------------------------
 
-fn line_options(m: &Month, selected: Option<&Id>) -> Markup {
+pub(super) fn line_options(m: &Month, selected: Option<&Id>) -> Markup {
     html! {
         option value="" { (t("tx.no_line")) }
         @for cat in m.categories_sorted() {
@@ -1272,7 +764,7 @@ fn line_options(m: &Month, selected: Option<&Id>) -> Markup {
     }
 }
 
-fn paycheck_options(m: &Month, selected: Option<&Id>) -> Markup {
+pub(super) fn paycheck_options(m: &Month, selected: Option<&Id>) -> Markup {
     html! {
         option value="" { (t("tx.no_paycheck")) }
         @for p in m.paychecks_by_date() {
@@ -1285,14 +777,14 @@ fn paycheck_options(m: &Month, selected: Option<&Id>) -> Markup {
 /// One transaction form for both plain and split transactions. With one
 /// part it reads as a normal transaction (Amount, Expense line, Paycheck);
 /// "Split into parts" turns the same fields into part rows.
-fn tx_fields(c: &Ctx, m: &Month, prefix: &str, parts: &[&Transaction], default_date: NaiveDate) -> Markup {
+pub(super) fn tx_fields(c: &Ctx, m: &Month, prefix: &str, parts: &[&Transaction], default_date: NaiveDate, default_paycheck: Option<&Id>) -> Markup {
     let id = |f: &str| format!("{prefix}-{f}");
     let first = parts.first().copied();
     let is_income = first.is_some_and(|x| x.amount.is_positive());
     let split = parts.len() > 1;
     let total: Cents = parts.iter().map(|p| p.amount.abs()).sum();
     let rows: Vec<(Option<Cents>, Option<Id>, Option<Id>)> = if parts.is_empty() {
-        vec![(None, None, None)]
+        vec![(None, None, default_paycheck.cloned())]
     } else {
         parts.iter().map(|x| (Some(x.amount.abs()), x.expense_line_id.clone(), x.paycheck_id.clone())).collect()
     };
@@ -1302,17 +794,12 @@ fn tx_fields(c: &Ctx, m: &Month, prefix: &str, parts: &[&Transaction], default_d
             label { input type="radio" name="direction" value="expense" checked[!is_income]; span { (t("tx.expense")) } }
             label { input type="radio" name="direction" value="income" checked[is_income]; span { (t("tx.income")) } }
         }
-        div class="field" {
-            label for=(id("date")) { (t("tx.date")) }
-            input id=(id("date")) type="date" name="date" required value=(first.map_or(default_date, |x| x.date).to_string())
-                min=(m.year_month.to_string()) max=(recurrence::last_of_month(m.year_month).to_string());
-        }
-        div class="field" {
+        div class="field wide big-amount" {
             label for=(id("amount")) { (t("tx.amount")) }
             input id=(id("amount")) type="text" inputmode="decimal" class="money" name="amount" required placeholder="0.00"
                 value=[first.map(|_| crate::money::plain(total))] data-split-total;
         }
-        div class="field" {
+        div class="field wide" {
             label for=(id("payee")) { (t("tx.payee")) }
             input id=(id("payee")) type="text" name="payee" maxlength="200" value=[first.and_then(|x| x.payee.clone())];
         }
@@ -1358,155 +845,16 @@ fn tx_fields(c: &Ctx, m: &Month, prefix: &str, parts: &[&Transaction], default_d
             }
             span class="field-error" aria-live="polite" {}
         }
-        div class="field wide" {
+        div class="field" {
+            label for=(id("date")) { (t("tx.date")) }
+            input id=(id("date")) type="date" name="date" required value=(first.map_or(default_date, |x| x.date).to_string())
+                min=(m.year_month.to_string()) max=(recurrence::last_of_month(m.year_month).to_string());
+        }
+        div class="field" {
             label for=(id("notes")) { (t("tx.notes")) }
             input id=(id("notes")) type="text" name="notes" maxlength="2000" value=[first.and_then(|x| x.notes.clone())];
         }
         p id=(id("paycheck-hint")) class="hint wide" { (t("tx.paycheck_hint")) }
-    }
-}
-
-enum TxItem<'a> {
-    Single(&'a Transaction),
-    Split(Id),
-}
-
-pub fn render_transactions(c: &Ctx, m: &Month, archived: bool) -> Markup {
-    let view = View::Transactions { month: m.id.clone() };
-    let default_date = if recurrence::in_month(c.today, m.year_month) { c.today } else { m.year_month };
-    let mut txs: Vec<&Transaction> = m.transactions.iter().collect();
-    txs.sort_by_key(|x| std::cmp::Reverse(x.date));
-    // One row per payment: a split shows once, where its first part sorts.
-    let mut items: Vec<TxItem> = Vec::new();
-    for x in &txs {
-        match &x.split_group {
-            Some(g) => {
-                if !items.iter().any(|i| matches!(i, TxItem::Split(h) if h == g)) {
-                    items.push(TxItem::Split(g.clone()));
-                }
-            }
-            None => items.push(TxItem::Single(x)),
-        }
-    }
-    let line_name = |id: &Option<Id>| id.as_ref().and_then(|l| m.expense_line(l)).map(|l| l.name.clone());
-    html! {
-        h1 { (tf("tx.title", &[("month", &month_label(m.year_month))])) }
-        (overspent_banner(c, m, &view))
-        @if m.is_locked() {
-            p class="notice info" { (t("tx.locked_ok")) }
-        }
-        @if !archived {
-            section class="card" aria-labelledby="add-tx-h" {
-                h2 id="add-tx-h" class="h3" { (t("tx.add")) }
-                form id="add-tx" class="tx-form" data-clear data-offline="create_transaction" data-month=(m.id)
-                    data-on:submit__prevent=(format!("pz.checkSplit(el) && @post('/ui/months/{}/transactions', {{contentType: 'form'}})", m.id)) {
-                    (view_input(&view))
-                    (tx_fields(c, m, "new-tx", &[], default_date))
-                    div class="form-actions wide" {
-                        button type="submit" class="btn primary" { (t("tx.save")) }
-                    }
-                }
-            }
-        }
-        section aria-labelledby="tx-list-h" {
-            h2 id="tx-list-h" class="h3" { (t("tx.list")) }
-            @if txs.is_empty() {
-                (empty_state(&t("tx.empty_title"), &t("tx.empty_body"), None))
-            } @else {
-                ul class="tx-list card" id="tx-list" {
-                    @for it in &items {
- @match it {
- TxItem::Split(g) => {
-                        @let parts = m.split_parts(g);
-                        @let x = parts[0];
-                        @let total: Cents = parts.iter().map(|p| p.amount).sum();
-                        @let payee = x.payee.clone().unwrap_or_else(|| t("tx.no_payee"));
-                        @let dlg = format!("edit-split-{g}");
-                        li class="tx split" data-tx=(x.id) data-split=(g) {
-                            span class="tx-date" { (short_date(x.date)) }
-                            div class="tx-main" {
-                                span class="tx-payee" { (payee) }
-                                span class="tx-meta" {
-                                    strong { (t("split.meta")) } " · "
-                                    @for (i, p) in parts.iter().enumerate() {
-                                        @if i > 0 { " · " }
-                                        (line_name(&p.expense_line_id).unwrap_or_else(|| t("tx.uncategorized"))) " " (c.money(p.amount.abs()))
-                                        @if let Some(pc) = p.paycheck_id.as_ref().and_then(|pc| m.paycheck(pc)) { " (" (short_date(pc.date)) ")" }
-                                    }
-                                }
-                            }
-                            span class=(if total.is_negative() { "tx-amt num" } else { "tx-amt num pos" }) { (c.money(total)) }
-                            @if !archived {
-                                button type="button" class="icon-btn" aria-label=(tf("tx.edit_label", &[("payee", &payee), ("date", &short_date(x.date))]))
-                                    data-on:click=(format!("document.getElementById('{dlg}').showModal()")) { (icon("edit")) }
-                                dialog id=(dlg) aria-labelledby=(format!("{dlg}-h")) {
-                                    h2 id=(format!("{dlg}-h")) class="h3" { (t("split.edit_title")) }
-                                    form class="tx-form" data-online-only
-                                        data-on:submit__prevent=(format!("pz.checkSplit(el) && @post('/ui/transactions/{}', {{contentType: 'form'}})", x.id)) {
-                                        (view_input(&view))
-                                        (tx_fields(c, m, &format!("split-{g}"), &parts, default_date))
-                                        div class="form-actions wide" {
-                                            button type="button" class="btn" data-close-dialog { (t("common.cancel")) }
-                                            button type="submit" class="btn primary" { (t("common.save")) }
-                                        }
-                                    }
-                                    form class="dialog-danger" data-on:submit__prevent=(post_form(&format!("/ui/splits/{g}/delete"))) {
-                                        (view_input(&view))
-                                        input type="hidden" name="part_of" value=(x.id);
-                                        button type="submit" class="btn small danger" data-confirm=(t("split.delete_confirm")) { (icon("trash")) " " (t("split.delete")) }
-                                    }
-                                }
-                            }
-                        }
-                    }
- TxItem::Single(x) => {
-                        @let base = serde_json::json!({
-                            "date": x.date, "amount": x.amount.get(), "payee": x.payee, "notes": x.notes,
-                            "expense_line_id": x.expense_line_id, "paycheck_id": x.paycheck_id,
-                        }).to_string();
-                        @let payee = x.payee.clone().unwrap_or_else(|| t("tx.no_payee"));
-                        @let dlg = format!("edit-tx-{}", x.id);
-                        li class="tx" data-tx=(x.id) {
-                            span class="tx-date" { (short_date(x.date)) }
-                            div class="tx-main" {
-                                span class="tx-payee" { (payee) }
-                                span class="tx-meta" {
-                                    (line_name(&x.expense_line_id).unwrap_or_else(|| t("tx.uncategorized")))
-                                    @if let Some(p) = x.paycheck_id.as_ref().and_then(|p| m.paycheck(p)) {
-                                        " · " (tf("tx.from_paycheck", &[("date", &short_date(p.date))]))
-                                    }
-                                    @if let Some(n) = &x.notes { " · " (n) }
-                                }
-                            }
-                            span class=(if x.amount.is_negative() { "tx-amt num" } else { "tx-amt num pos" }) { (c.money(x.amount)) }
-                            @if !archived {
-                                button type="button" class="icon-btn" aria-label=(tf("tx.edit_label", &[("payee", &payee), ("date", &short_date(x.date))]))
-                                    data-on:click=(format!("document.getElementById('{dlg}').showModal()")) { (icon("edit")) }
-                                dialog id=(dlg) aria-labelledby=(format!("{dlg}-h")) {
-                                    h2 id=(format!("{dlg}-h")) class="h3" { (t("tx.edit_title")) }
-                                    form class="tx-form" data-offline="update_transaction" data-month=(m.id) data-tx=(x.id) data-base=(base.clone())
-                                        data-on:submit__prevent=(post_form(&format!("/ui/transactions/{}", x.id))) {
-                                        (view_input(&view))
-                                        (tx_fields(c, m, &format!("tx-{}", x.id), &[x], default_date))
-                                        div class="form-actions wide" {
-                                            button type="button" class="btn" data-close-dialog { (t("common.cancel")) }
-                                            button type="submit" class="btn primary" { (t("common.save")) }
-                                        }
-                                    }
-                                    form class="dialog-danger" data-offline="delete_transaction" data-month=(m.id) data-tx=(x.id) data-base=(base)
-                                        data-on:submit__prevent=(post_form(&format!("/ui/transactions/{}/delete", x.id))) {
-                                        (view_input(&view))
-                                        button type="submit" class="btn small danger" data-confirm=(t("tx.delete_confirm")) { (icon("trash")) " " (t("tx.delete")) }
-                                    }
-                                }
-                            }
-                        }
-                    }
- }
- }
-                }
-            }
-        }
     }
 }
 
@@ -1761,6 +1109,7 @@ fn report_tabs(m: &Month, q: &ReportQuery) -> Markup {
     html! {
         nav class="report-tabs" aria-label=(t("report.tabs")) {
             (tab("summary", t("report.tab_summary")))
+            (tab("compare", t("report.tab_compare")))
             (tab("trends", t("report.tab_trends")))
             (tab("payees", t("report.tab_payees")))
             (tab("export", t("report.tab_export")))
@@ -1962,22 +1311,19 @@ fn render_export(m: &Month, q: &ReportQuery) -> Markup {
 
 pub fn render_reports(c: &Ctx, m: &Month, all: &[Month], q: &ReportQuery) -> Markup {
     html! {
-        h1 { (tf("report.title", &[("month", &month_label(m.year_month))])) }
+        h1 { (t("report.title")) }
         (report_tabs(m, q))
         @match q.tab() {
+            "compare" => { (render_compare(c, m, all, q)) },
             "trends" => { (render_trends(c, m, all, q)) },
             "payees" => { (render_payees(c, m, all, q)) },
             "export" => { (render_export(m, q)) },
-            _ => { (render_summary(c, m, all, q)) },
+            _ => { (render_summary(c, m)) },
         }
     }
 }
 
-fn render_summary(c: &Ctx, m: &Month, all: &[Month], q: &ReportQuery) -> Markup {
-    let mom = report::month_over_month(m, all);
-    let yoy = report::year_over_year(m, all);
-    let ytd = report::year_to_date(m, all);
-    let names: Vec<String> = ytd.figures.categories.iter().map(|c| c.name.clone()).collect();
+fn render_summary(c: &Ctx, m: &Month) -> Markup {
     let fig = report::month_figures(m);
     let planned_items: Vec<(String, Cents)> = fig.categories.iter().map(|x| (x.name.clone(), x.planned)).collect();
     let spent_items: Vec<(String, Cents)> = fig.categories.iter().map(|x| (x.name.clone(), x.actual)).collect();
@@ -2010,6 +1356,17 @@ fn render_summary(c: &Ctx, m: &Month, all: &[Month], q: &ReportQuery) -> Markup 
             }))
         }
         (category_chart(c, &fig))
+        p class="page-links" { a href=(format!("/months/{}/reports{}", m.id, ReportQuery { tab: Some("compare".into()), ..ReportQuery::default() }.query_string())) { (t("report.see_compare")) } }
+    }
+}
+
+/// Month over month, year to date and year over year tables.
+fn render_compare(c: &Ctx, m: &Month, all: &[Month], q: &ReportQuery) -> Markup {
+    let mom = report::month_over_month(m, all);
+    let yoy = report::year_over_year(m, all);
+    let ytd = report::year_to_date(m, all);
+    let names: Vec<String> = ytd.figures.categories.iter().map(|c| c.name.clone()).collect();
+    html! {
         div class="section-head" { span {} (csv_link(m, "mom", q)) }
         (comparison(c, "mom", &t("report.mom"), &mom))
         section class="report-section" aria-labelledby="ytd-h" {

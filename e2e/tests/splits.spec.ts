@@ -6,7 +6,7 @@ test.describe("split transactions (one form for plain and split)", () => {
     await login();
     pz.acceptDialogs(page);
     await pz.transactions(page, s);
-    const form = page.locator("#add-tx");
+    const form = await pz.addTx(page);
     // Starts as a normal transaction…
     await form.getByLabel("Amount", { exact: true }).fill("120");
     await form.getByLabel("Payee").fill("Target");
@@ -29,9 +29,12 @@ test.describe("split transactions (one form for plain and split)", () => {
     await expect(form.locator("[data-split-left]")).toContainText("$0.00");
     await form.getByRole("button", { name: "Save transaction" }).click();
     await expect(pz.toast(page)).toContainText("Split saved.");
-    // The add form is back to a plain transaction.
-    await expect(form.getByLabel("Expense line", { exact: true })).toBeVisible();
-    await expect(form.getByLabel("Amount", { exact: true })).toHaveValue("");
+    await expect(pz.sheet(page)).toBeHidden();
+    // The next add starts as a plain transaction again.
+    const again = await pz.addTx(page);
+    await expect(again.getByLabel("Expense line", { exact: true })).toBeVisible();
+    await expect(again.getByLabel("Amount", { exact: true })).toHaveValue("");
+    await pz.closeSheet(page);
     const row = page.locator("#tx-list li.split", { hasText: "Target" });
     await expect(row).toContainText("-$120.00");
     await expect(row).toContainText("Split · Groceries $80.00 (Sep 4) · Electric $30.00 (Sep 18) · Gas $10.00");
@@ -39,15 +42,13 @@ test.describe("split transactions (one form for plain and split)", () => {
     await expect(pz.line(page, "Groceries").locator("[data-col=spent]")).toContainText("$165.20");
     // Edit: drop a part.
     await pz.transactions(page, s);
-    await page.getByRole("button", { name: "Edit Target on Sep 10" }).click();
-    let dlg = page.getByRole("dialog", { name: "Edit split transaction" });
+    let dlg = await pz.editTx(page, "Edit Target on Sep 10");
     await dlg.getByLabel("Amount", { exact: true }).fill("110");
     await dlg.getByRole("button", { name: "Remove part 3" }).click();
     await dlg.getByRole("button", { name: "Save" }).click();
     await expect(page.locator("#tx-list li.split", { hasText: "Target" })).toContainText("-$110.00");
     // Merge back into a plain transaction by removing parts down to one.
-    await page.getByRole("button", { name: "Edit Target on Sep 10" }).click();
-    dlg = page.getByRole("dialog", { name: "Edit split transaction" });
+    dlg = await pz.editTx(page, "Edit Target on Sep 10");
     await dlg.getByRole("button", { name: "Remove part 2" }).click();
     await expect(dlg.getByLabel("Expense line", { exact: true })).toBeVisible();
     await dlg.getByRole("button", { name: "Save" }).click();
@@ -60,8 +61,7 @@ test.describe("split transactions (one form for plain and split)", () => {
     const s = await seed("basic");
     await login();
     await pz.transactions(page, s);
-    await page.getByRole("button", { name: "Edit Shell on Sep 6" }).click();
-    const dlg = page.getByRole("dialog", { name: "Edit transaction" });
+    const dlg = await pz.editTx(page, "Edit Shell on Sep 6");
     await dlg.getByRole("button", { name: "Split into parts" }).click();
     await dlg.getByLabel("Part 1 amount").fill("25");
     await dlg.getByLabel("Part 2 line").selectOption({ label: "Groceries" });

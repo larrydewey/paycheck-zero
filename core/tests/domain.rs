@@ -89,7 +89,7 @@ fn categories_rename_reorder_delete() {
     let idx = before.iter().position(|x| x == &f.housing).unwrap();
     f.m.move_category(&f.housing, true).unwrap();
     let after: Vec<Id> = f.m.categories_sorted().iter().map(|c| c.id.clone()).collect();
-    assert_eq!(after[idx - 1], f.housing);
+    assert!(after.iter().position(|x| x == &f.housing).unwrap() < idx);
     // Deleting a category deletes its lines and their allocations.
     f.m.set_allocation(&f.p1, &f.rent, c(50_000)).unwrap();
     f.m.delete_category(&f.housing).unwrap();
@@ -705,4 +705,17 @@ fn report_drill_down_trends_and_payees() {
     let p = payees(&all, d(2026, 9, 1), d(2026, 9, 30));
     assert_eq!(p[0].payee, "Shop");
     assert_eq!((p[0].count, p[0].spent), (2, c(2_500)));
+}
+
+#[test]
+fn moving_a_category_steps_past_empty_ones() {
+    let mut fx = fixture();
+    let names = |m: &Month| m.categories_sorted().iter().filter(|c| !m.lines_of(&c.id).is_empty()).map(|c| c.name.clone()).collect::<Vec<_>>();
+    let before = names(&fx.m);
+    let food = fx.m.categories.iter().find(|c| c.name == "Food").unwrap().id.clone();
+    fx.m.move_category(&food, true).unwrap();
+    let after = names(&fx.m);
+    assert_ne!(before, after, "the visible order must change");
+    assert_eq!(after[0], "Food");
+    fx.m.check_invariants().unwrap();
 }

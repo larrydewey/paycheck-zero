@@ -19,6 +19,7 @@ test.describe("reports: drill-down, trends, payees, exports", () => {
   });
 
   test("category rows drill down to their lines", async ({ page }) => {
+    await page.getByRole("link", { name: "Compare", exact: true }).click();
     const housing = page.locator("#mom").getByRole("button", { name: "Housing" });
     const rent = page.locator('#mom tr[data-row="line:Housing:Rent"]');
     await expect(rent).toBeHidden();
@@ -60,6 +61,8 @@ test.describe("reports: drill-down, trends, payees, exports", () => {
   });
 
   test("every report downloads as CSV, plus transactions for a date range", async ({ page }) => {
+    await page.getByRole("link", { name: "Compare", exact: true }).click();
+    await expect(page.locator("#mom")).toBeVisible();
     const mom = await csvFrom(page, () => page.getByRole("link", { name: "Download CSV" }).first().click());
     expect(mom.name).toBe("mom-2026-09.csv");
     expect(mom.text.split("\r\n")[0]).toBe("row,category,line,Sep 2026 planned,Sep 2026 actual,Aug 2026 planned,Aug 2026 actual");

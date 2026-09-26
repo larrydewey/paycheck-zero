@@ -7,8 +7,8 @@ test.describe("income lines", () => {
     await pz.income(page, s);
     const add = page.locator("section.add-income");
     await add.getByLabel("Name").fill("Side gig");
-    await add.getByLabel("Amount per paycheck").fill("250");
-    await add.getByLabel("Schedule").selectOption("weekly");
+    await add.getByLabel("Take-home per paycheck").fill("250");
+    await add.getByLabel("How often").selectOption("weekly");
     await add.getByLabel("A recent or upcoming payday").fill("2026-09-02");
     await add.getByRole("button", { name: "Add income" }).click();
     await expect(pz.toast(page)).toContainText("Income added with 5 paycheck(s).");
@@ -24,8 +24,8 @@ test.describe("income lines", () => {
     await pz.income(page, s);
     const add = page.locator("section.add-income");
     await add.getByLabel("Name").fill("Tax refund");
-    await add.getByLabel("Amount per paycheck").fill("640.25");
-    await add.getByLabel("Schedule").selectOption("one_off");
+    await add.getByLabel("Take-home per paycheck").fill("640.25");
+    await add.getByLabel("How often").selectOption("one_off");
     await add.getByLabel("Pay date").fill("2026-09-21");
     await add.getByRole("button", { name: "Add income" }).click();
     const card = page.locator("section.income-line", { hasText: "Tax refund" });
@@ -39,8 +39,8 @@ test.describe("income lines", () => {
     await pz.income(page, s);
     const add = page.locator("section.add-income");
     await add.getByLabel("Name").fill("Bonus");
-    await add.getByLabel("Amount per paycheck").fill("10");
-    await add.getByLabel("Schedule").selectOption("one_off");
+    await add.getByLabel("Take-home per paycheck").fill("10");
+    await add.getByLabel("How often").selectOption("one_off");
     await add.getByLabel("Pay date").evaluate((el: HTMLInputElement) => { el.removeAttribute("max"); el.value = "2026-10-01"; });
     await add.getByRole("button", { name: "Add income" }).click();
     await expect(pz.toast(page)).toContainText("Oct 1, 2026 isn't in this month.");
@@ -60,10 +60,10 @@ test.describe("income lines", () => {
     await expect(suggestion).toContainText("(from September 2026)");
     await suggestion.click();
     await expect(page.getByLabel("Name")).toHaveValue("Acme Payroll");
-    await expect(page.getByLabel("Amount per paycheck")).toHaveValue("2000.00");
-    await expect(page.getByLabel("Schedule")).toHaveValue("biweekly");
+    await expect(page.getByLabel("Take-home per paycheck")).toHaveValue("2000.00");
+    await expect(page.getByLabel("How often")).toHaveValue("biweekly");
     await expect(page.getByLabel("A recent or upcoming payday")).toHaveValue("2026-09-04");
-    await page.getByLabel("Amount per paycheck").fill("2100");
+    await page.getByLabel("Take-home per paycheck").fill("2100");
     await page.getByRole("button", { name: "Add income" }).click();
     await expect(page).toHaveURL(/\/paychecks\//);
     await waitForContent(page);
@@ -103,7 +103,7 @@ test.describe("income lines", () => {
     await pz.income(page, s);
     const card = page.locator("section.income-line", { hasText: "Acme Payroll" });
     await card.getByText("Edit or add a paycheck").click();
-    await card.getByLabel("Schedule").selectOption("monthly");
+    await card.getByLabel("How often").selectOption("monthly");
     await card.getByLabel("Days of the month").fill("4");
     await card.getByRole("button", { name: "Save" }).click();
     await expect(page.locator("#toasts")).toContainText("Removed paycheck(s): Sep 18.");

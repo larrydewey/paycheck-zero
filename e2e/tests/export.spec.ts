@@ -14,7 +14,8 @@ async function save(dl: Download) {
 test("CSV export is complete and deterministic", async ({ page, seed, login }) => {
   const s = await seed("basic");
   await login();
-  await pz.overview(page, s);
+  await page.goto(`/months/${s.months["2026-09"].id}/reports?tab=export`);
+  await waitForContent(page);
   const read = async () => {
     const [dl] = await Promise.all([page.waitForEvent("download"), page.getByRole("link", { name: "Download CSV" }).click()]);
     expect(dl.suggestedFilename()).toBe("paycheckzero-2026-09.csv");
@@ -36,7 +37,8 @@ test("CSV export is complete and deterministic", async ({ page, seed, login }) =
 test("full snapshot downloads and restores", async ({ page, seed, login }) => {
   const s = await seed("basic");
   await login();
-  await pz.overview(page, s);
+  await page.goto(`/months/${s.months["2026-09"].id}/reports?tab=export`);
+  await waitForContent(page);
   const [dl] = await Promise.all([page.waitForEvent("download"), page.getByRole("link", { name: "Download full snapshot (JSON)" }).click()]);
   const file = await save(dl);
   const snap = JSON.parse(fs.readFileSync(file, "utf8"));
@@ -60,7 +62,8 @@ test("full snapshot downloads and restores", async ({ page, seed, login }) => {
 test("restoring over an existing month needs the replace option", async ({ page, seed, login }) => {
   const s = await seed("basic");
   await login();
-  await pz.overview(page, s);
+  await page.goto(`/months/${s.months["2026-09"].id}/reports?tab=export`);
+  await waitForContent(page);
   const [dl] = await Promise.all([page.waitForEvent("download"), page.getByRole("link", { name: "Download full snapshot (JSON)" }).click()]);
   const file = await save(dl);
   await page.goto("/months");

@@ -12,7 +12,7 @@ test.describe("transactions", () => {
     const s = await seed("basic");
     await login();
     await pz.transactions(page, s);
-    const form = page.locator("#add-tx");
+    const form = await pz.addTx(page);
     await form.getByLabel("Date").fill("2026-09-11");
     await form.getByLabel("Amount", { exact: true }).fill("20.80");
     await form.getByLabel("Payee").fill("Farmers market");
@@ -31,7 +31,7 @@ test.describe("transactions", () => {
     const s = await seed("basic");
     await login();
     await pz.transactions(page, s);
-    const form = page.locator("#add-tx");
+    const form = await pz.addTx(page);
     await form.getByLabel("Amount", { exact: true }).fill("10");
     await form.getByLabel("Expense line", { exact: true }).selectOption({ label: "Gas" });
     await form.getByRole("button", { name: "Save transaction" }).click();
@@ -46,15 +46,13 @@ test.describe("transactions", () => {
     await login();
     pz.acceptDialogs(page);
     await pz.transactions(page, s);
-    await page.getByRole("button", { name: "Edit Shell on Sep 6" }).click();
-    const dialog = page.getByRole("dialog", { name: "Edit transaction" });
+    const dialog = await pz.editTx(page, "Edit Shell on Sep 6");
     await dialog.getByLabel("Amount", { exact: true }).fill("55");
     await dialog.getByRole("radio", { name: "Income" }).check();
     await dialog.getByRole("button", { name: "Save" }).click();
     await expect(page.locator("#tx-list li", { hasText: "Shell" })).toContainText("$55.00");
     await expect(page.locator("#tx-list li", { hasText: "Shell" }).locator(".tx-amt")).toHaveClass(/pos/);
-    await page.getByRole("button", { name: "Edit Coffee on Sep 7" }).click();
-    await page.getByRole("dialog", { name: "Edit transaction" }).getByRole("button", { name: "Delete transaction" }).click();
+    await (await pz.editTx(page, "Edit Coffee on Sep 7")).getByRole("button", { name: "Delete transaction" }).click();
     await expect(page.locator("#tx-list li", { hasText: "Coffee" })).toHaveCount(0);
   });
 
@@ -62,7 +60,7 @@ test.describe("transactions", () => {
     const s = await seed("basic");
     await login();
     await pz.transactions(page, s);
-    const form = page.locator("#add-tx");
+    const form = await pz.addTx(page);
     await form.getByRole("radio", { name: "Income" }).check();
     await form.getByLabel("Amount", { exact: true }).fill("1,950");
     await form.getByLabel("Payee").fill("Acme deposit");
@@ -82,7 +80,7 @@ test.describe("transactions", () => {
     await login();
     await pz.transactions(page, s);
     await expect(page.getByText("This month is locked. You can still record transactions.")).toBeVisible();
-    const form = page.locator("#add-tx");
+    const form = await pz.addTx(page);
     await form.getByLabel("Amount", { exact: true }).fill("5");
     await form.getByRole("button", { name: "Save transaction" }).click();
     await expect(pz.toast(page)).toContainText("Transaction saved.");
@@ -95,7 +93,7 @@ test.describe("transactions", () => {
     await page.getByLabel("Month", { exact: true }).fill("2026-11");
     await page.getByRole("button", { name: "Create month" }).click();
     await expect(page).toHaveURL(/\/income$/);
-    await page.getByRole("link", { name: "Transactions" }).click();
+    await page.getByRole("link", { name: "Spending" }).first().click();
     await expect(page.getByRole("heading", { name: "No transactions yet" })).toBeVisible();
   });
 });

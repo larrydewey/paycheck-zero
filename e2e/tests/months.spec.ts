@@ -27,8 +27,8 @@ test.describe("months", () => {
       await expect(page).toHaveURL(/\/income$/);
       await waitForContent(page);
       await page.getByLabel("Name").fill("Pay");
-      await page.getByLabel("Amount per paycheck").fill("100");
-      await page.getByLabel("Schedule").selectOption("monthly");
+      await page.getByLabel("Take-home per paycheck").fill("100");
+      await page.getByLabel("How often").selectOption("monthly");
       await page.getByLabel("Days of the month").fill("31");
       await page.getByRole("button", { name: "Add income" }).click();
       await expect(page).toHaveURL(/\/paychecks\//);
@@ -63,7 +63,7 @@ test.describe("months", () => {
     await expect(page.getByLabel("Copy from")).toHaveValue(/.+/);
     await page.getByRole("button", { name: "Create month" }).click();
     await expect(page).toHaveURL(/\/income$/);
-    await page.getByRole("link", { name: "Month overview" }).click();
+    await page.getByRole("link", { name: "Budget", exact: true }).click();
     await waitForContent(page);
     await expect(pz.line(page, "Rent")).toBeVisible();
     await expect(page.getByLabel("Total planned for Rent")).toHaveValue("0.00");

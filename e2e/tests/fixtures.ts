@@ -141,6 +141,36 @@ export const pz = {
   category(page: Page, name: string) {
     return page.locator(`details.category[data-category="${name}"]`);
   },
+  /** The bottom sheet (details, assign, add/edit forms). */
+  sheet(page: Page) {
+    return page.locator("#sheet");
+  },
+  /** Opens a sheet with the given button and waits for its content. */
+  async openSheet(page: Page, name: string | RegExp, opts: { exact?: boolean } = {}) {
+    await page.getByRole("button", { name, ...opts }).first().click();
+    await expect(page.locator("#sheet[open] .sheet-head")).toBeVisible();
+  },
+  async closeSheet(page: Page) {
+    await page.locator("#sheet").getByRole("button", { name: "Close" }).click();
+    await expect(page.locator("#sheet")).toBeHidden();
+  },
+  /** Opens the details sheet for a budget line. */
+  async lineSheet(page: Page, name: string) {
+    await pz.openSheet(page, `${name} details`, { exact: true });
+  },
+  /** Opens the add-transaction sheet (the floating + button) and returns its form. */
+  async addTx(page: Page) {
+    await page.getByRole("button", { name: "Add a transaction" }).first().click();
+    const form = page.locator("#sheet #add-tx");
+    await expect(form).toBeVisible();
+    return form;
+  },
+  /** Opens a transaction's edit sheet from the Spending list. */
+  async editTx(page: Page, name: string) {
+    await page.getByRole("button", { name }).click();
+    await expect(page.locator("#sheet[open] .tx-form")).toBeVisible();
+    return page.locator("#sheet");
+  },
   sts(page: Page) {
     return page.locator("#safe-to-spend");
   },

@@ -79,6 +79,26 @@ The owner asked for "whatever makes the best user experience". Safe-to-Spend is 
 
 This removes the literal §2.7 double count, where every fully assigned paycheck went negative. A new "Left in its lines" stat shows what the paycheck still has budgeted and unspent.
 
+## Mobile-first redesign (2026-09-25)
+
+Feedback: "too involved… feels like the website was shoved into a smaller window." The UI was rebuilt phone-first.
+
+- **Navigation.** Four sections: Plan (one paycheck), Budget (the month), Spending (transactions) and Insights (reports). They appear as a bottom tab bar on phones and top tabs on wide screens. The app bar holds the month switcher and settings. Income is reached from Plan ("Manage income and paychecks").
+- **One headline per screen.** Plan leads with Safe to Spend, a progress meter and a single "Assign $X" button. Budget leads with income, planned and spent. Spending has a search box and a list grouped by day.
+- **Calm rows.** Each line shows its name, what's left and a progress bar, with the amount edited in place. Everything else is one tap away in a bottom sheet (swipe down or tap outside to close):
+  - line details: funding per paycheck, debt fields, recent transactions, rename, move to another category, reorder, delete;
+  - assign (including Give 10% and copied targets);
+  - paycheck details;
+  - add or edit a transaction;
+  - category edit;
+  - new line.
+- **Floating "Add a transaction" button** on every month screen.
+- **Empty categories** collapse into "+ Name" chips instead of empty cards.
+- **Insights.** Summary shows cards and charts only. The comparison tables moved to a Compare tab.
+- **Wide screens.** A two-column layout with the summary pinned on the left.
+- **Offline.** Month pages carry offline copies of the add/edit transaction and record-actual sheets. Other sheets say they need a connection. The service worker's caches are versioned by a hash of the assets, so a new release never leaves phones on stale CSS or JS.
+- **Deviations from earlier rounds.** Line names are edited in the line sheet, not inline. Drag-and-drop was removed; line sheets use move buttons and a category picker instead. Moving a category steps past empty categories, so the visible order always changes.
+
 ## Known limitations
 
 - Playwright's WebKit build needs Ubuntu 24.04 libraries. On this Omarchy host it runs through Playwright's Docker image automatically (`e2e/global-setup.ts`).

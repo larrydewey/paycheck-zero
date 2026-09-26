@@ -3,9 +3,9 @@ import { test, expect, pz } from "./fixtures";
 test("variance on a locked month: record actual, re-assign, re-lock", async ({ page, seed, login }) => {
   const s = await seed("locked");
   await login();
-  await page.getByText("Paycheck details").click();
-  await page.getByLabel("Amount actually received").fill("1,950");
-  await page.getByRole("button", { name: "Record actual" }).click();
+  await pz.openSheet(page, "Paycheck details");
+  await pz.sheet(page).getByLabel("Amount actually received").fill("1,950");
+  await pz.sheet(page).getByRole("button", { name: "Record actual" }).click();
   const panel = page.locator("#variance-panel");
   await expect(panel).toContainText("Sep 4: planned $2,000.00, received $1,950.00.");
   await expect(panel).toContainText("Net difference between actual and planned income: -$50.00.");
@@ -35,9 +35,9 @@ test("variance on a locked month: record actual, re-assign, re-lock", async ({ p
 test("variance in a draft month can be applied directly", async ({ page, seed, login }) => {
   await seed("balanced");
   await login();
-  await page.getByText("Paycheck details").click();
-  await page.getByLabel("Amount actually received").fill("2100");
-  await page.getByRole("button", { name: "Record actual" }).click();
+  await pz.openSheet(page, "Paycheck details");
+  await pz.sheet(page).getByLabel("Amount actually received").fill("2100");
+  await pz.sheet(page).getByRole("button", { name: "Record actual" }).click();
   await expect(page.locator("#variance-panel")).toContainText("Net difference between actual and planned income: $100.00.");
   await page.locator("#variance-panel").getByRole("button", { name: "Use actual as planned" }).click();
   await expect(page.locator("#zero-status")).toContainText("$100.00 left to assign");
