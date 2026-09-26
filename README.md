@@ -70,7 +70,13 @@ Card payments seen from both accounts become one transfer, and balances are reco
 | **Teller** | A free app at [teller.io](https://teller.io), plus the client certificate and key from its dashboard | `PZ_TELLER_APP_ID`, `PZ_TELLER_ENV` (`sandbox`, `development`, `production`), `PZ_TELLER_CERT`, `PZ_TELLER_KEY` (PEM file paths) |
 | **Plaid** | A [Plaid](https://plaid.com) developer account (production access needs Plaid's approval) | `PZ_PLAID_CLIENT_ID`, `PZ_PLAID_SECRET`, `PZ_PLAID_ENV` (`sandbox`, `production`), optional `PZ_PLAID_COUNTRIES` (default `US`) |
 
-Settings shows which providers are on. Access tokens are stored encrypted with the data key.
+The easiest way to turn Teller or Plaid on is **Settings → Bank providers**:
+- **Teller:** paste the application ID, pick the environment, and upload `certificate.pem` and `private_key.pem`.
+- **Plaid:** enter the client ID and secret.
+
+Saving checks the Plaid keys with Plaid and checks that the Teller certificate is valid. Changes take effect immediately, with no restart. Values saved there override the environment variables above.
+
+Secrets are never shown again after saving. They, and bank access tokens, are stored encrypted with the data key.
 
 ## Architecture
 

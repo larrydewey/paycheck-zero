@@ -107,9 +107,10 @@ test.describe("bank sync (Teller)", () => {
     await login();
     await page.goto("/settings");
     await waitForContent(page);
-    await expect(page.locator('[data-provider="teller"]')).toContainText("on (sandbox).");
-    await expect(page.locator('[data-provider="plaid"]')).toContainText("on (sandbox).");
-    await expect(page.locator('[data-provider="simplefin"]')).toContainText("always available");
+    await expect(page.locator('[data-provider="teller"]')).toContainText("On · sandbox");
+    await expect(page.locator('[data-provider="teller"]')).toContainText("Set by the server's environment variables.");
+    await expect(page.locator('[data-provider="plaid"]')).toContainText("On · sandbox");
+    await expect(page.locator('[data-provider="simplefin"]')).toContainText("Always available.");
   });
 
   test("SimpleFIN: paste a setup token", async ({ page, seed, login, server }) => {

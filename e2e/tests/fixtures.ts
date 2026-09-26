@@ -25,7 +25,7 @@ export interface SeedResult {
 
 type WorkerFixtures = { server: { url: string } };
 type TestFixtures = {
-  seed: (name: Seed, opts?: { today?: string; access_ttl?: number }) => Promise<SeedResult>;
+  seed: (name: Seed, opts?: { today?: string; access_ttl?: number; no_env_providers?: boolean }) => Promise<SeedResult>;
   login: (page?: Page) => Promise<void>;
 };
 
@@ -90,7 +90,7 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
       const r = await fetch(server.url + "/__test/reset", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ seed: name, today: opts.today ?? "2026-09-10", access_ttl: opts.access_ttl }),
+        body: JSON.stringify({ seed: name, today: opts.today ?? "2026-09-10", access_ttl: opts.access_ttl, no_env_providers: opts.no_env_providers ?? false }),
       });
       if (!r.ok) throw new Error("reset failed: " + (await r.text()));
       return (await r.json()) as SeedResult;

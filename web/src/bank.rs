@@ -222,7 +222,10 @@ pub struct Teller {
 impl Teller {
     pub fn new(cfg: &TellerConfig) -> Result<Teller, String> {
         let mut b = reqwest::Client::builder().timeout(std::time::Duration::from_secs(30));
-        if let (Some(cert), Some(key)) = (&cfg.cert, &cfg.key) {
+        if let (Some(cert), Some(key)) = (&cfg.cert_pem, &cfg.key_pem) {
+            let pem = format!("{}\n{}", cert.trim(), key.trim());
+            b = b.identity(reqwest::Identity::from_pem(pem.as_bytes()).map_err(|e| format!("bad Teller certificate: {e}"))?);
+        } else if let (Some(cert), Some(key)) = (&cfg.cert, &cfg.key) {
             let mut pem = std::fs::read(cert).map_err(|e| format!("cannot read {cert}: {e}"))?;
             pem.push(b'\n');
             pem.extend(std::fs::read(key).map_err(|e| format!("cannot read {key}: {e}"))?);
@@ -646,14 +649,113 @@ pub fn provider_name(p: &str) -> &'static str {
     }
 }
 
+/// Provider credentials saved in the app (Settings → Bank providers).
+/// They take precedence over environment variables and are stored
+/// encrypted as one server-wide setting.
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, Deserialize)]
+pub struct SavedProviders {
+    #[serde(default)]
+    pub teller: Option<SavedTeller>,
+    #[serde(default)]
+    pub plaid: Option<SavedPlaid>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, Deserialize)]
+pub struct SavedTeller {
+    pub app_id: String,
+    pub environment: String,
+    #[serde(default)]
+    pub cert_pem: Option<String>,
+    #[serde(default)]
+    pub key_pem: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, Deserialize)]
+pub struct SavedPlaid {
+    pub client_id: String,
+    pub secret: String,
+    pub environment: String,
+    pub countries: Vec<String>,
+}
+
+const PROVIDERS_SETTING: &str = "bank_providers";
+
 impl crate::AppState {
+    /// Teller settings in effect: saved in the app, else from the environment.
+    #[must_use]
+    pub fn teller_cfg(&self) -> Option<crate::config::TellerConfig> {
+        if let Some(s) = self.providers.read().ok().and_then(|p| p.teller.clone()) {
+            return Some(crate::config::TellerConfig {
+                app_id: s.app_id,
+                environment: s.environment,
+                api: crate::config::teller_api(),
+                connect_js: crate::config::teller_connect_js(),
+                cert: None,
+                key: None,
+                cert_pem: s.cert_pem,
+                key_pem: s.key_pem,
+                sync_hours: self.cfg.bank_sync_hours,
+                from_env: false,
+            });
+        }
+        if self.ignore_env_providers() { None } else { self.cfg.teller.clone() }
+    }
+
+    #[must_use]
+    pub fn plaid_cfg(&self) -> Option<crate::config::PlaidConfig> {
+        if let Some(s) = self.providers.read().ok().and_then(|p| p.plaid.clone()) {
+            return Some(crate::config::PlaidConfig {
+                api: crate::config::plaid_api(&s.environment),
+                link_js: crate::config::plaid_link_js(),
+                client_id: s.client_id,
+                secret: s.secret,
+                environment: s.environment,
+                countries: s.countries,
+                from_env: false,
+            });
+        }
+        if self.ignore_env_providers() { None } else { self.cfg.plaid.clone() }
+    }
+
+    #[must_use]
+    pub fn saved_providers(&self) -> SavedProviders {
+        self.providers.read().map(|p| p.clone()).unwrap_or_default()
+    }
+
+    /// Loads saved provider settings (at start, and after a test reset).
+    pub async fn load_providers(&self) {
+        let saved = match self.store.setting(PROVIDERS_SETTING).await {
+            Ok(Some(sealed)) => open(&self.cfg.data_key, &sealed).and_then(|j| serde_json::from_str(&j).ok()).unwrap_or_else(|| {
+                tracing::warn!("saved bank provider settings can't be read (data key changed?); set them again in Settings");
+                SavedProviders::default()
+            }),
+            _ => SavedProviders::default(),
+        };
+        if let Ok(mut p) = self.providers.write() {
+            *p = saved;
+        }
+    }
+
+    pub async fn save_providers(&self, p: SavedProviders) -> AppResult<()> {
+        let value = if p == SavedProviders::default() {
+            None
+        } else {
+            Some(seal(&self.cfg.data_key, &serde_json::to_string(&p).map_err(|e| AppError::Internal(e.to_string()))?))
+        };
+        self.store.set_setting(PROVIDERS_SETTING, value.as_deref()).await?;
+        if let Ok(mut g) = self.providers.write() {
+            *g = p;
+        }
+        Ok(())
+    }
+
     pub fn teller(&self) -> AppResult<Teller> {
-        let cfg = self.cfg.teller.as_ref().ok_or_else(|| AppError::bad(t("bank.not_configured")))?;
-        Teller::new(cfg).map_err(AppError::Internal)
+        let cfg = self.teller_cfg().ok_or_else(|| AppError::bad(t("bank.not_configured")))?;
+        Teller::new(&cfg).map_err(AppError::Internal)
     }
 
     pub fn plaid(&self) -> AppResult<Plaid> {
-        self.cfg.plaid.as_ref().map(Plaid::new).ok_or_else(|| AppError::bad(t("bank.not_configured")))
+        self.plaid_cfg().as_ref().map(Plaid::new).ok_or_else(|| AppError::bad(t("bank.not_configured")))
     }
 }
 

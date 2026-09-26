@@ -14,7 +14,15 @@
 //! - `refresh_tokens` and `sync_ops` support auth and offline sync.
 
 /// Ordered migrations: (version, statements).
-pub const MIGRATIONS: &[(i64, &[&str])] = &[(1, V1), (2, V2), (3, V3), (4, V4), (5, V5)];
+pub const MIGRATIONS: &[(i64, &[&str])] = &[(1, V1), (2, V2), (3, V3), (4, V4), (5, V5), (6, V6)];
+
+/// v6: server-wide settings made in the app (bank provider credentials,
+/// stored encrypted by the web layer).
+const V6: &[&str] = &[r#"CREATE TABLE app_settings (
+    name            VARCHAR(100) NOT NULL PRIMARY KEY,
+    value           VARCHAR(20000) NOT NULL,
+    updated_at      VARCHAR(40) NOT NULL
+)"#];
 
 /// v5: bank sync. Imported transactions and linked accounts keep the bank's
 /// id; `bank_links` holds connections (tokens encrypted by the web layer);
@@ -272,6 +280,7 @@ const V1: &[&str] = &[
 
 /// Tables in child-first order (for resets).
 pub const TABLES_CHILD_FIRST: &[&str] = &[
+    "app_settings",
     "bank_seen",
     "bank_links",
     "goals",

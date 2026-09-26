@@ -150,3 +150,14 @@ test("accessibility: bank connection sheets", async ({ page, seed, login }) => {
   await waitForContent(page);
   await audit(page);
 });
+
+test("accessibility: Settings → Bank providers forms", async ({ page, seed, login }) => {
+  await seed("basic", { no_env_providers: true });
+  await login();
+  for (const scheme of ["light", "dark"] as const) {
+    await page.emulateMedia({ colorScheme: scheme });
+    await page.goto("/settings");
+    await waitForContent(page);
+    await audit(page);
+  }
+});

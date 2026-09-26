@@ -59,6 +59,10 @@ pub struct AppState {
     pub clock: Clock,
     access_ttl: AtomicI64,
     pub refresh_grace: tokio::sync::Mutex<HashMap<String, (Instant, auth::Tokens, Id)>>,
+    /// Bank provider credentials saved in the app.
+    pub providers: RwLock<bank::SavedProviders>,
+    /// Test mode: behave as if no provider environment variables were set.
+    ignore_env_providers: std::sync::atomic::AtomicBool,
 }
 
 impl AppState {
@@ -70,7 +74,18 @@ impl AppState {
             clock: Clock::default(),
             access_ttl: AtomicI64::new(auth::ACCESS_TTL_SECS),
             refresh_grace: tokio::sync::Mutex::new(HashMap::new()),
+            providers: RwLock::new(bank::SavedProviders::default()),
+            ignore_env_providers: std::sync::atomic::AtomicBool::new(false),
         }
+    }
+
+    #[must_use]
+    pub fn ignore_env_providers(&self) -> bool {
+        self.ignore_env_providers.load(Ordering::Relaxed)
+    }
+
+    pub fn set_ignore_env_providers(&self, on: bool) {
+        self.ignore_env_providers.store(on, Ordering::Relaxed);
     }
 
     #[must_use]
@@ -87,7 +102,9 @@ pub type Shared = Arc<AppState>;
 
 pub async fn build_state(cfg: Config) -> Result<Shared, paycheckzero_storage::StorageError> {
     let store = Store::connect(&cfg.database_url).await?;
-    Ok(Arc::new(AppState::new(store, cfg)))
+    let st = Arc::new(AppState::new(store, cfg));
+    st.load_providers().await;
+    Ok(st)
 }
 
 fn asset(body: &'static [u8], content_type: &'static str, cache: &'static str) -> Response {

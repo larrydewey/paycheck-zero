@@ -274,6 +274,9 @@ struct ResetReq {
     today: Option<NaiveDate>,
     #[serde(default)]
     access_ttl: Option<i64>,
+    /// Ignore provider environment variables (to test Settings → Bank providers).
+    #[serde(default)]
+    no_env_providers: bool,
 }
 
 fn d(y: i32, m: u32, day: u32) -> NaiveDate {
@@ -359,6 +362,8 @@ async fn seed_user(st: &Shared) -> AppResult<UserRecord> {
 async fn reset(State(st): State<Shared>, Json(r): Json<ResetReq>) -> AppResult<Json<Value>> {
     st.store.reset().await?;
     fake_teller::reset();
+    st.set_ignore_env_providers(r.no_env_providers);
+    st.load_providers().await;
     st.refresh_grace.lock().await.clear();
     st.clock.set_fixed(Some(r.today.unwrap_or(d(2026, 9, 10))));
     st.set_access_ttl(r.access_ttl.unwrap_or(crate::auth::ACCESS_TTL_SECS));

@@ -812,6 +812,23 @@ impl Store {
         Ok(())
     }
 
+    /// A server-wide setting.
+    pub async fn setting(&self, name: &str) -> Result<Option<String>> {
+        let row = sqlx::query(&self.sql("SELECT value FROM app_settings WHERE name = ?")).bind(name).fetch_optional(&self.pool).await?;
+        Ok(row.map(|r| r.try_get::<String, _>(0)).transpose()?)
+    }
+
+    /// Saves (or with `None` removes) a server-wide setting.
+    pub async fn set_setting(&self, name: &str, value: Option<&str>) -> Result<()> {
+        let mut tx = self.pool.begin().await?;
+        self.exec(&mut tx, "DELETE FROM app_settings WHERE name = ?", vec![Bind::S(name.to_string())]).await?;
+        if let Some(v) = value {
+            self.exec(&mut tx, "INSERT INTO app_settings (name, value, updated_at) VALUES (?, ?, ?)", vec![Bind::S(name.to_string()), Bind::S(v.to_string()), Bind::S(now())]).await?;
+        }
+        tx.commit().await?;
+        Ok(())
+    }
+
     /// Every user id (for the background bank sync).
     pub async fn user_ids(&self) -> Result<Vec<Id>> {
         let rows = sqlx::query("SELECT id FROM users").fetch_all(&self.pool).await?;

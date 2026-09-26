@@ -49,6 +49,7 @@ pub struct PlaidConfig {
     pub api: String,
     pub link_js: String,
     pub countries: Vec<String>,
+    pub from_env: bool,
 }
 
 impl PlaidConfig {
@@ -56,13 +57,14 @@ impl PlaidConfig {
         let client_id = std::env::var("PZ_PLAID_CLIENT_ID").ok().filter(|s| !s.trim().is_empty())?;
         let secret = std::env::var("PZ_PLAID_SECRET").ok().filter(|s| !s.trim().is_empty())?;
         let environment = std::env::var("PZ_PLAID_ENV").unwrap_or_else(|_| "sandbox".into());
-        let api = std::env::var("PZ_PLAID_API").unwrap_or_else(|_| format!("https://{environment}.plaid.com"));
+        let api = plaid_api(&environment);
         Some(PlaidConfig {
             client_id: client_id.trim().into(),
             secret: secret.trim().into(),
             environment,
             api,
-            link_js: std::env::var("PZ_PLAID_LINK_JS").unwrap_or_else(|_| "https://cdn.plaid.com/link/v2/stable/link-initialize.js".into()),
+            from_env: true,
+            link_js: plaid_link_js(),
             countries: std::env::var("PZ_PLAID_COUNTRIES").unwrap_or_else(|_| "US".into()).split(',').map(|c| c.trim().to_uppercase()).filter(|c| !c.is_empty()).collect(),
         })
     }
@@ -78,7 +80,33 @@ pub struct TellerConfig {
     pub connect_js: String,
     pub cert: Option<String>,
     pub key: Option<String>,
+    /// Certificate and key contents (set in the app) instead of file paths.
+    pub cert_pem: Option<String>,
+    pub key_pem: Option<String>,
     pub sync_hours: u64,
+    /// Where it came from: environment variables, or saved in the app.
+    pub from_env: bool,
+}
+
+/// Teller API base (tests point this at the built-in fake).
+#[must_use]
+pub fn teller_api() -> String {
+    std::env::var("PZ_TELLER_API").unwrap_or_else(|_| "https://api.teller.io".into())
+}
+
+#[must_use]
+pub fn teller_connect_js() -> String {
+    std::env::var("PZ_TELLER_CONNECT_JS").unwrap_or_else(|_| "https://cdn.teller.io/connect/connect.js".into())
+}
+
+#[must_use]
+pub fn plaid_api(environment: &str) -> String {
+    std::env::var("PZ_PLAID_API").unwrap_or_else(|_| format!("https://{environment}.plaid.com"))
+}
+
+#[must_use]
+pub fn plaid_link_js() -> String {
+    std::env::var("PZ_PLAID_LINK_JS").unwrap_or_else(|_| "https://cdn.plaid.com/link/v2/stable/link-initialize.js".into())
 }
 
 impl TellerConfig {
@@ -87,11 +115,14 @@ impl TellerConfig {
         Some(TellerConfig {
             app_id: app_id.trim().to_string(),
             environment: std::env::var("PZ_TELLER_ENV").unwrap_or_else(|_| "development".into()),
-            api: std::env::var("PZ_TELLER_API").unwrap_or_else(|_| "https://api.teller.io".into()),
-            connect_js: std::env::var("PZ_TELLER_CONNECT_JS").unwrap_or_else(|_| "https://cdn.teller.io/connect/connect.js".into()),
+            api: teller_api(),
+            connect_js: teller_connect_js(),
             cert: std::env::var("PZ_TELLER_CERT").ok().filter(|s| !s.is_empty()),
             key: std::env::var("PZ_TELLER_KEY").ok().filter(|s| !s.is_empty()),
+            cert_pem: None,
+            key_pem: None,
             sync_hours: sync_hours(),
+            from_env: true,
         })
     }
 }

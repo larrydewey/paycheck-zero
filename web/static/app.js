@@ -596,6 +596,23 @@
     row._keepT = setTimeout(function () { if (!row.contains(document.activeElement)) row.classList.remove("keep"); }, 400);
   });
 
+  // Certificate files for bank providers: read the PEM text into its field.
+  document.addEventListener("change", function (e) {
+    var input = e.target;
+    if (!(input instanceof HTMLInputElement) || !input.dataset.pemInto || !input.files || !input.files[0]) return;
+    var file = input.files[0];
+    var target = byId(input.dataset.pemInto);
+    var name = document.querySelector('[data-pem-name="' + input.dataset.pemInto + '"]');
+    var reader = new FileReader();
+    reader.onload = function () {
+      var text = String(reader.result || "");
+      if (text.indexOf("-----BEGIN") === -1) { toast("error", t("pem_invalid")); input.value = ""; return; }
+      if (target) target.value = text;
+      if (name) name.textContent = "✓ " + file.name;
+    };
+    reader.readAsText(file);
+  });
+
   // Bank forms share the "Import transactions from" date in the sheet.
   document.addEventListener("submit", function (e) {
     var f = e.target; if (!(f instanceof HTMLFormElement)) return;

@@ -205,6 +205,14 @@ async fn storage_behaviour() {
     assert_eq!(back.goals.len(), 1, "goals tracking a deleted account go with it");
     assert_eq!(back.balance(&chk, &[]), Cents::new(240_000));
 
+    // Server-wide settings.
+    assert_eq!(s.setting("bank_providers").await.unwrap(), None);
+    s.set_setting("bank_providers", Some("sealed-1")).await.unwrap();
+    s.set_setting("bank_providers", Some("sealed-2")).await.unwrap();
+    assert_eq!(s.setting("bank_providers").await.unwrap().as_deref(), Some("sealed-2"));
+    s.set_setting("bank_providers", None).await.unwrap();
+    assert_eq!(s.setting("bank_providers").await.unwrap(), None);
+
     s.reset().await.unwrap();
     assert_eq!(s.count_users().await.unwrap(), 0);
 }

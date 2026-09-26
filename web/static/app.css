@@ -681,3 +681,16 @@ details.more-options > summary { cursor: pointer; font-weight: 650; color: var(-
 .provider-status code { font-size: 0.8rem; }
 .synced { color: var(--ok); }
 .synced .icon { width: 0.9em; height: 0.9em; }
+
+/* ------------------------------------------------------------------ bank providers */
+.providers-card .provider-block { border-top: 1px solid var(--divider); padding: 12px 0; }
+.providers-card .provider-block:first-of-type { border-top: 0; }
+.provider-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.provider-top h3 { margin: 0; }
+.provider-block p { margin: 4px 0 8px; }
+.provider-form > summary { cursor: pointer; font-weight: 650; color: var(--primary-strong); padding: 6px 0; }
+.provider-form form { margin-top: 8px; }
+.pem-field input[type=file] { font-size: 0.85rem; max-width: 100%; }
+.pem-paste textarea { width: 100%; font: 0.75rem ui-monospace, monospace; border-radius: 10px; border: 1px solid var(--input-border); background: var(--input-bg); color: var(--text); padding: 6px 8px; }
+.pem-paste summary { cursor: pointer; color: var(--primary-strong); padding: 4px 0; }
+.more-providers { margin: 0; }

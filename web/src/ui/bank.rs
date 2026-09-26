@@ -122,7 +122,7 @@ pub async fn connect_sheet(State(st): State<Shared>, Extension(user): Extension<
         }
         h3 class="provider-h" { (t("bank.choose_provider")) }
         div class="providers" {
-            @if let Some(cfg) = st.cfg.teller.as_ref() {
+            @if let Some(cfg) = st.teller_cfg().as_ref() {
                 section class="provider" aria-labelledby="pv-teller" {
                     h4 id="pv-teller" { "Teller" }
                     p class="small muted" { (t("bank.pv_teller")) }
@@ -130,7 +130,7 @@ pub async fn connect_sheet(State(st): State<Shared>, Extension(user): Extension<
                     (connect_button(cfg, &t("bank.continue_teller"), None, "btn primary block"))
                 }
             }
-            @if let (Some(cfg), Some(token)) = (st.cfg.plaid.as_ref(), plaid_token.as_deref()) {
+            @if let (Some(cfg), Some(token)) = (st.plaid_cfg().as_ref(), plaid_token.as_deref()) {
                 section class="provider" aria-labelledby="pv-plaid" {
                     h4 id="pv-plaid" { "Plaid" }
                     p class="small muted" { (t("bank.pv_plaid")) }
@@ -138,10 +138,13 @@ pub async fn connect_sheet(State(st): State<Shared>, Extension(user): Extension<
                     (plaid_button(cfg, token, &t("bank.continue_plaid"), "btn primary block"))
                 }
             }
+            @if st.teller_cfg().is_none() || st.plaid_cfg().is_none() {
+                p class="small muted more-providers" { (t("bank.more_providers")) " " a href="/settings#bank-providers" { (t("bank.more_providers_link")) } }
+            }
             section class="provider" aria-labelledby="pv-sf" {
                 h4 id="pv-sf" { "SimpleFIN Bridge" }
                 p class="small muted" { (t("bank.pv_simplefin")) }
-                details class="more-options" open[st.cfg.teller.is_none() && st.cfg.plaid.is_none()] {
+                details class="more-options" open[st.teller_cfg().is_none() && st.plaid_cfg().is_none()] {
                     summary { (t("bank.sf_open")) }
                     (simplefin_form(&view, None))
                 }
@@ -237,13 +240,13 @@ pub async fn link_sheet(State(st): State<Shared>, Extension(user): Extension<Aut
                     (simplefin_form(&view, Some(&link.id)))
                 },
                 crate::bank::PLAID => {
-                    @if let (Some(cfg), Some(token)) = (st.cfg.plaid.as_ref(), plaid_update.as_deref()) {
+                    @if let (Some(cfg), Some(token)) = (st.plaid_cfg().as_ref(), plaid_update.as_deref()) {
                         (plaid_form(&view, Some(&link.id)))
                         (plaid_button(cfg, token, &t("bank.reconnect"), "btn primary block"))
                     }
                 },
                 _ => {
-                    @if let Some(cfg) = st.cfg.teller.as_ref() {
+                    @if let Some(cfg) = st.teller_cfg().as_ref() {
                         (enroll_form(&view))
                         (connect_button(cfg, &t("bank.reconnect"), Some(&link.enrollment_id), "btn primary block"))
                     }
@@ -428,7 +431,7 @@ pub async fn enroll(State(st): State<Shared>, Extension(user): Extension<AuthUse
     if token.is_empty() || enrollment.is_empty() {
         return failed(&st, &user, &headers, &view, &AppError::bad(t("bank.connect_failed"))).await;
     }
-    if st.cfg.teller.is_none() {
+    if st.teller_cfg().is_none() {
         return failed(&st, &user, &headers, &view, &AppError::bad(t("bank.not_configured"))).await;
     }
     let institution = match field(&f, "institution") {
@@ -567,34 +570,240 @@ pub async fn disconnect(State(st): State<Shared>, Extension(user): Extension<Aut
     }
 }
 
-/// Settings card: which bank providers are available, and how to add them.
+/// Settings → Bank providers: turn Teller and Plaid on from the app.
+/// Secrets are never shown again; leaving a secret blank keeps it.
 pub fn settings_card(st: &Shared) -> Markup {
+    let saved = st.saved_providers();
+    let teller = st.teller_cfg();
+    let plaid = st.plaid_cfg();
+    let view = View::Settings;
+    let env_sel = |current: &str, options: &[(&str, &str)]| html! {
+        @for (v, label) in options { option value=(v) selected[*v == current] { (t(label)) } }
+    };
     html! {
-        section class="card" aria-labelledby="bank-h" {
+        section class="card providers-card" aria-labelledby="bank-h" id="bank-providers" {
             h2 id="bank-h" class="h3" { (t("bank.settings_title")) }
             p class="muted small" { (t("bank.settings_intro")) }
-            ul class="provider-status" {
-                li data-provider="simplefin" {
-                    strong { "SimpleFIN Bridge" } " — " (icon("check")) " " (t("bank.settings_sf"))
-                }
-                li data-provider="teller" {
-                    strong { "Teller" } " — "
-                    @match st.cfg.teller.as_ref() {
-                        Some(cfg) => {
-                            (icon("check")) " " (tf("bank.settings_on", &[("env", &cfg.environment)]))
-                            @if cfg.cert.is_none() && cfg.environment != "sandbox" { " " span class="warn-text" { (t("bank.settings_no_cert")) } }
-                        },
-                        None => { span class="muted" { (t("bank.settings_off_teller")) } " " code { "PZ_TELLER_APP_ID" } ", " code { "PZ_TELLER_ENV" } ", " code { "PZ_TELLER_CERT" } ", " code { "PZ_TELLER_KEY" } },
+
+            div class="provider-block" data-provider="simplefin" {
+                div class="provider-top" { h3 { "SimpleFIN Bridge" } span class="pill ok tiny" { (icon("check")) " " (t("bank.status_on")) } }
+                p class="small muted" { (t("bank.settings_sf")) }
+            }
+
+            div class="provider-block" data-provider="teller" {
+                div class="provider-top" {
+                    h3 { "Teller" }
+                    @match &teller {
+                        Some(c) => { span class="pill ok tiny" { (icon("check")) " " (tf("bank.status_on_env", &[("env", &c.environment)])) } },
+                        None => { span class="pill neutral tiny" { (t("bank.status_off")) } },
                     }
                 }
-                li data-provider="plaid" {
-                    strong { "Plaid" } " — "
-                    @match st.cfg.plaid.as_ref() {
-                        Some(cfg) => { (icon("check")) " " (tf("bank.settings_on", &[("env", &cfg.environment)])) },
-                        None => { span class="muted" { (t("bank.settings_off_plaid")) } " " code { "PZ_PLAID_CLIENT_ID" } ", " code { "PZ_PLAID_SECRET" } ", " code { "PZ_PLAID_ENV" } },
+                p class="small muted" { (t("bank.pv_teller")) " " a href="https://teller.io" target="_blank" rel="noopener" { "teller.io" } }
+                @if teller.as_ref().is_some_and(|c| c.from_env) { p class="small" { (t("bank.from_env")) } }
+                details class="provider-form" open[teller.is_none()] {
+                    summary { (if teller.is_some() { t("bank.edit_settings") } else { t("bank.turn_on") }) }
+                    form class="stack" id="teller-settings" data-clear data-on:submit__prevent=(post_form("/ui/settings/teller")) {
+                        (view_input(&view))
+                        div class="field" {
+                            label for="ts-app" { (t("bank.teller_app_id")) }
+                            input id="ts-app" type="text" name="app_id" required autocomplete="off" spellcheck="false" placeholder="app_…"
+                                value=[teller.as_ref().map(|c| c.app_id.clone())];
+                        }
+                        div class="field" {
+                            label for="ts-env" { (t("bank.environment")) }
+                            select id="ts-env" name="environment" {
+                                (env_sel(teller.as_ref().map_or("development", |c| c.environment.as_str()), &[("sandbox", "bank.env_sandbox"), ("development", "bank.env_development"), ("production", "bank.env_production")]))
+                            }
+                        }
+                        div class="two-col" {
+                            (pem_field("ts-cert", "cert_pem", &t("bank.teller_cert"), saved.teller.as_ref().is_some_and(|x| x.cert_pem.is_some())))
+                            (pem_field("ts-key", "key_pem", &t("bank.teller_key"), saved.teller.as_ref().is_some_and(|x| x.key_pem.is_some())))
+                        }
+                        p class="hint" { (t("bank.teller_cert_hint")) }
+                        span class="field-error" aria-live="polite" {}
+                        button type="submit" class="btn primary" { (t("bank.save_provider")) }
+                    }
+                }
+                @if saved.teller.is_some() {
+                    form class="inline" data-on:submit__prevent=(post_form("/ui/settings/teller/remove")) {
+                        (view_input(&view))
+                        button type="submit" class="btn small" data-confirm=(t("bank.remove_confirm")) { (t("bank.remove_provider")) }
+                    }
+                }
+            }
+
+            div class="provider-block" data-provider="plaid" {
+                div class="provider-top" {
+                    h3 { "Plaid" }
+                    @match &plaid {
+                        Some(c) => { span class="pill ok tiny" { (icon("check")) " " (tf("bank.status_on_env", &[("env", &c.environment)])) } },
+                        None => { span class="pill neutral tiny" { (t("bank.status_off")) } },
+                    }
+                }
+                p class="small muted" { (t("bank.pv_plaid")) " " a href="https://dashboard.plaid.com" target="_blank" rel="noopener" { "dashboard.plaid.com" } }
+                @if plaid.as_ref().is_some_and(|c| c.from_env) { p class="small" { (t("bank.from_env")) } }
+                details class="provider-form" open[plaid.is_none()] {
+                    summary { (if plaid.is_some() { t("bank.edit_settings") } else { t("bank.turn_on") }) }
+                    form class="stack" id="plaid-settings" data-clear data-on:submit__prevent=(post_form("/ui/settings/plaid")) {
+                        (view_input(&view))
+                        div class="two-col" {
+                            div class="field" {
+                                label for="ps-id" { (t("bank.plaid_client_id")) }
+                                input id="ps-id" type="text" name="client_id" required autocomplete="off" spellcheck="false"
+                                    value=[plaid.as_ref().map(|c| c.client_id.clone())];
+                            }
+                            div class="field" {
+                                label for="ps-secret" { (t("bank.plaid_secret")) }
+                                input id="ps-secret" type="password" name="secret" autocomplete="new-password" required[saved.plaid.is_none()]
+                                    placeholder=(if saved.plaid.is_some() { t("bank.secret_saved") } else { String::new() });
+                            }
+                        }
+                        div class="two-col" {
+                            div class="field" {
+                                label for="ps-env" { (t("bank.environment")) }
+                                select id="ps-env" name="environment" {
+                                    (env_sel(plaid.as_ref().map_or("sandbox", |c| c.environment.as_str()), &[("sandbox", "bank.env_sandbox"), ("production", "bank.env_production")]))
+                                }
+                            }
+                            div class="field" {
+                                label for="ps-countries" { (t("bank.plaid_countries")) }
+                                input id="ps-countries" type="text" name="countries" autocomplete="off" value=(plaid.as_ref().map_or_else(|| "US".to_string(), |c| c.countries.join(", ")));
+                            }
+                        }
+                        p class="hint" { (t("bank.plaid_hint")) }
+                        span class="field-error" aria-live="polite" {}
+                        button type="submit" class="btn primary" { (t("bank.save_provider")) }
+                    }
+                }
+                @if saved.plaid.is_some() {
+                    form class="inline" data-on:submit__prevent=(post_form("/ui/settings/plaid/remove")) {
+                        (view_input(&view))
+                        button type="submit" class="btn small" data-confirm=(t("bank.remove_confirm")) { (t("bank.remove_provider")) }
                     }
                 }
             }
         }
+    }
+}
+
+/// A PEM file picker; `app.js` reads the file into the (collapsible)
+/// textarea, which can also be pasted into directly.
+fn pem_field(id: &str, name: &str, label: &str, saved: bool) -> Markup {
+    html! {
+        div class="field pem-field" {
+            label for=(format!("{id}-file")) { (label) }
+            input id=(format!("{id}-file")) type="file" accept=".pem,.crt,.key,text/plain" data-pem-into=(id);
+            span class="small muted" data-pem-name=(id) { @if saved { (icon("check")) " " (t("bank.file_saved")) } }
+            details class="pem-paste" {
+                summary class="small" { (t("bank.paste_instead")) }
+                label class="visually-hidden" for=(id) { (tf("bank.paste_label", &[("what", label)])) }
+                textarea id=(id) name=(name) rows="3" spellcheck="false" autocomplete="off" placeholder="-----BEGIN …-----" {}
+            }
+        }
+    }
+}
+
+fn pick_env(v: &str, allowed: &[&str], default: &str) -> String {
+    if allowed.contains(&v) { v.to_string() } else { default.to_string() }
+}
+
+pub async fn save_teller(State(st): State<Shared>, Extension(user): Extension<AuthUser>, headers: HeaderMap, Form(f): F) -> Sse {
+    let user = user.0;
+    let view = View::Settings;
+    let app_id = field(&f, "app_id").to_string();
+    if app_id.is_empty() {
+        return failed(&st, &user, &headers, &view, &AppError::bad(t("bank.err_app_id"))).await;
+    }
+    let environment = pick_env(field(&f, "environment"), &["sandbox", "development", "production"], "development");
+    let mut saved = st.saved_providers();
+    let old = saved.teller.clone();
+    let pem = |k: &str, old: Option<String>| {
+        let v = field(&f, k).trim().to_string();
+        if v.is_empty() { old } else { Some(v) }
+    };
+    let cert = pem("cert_pem", old.as_ref().and_then(|o| o.cert_pem.clone()));
+    let key = pem("key_pem", old.as_ref().and_then(|o| o.key_pem.clone()));
+    if environment != "sandbox" && (cert.is_none() || key.is_none()) {
+        return failed(&st, &user, &headers, &view, &AppError::bad(t("bank.err_cert_needed"))).await;
+    }
+    let candidate = crate::config::TellerConfig {
+        app_id: app_id.clone(),
+        environment: environment.clone(),
+        api: crate::config::teller_api(),
+        connect_js: crate::config::teller_connect_js(),
+        cert: None,
+        key: None,
+        cert_pem: cert.clone(),
+        key_pem: key.clone(),
+        sync_hours: st.cfg.bank_sync_hours,
+        from_env: false,
+    };
+    if let Err(e) = crate::bank::Teller::new(&candidate) {
+        return failed(&st, &user, &headers, &view, &AppError::bad(format!("{} {e}", t("bank.err_cert_bad")))).await;
+    }
+    saved.teller = Some(crate::bank::SavedTeller { app_id, environment, cert_pem: cert, key_pem: key });
+    match st.save_providers(saved).await {
+        Ok(()) => done(&st, &user, &headers, &view, vec![toast(ToastKind::Success, &t("bank.teller_saved"), None)]).await,
+        Err(e) => failed(&st, &user, &headers, &view, &e).await,
+    }
+}
+
+pub async fn save_plaid(State(st): State<Shared>, Extension(user): Extension<AuthUser>, headers: HeaderMap, Form(f): F) -> Sse {
+    let user = user.0;
+    let view = View::Settings;
+    let mut saved = st.saved_providers();
+    let client_id = field(&f, "client_id").to_string();
+    let secret = match (field(&f, "secret"), saved.plaid.as_ref()) {
+        ("", Some(old)) => old.secret.clone(),
+        (s, _) => s.to_string(),
+    };
+    if client_id.is_empty() || secret.is_empty() {
+        return failed(&st, &user, &headers, &view, &AppError::bad(t("bank.err_plaid_keys"))).await;
+    }
+    let environment = pick_env(field(&f, "environment"), &["sandbox", "production"], "sandbox");
+    let mut countries: Vec<String> = field(&f, "countries").split(',').map(|c| c.trim().to_uppercase()).filter(|c| c.len() == 2).collect();
+    if countries.is_empty() {
+        countries.push("US".into());
+    }
+    let candidate = crate::config::PlaidConfig {
+        client_id: client_id.clone(),
+        secret: secret.clone(),
+        api: crate::config::plaid_api(&environment),
+        link_js: crate::config::plaid_link_js(),
+        environment: environment.clone(),
+        countries: countries.clone(),
+        from_env: false,
+    };
+    // Check the keys with Plaid before saving them.
+    if let Err(crate::bank::ProviderError::Other(m) | crate::bank::ProviderError::Reconnect(m)) =
+        crate::bank::Plaid::new(&candidate).link_token(user.id.as_str(), None).await
+    {
+        return failed(&st, &user, &headers, &view, &AppError::bad(format!("{} {m}", t("bank.err_plaid_rejected")))).await;
+    }
+    saved.plaid = Some(crate::bank::SavedPlaid { client_id, secret, environment, countries });
+    match st.save_providers(saved).await {
+        Ok(()) => done(&st, &user, &headers, &view, vec![toast(ToastKind::Success, &t("bank.plaid_saved"), None)]).await,
+        Err(e) => failed(&st, &user, &headers, &view, &e).await,
+    }
+}
+
+pub async fn remove_teller(State(st): State<Shared>, Extension(user): Extension<AuthUser>, headers: HeaderMap) -> Sse {
+    remove_provider(&st, &user.0, &headers, true).await
+}
+
+pub async fn remove_plaid(State(st): State<Shared>, Extension(user): Extension<AuthUser>, headers: HeaderMap) -> Sse {
+    remove_provider(&st, &user.0, &headers, false).await
+}
+
+async fn remove_provider(st: &Shared, user: &UserRecord, headers: &HeaderMap, teller: bool) -> Sse {
+    let mut saved = st.saved_providers();
+    if teller {
+        saved.teller = None;
+    } else {
+        saved.plaid = None;
+    }
+    match st.save_providers(saved).await {
+        Ok(()) => done(st, user, headers, &View::Settings, vec![toast(ToastKind::Success, &t("bank.provider_removed"), None)]).await,
+        Err(e) => failed(st, user, headers, &View::Settings, &e).await,
     }
 }

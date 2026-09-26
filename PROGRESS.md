@@ -178,6 +178,18 @@ Behavior:
 - Test mode includes fake Teller, SimpleFIN and Plaid servers, so the E2E suite covers every flow without real banks.
 - Fix: incremental sync looks back 30 days from the app's "today" (it had used the wall clock).
 
+## Settings → Bank providers (2026-09-25)
+
+Teller and Plaid can be turned on from the app instead of environment variables.
+- **Teller:** application ID, environment, and certificate and key uploads. The files are read in the browser, or can be pasted.
+- **Plaid:** client ID, secret, environment and countries.
+- **Checks on save:** Plaid keys are verified with a link-token call; the Teller certificate and key are parsed as a client identity; outside sandbox a certificate is required.
+- **Storage:** saved settings are encrypted in the new `app_settings` table (schema v6). They take effect immediately and override the environment.
+- **Secrets are never rendered back.** A blank secret keeps the saved one, and forms clear after saving.
+- **Connect sheet:** when a provider is off, it links to Settings.
+- **Background sync** now runs even without Teller or Plaid, because SimpleFIN is always available.
+- **Tests:** a test-mode reset flag ignores the environment providers so the UI flow can be tested. The fixtures include a self-signed test certificate.
+
 ## Known limitations
 
 - Playwright's WebKit build needs Ubuntu 24.04 libraries. On this Omarchy host it runs through Playwright's Docker image automatically (`e2e/global-setup.ts`).
