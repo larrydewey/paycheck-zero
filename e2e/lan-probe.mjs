@@ -1,0 +1,18 @@
+import { chromium, devices } from "@playwright/test";
+const url = process.argv[2];
+const b = await chromium.launch();
+const ctx = await b.newContext({ ...devices["Pixel 7"] });
+const p = await ctx.newPage();
+const logs = [];
+p.on("console", (m) => logs.push(m.type() + ": " + m.text()));
+p.on("pageerror", (e) => logs.push("pageerror: " + e.message));
+p.on("response", (r) => { if (r.url().includes("/ui/")) logs.push("resp " + r.status() + " " + r.url()); });
+await p.goto(url + "/login");
+console.log("secureContext:", await p.evaluate(() => window.isSecureContext));
+await p.getByLabel("Email").fill("demo@paycheckzero.test");
+await p.getByLabel("Password").fill("correct-horse-battery");
+await p.getByRole("button", { name: "Sign in" }).click();
+await p.waitForTimeout(2500);
+console.log("final url:", p.url());
+console.log(logs.join("\n"));
+await b.close();

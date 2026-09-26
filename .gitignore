@@ -13,3 +13,15 @@ Cargo.lock
 
 # OS
 .DS_Store
+
+# Local runtime / test artifacts
+*.db
+*.db-*
+node_modules/
+test-results/
+playwright-report/
+e2e/.run/
+paycheckzero.key
+*.key
+*.db.bak*
+*.bak-before-*

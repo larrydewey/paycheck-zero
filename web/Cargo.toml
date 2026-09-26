@@ -3,23 +3,38 @@ name = "paycheckzero-web"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "PaycheckZero web server: Axum + Datastar, JWT auth, REST API, SSE, CSV export."
+description = "PaycheckZero web server: Axum + Datastar (HTML + SSE), JWT auth, REST API, exports, offline sync."
+
+[[bin]]
+name = "paycheckzero"
+path = "src/main.rs"
 
 [dependencies]
 paycheckzero-core = { path = "../core" }
 paycheckzero-storage = { path = "../storage" }
 
-axum = { version = "0.8", features = ["json", "form"] }
-axum-extra = { version = "0.10", features = ["typed-header", "cookie"] }
-tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
-tower = { version = "0.5" }
-tower-http = { version = "0.6", features = ["trace"] }
-
-serde = { workspace = true }
-serde_json = { workspace = true }
-chrono = { workspace = true, features = ["serde"] }
-uuid = { workspace = true }
-thiserror = { workspace = true }
-
+axum = { version = "0.8", features = ["json", "form", "query", "macros"] }
+axum-extra = { version = "0.10", features = ["cookie"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "signal", "sync", "time"] }
+tower-http = { version = "0.6", features = ["compression-gzip", "trace"] }
+maud = { version = "0.27", features = ["axum"] }
+serde.workspace = true
+serde_json.workspace = true
+chrono.workspace = true
+chrono-tz = "0.10"
+uuid.workspace = true
+thiserror.workspace = true
 jsonwebtoken = "9"
-argon2 = "0.5"
+argon2 = { version = "0.5", features = ["std"] }
+rand = "0.8"
+sha2 = "0.10"
+hex = "0.4"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+chacha20poly1305 = "0.10"
+base64 = "0.22"
+reqwest = { version = "0.13.5", default-features = false, features = ["json", "rustls", "query"] }
+
+[dev-dependencies]
+tower = { version = "0.5", features = ["util"] }
+http-body-util = "0.1"

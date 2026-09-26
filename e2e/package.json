@@ -1,0 +1,15 @@
+{
+  "name": "paycheckzero-e2e",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Playwright end-to-end suite for PaycheckZero (spec §13).",
+  "scripts": {
+    "test": "playwright test",
+    "test:update": "playwright test --update-snapshots",
+    "report": "playwright show-report"
+  },
+  "devDependencies": {
+    "@axe-core/playwright": "^4.10.0",
+    "@playwright/test": "^1.63.0"
+  }
+}

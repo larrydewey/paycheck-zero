@@ -1,0 +1,103 @@
+import { test, expect, pz, waitForContent } from "./fixtures";
+
+test.describe("offline & sync", () => {
+  test("offline banner and queued transaction that syncs on reconnect", async ({ page, context, seed, login }) => {
+    const s = await seed("basic");
+    await login();
+    await pz.transactions(page, s);
+    await context.setOffline(true);
+    await expect(page.locator("#offline-banner")).toBeVisible();
+    const form = await pz.addTx(page);
+    await form.getByLabel("Amount", { exact: true }).fill("7.25");
+    await form.getByLabel("Payee").fill("Bakery");
+    await form.getByLabel("Expense line", { exact: true }).selectOption({ label: "Groceries" });
+    await form.getByRole("button", { name: "Save transaction" }).click();
+    await expect(page.locator("li.tx.pending", { hasText: "Bakery" })).toContainText("Pending sync");
+    await expect(page.locator("#sync-banner")).toContainText("1 pending sync");
+    await context.setOffline(false);
+    await page.waitForURL(/transactions/);
+    await waitForContent(page);
+    await expect(page.locator("#tx-list li", { hasText: "Bakery" })).not.toHaveClass(/pending/);
+    await expect(page.locator("#toasts")).toContainText("1 offline change(s) synced.");
+    await expect(page.locator("#sync-banner")).toBeHidden();
+  });
+
+  test("a conflicting offline edit is shown and can be resolved", async ({ page, context, seed, login, server }) => {
+    const s = await seed("basic");
+    await login();
+    await pz.transactions(page, s);
+    await context.setOffline(true);
+    const row = page.locator("#tx-list li", { hasText: "Shell" });
+    const editDialog = await pz.editTx(page, "Edit Shell on Sep 6");
+    await editDialog.getByLabel("Amount", { exact: true }).fill("41");
+    await editDialog.getByRole("button", { name: "Save" }).click();
+    await expect(row).toHaveClass(/pending/);
+    await expect(page.locator("#sync-banner")).toContainText("1 pending sync");
+    // Meanwhile another device changes the same transaction.
+    const token = await pz.apiToken(server);
+    const txId = await row.getAttribute("data-tx");
+    const r = await fetch(`${server.url}/api/v1/transactions/${txId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ amount: -4500 }),
+    });
+    expect(r.ok).toBeTruthy();
+    await context.setOffline(false);
+    await page.waitForLoadState("load");
+    await waitForContent(page);
+    await expect(page.locator("#sync-banner")).toContainText("1 offline change(s) conflict with newer data.");
+    await page.getByRole("button", { name: "Review" }).click();
+    const dialog = page.getByRole("dialog", { name: "Changes that need your decision" });
+    await expect(dialog).toContainText("Your offline change: 2026-09-06 · Shell · -$41.00");
+    await expect(dialog).toContainText("Current version: 2026-09-06 · Shell · -$45.00");
+    await dialog.getByRole("button", { name: "Keep mine" }).click();
+    await page.waitForLoadState("load");
+    await waitForContent(page);
+    await expect(page.locator("#tx-list li", { hasText: "Shell" })).toContainText("-$41.00");
+    await expect(page.locator("#sync-banner")).toBeHidden();
+  });
+
+  test("pages viewed before going offline stay viewable", async ({ page, context, seed, login, browserName }) => {
+    const s = await seed("basic");
+    await login();
+    await pz.overview(page, s);
+    await page.evaluate(() => navigator.serviceWorker.ready);
+    await page.reload();
+    await waitForContent(page);
+    if (browserName === "webkit") {
+      // Playwright's WebKit offline emulation also blocks service-worker cache
+      // hits, so assert offline readiness: the worker controls the page and
+      // both the page shell and its content are cached.
+      const ready = await page.evaluate(async (id) => {
+        const name = (await caches.keys()).find((k) => k.startsWith("pz-pages-"));
+        const cache = await caches.open(name ?? "none");
+        const urls = (await cache.keys()).map((r) => new URL(r.url).pathname);
+        return { controlled: !!navigator.serviceWorker.controller, urls };
+      }, s.months["2026-09"].id);
+      expect(ready.controlled).toBe(true);
+      expect(ready.urls).toContain(`/months/${s.months["2026-09"].id}/overview`);
+      expect(ready.urls).toContain(`/months/${s.months["2026-09"].id}/overview/content`);
+      return;
+    }
+    await context.setOffline(true);
+    await page.reload();
+    await waitForContent(page);
+    await expect(page.getByRole("heading", { name: "Budget · September 2026" })).toBeVisible();
+    await expect(page.locator("#offline-banner")).toBeVisible();
+  });
+
+  test("offline sheets: record an actual, and other sheets say they need a connection", async ({ page, context, seed, login }) => {
+    await seed("basic");
+    await login();
+    await context.setOffline(true);
+    await pz.openSheet(page, "Paycheck details");
+    await pz.sheet(page).getByLabel("Amount actually received").fill("1990");
+    await pz.sheet(page).getByRole("button", { name: "Record actual" }).click();
+    await expect(page.locator("#sync-banner")).toContainText("1 pending sync");
+    await pz.lineSheet(page, "Groceries");
+    await expect(pz.sheet(page)).toContainText("This needs a connection.");
+    await pz.closeSheet(page);
+    await context.setOffline(false);
+    await expect(page.locator("#toasts")).toContainText("1 offline change(s) synced.");
+  });
+});
