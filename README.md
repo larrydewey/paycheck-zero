@@ -36,9 +36,21 @@ PZ_JWT_SECRET="$(openssl rand -hex 32)" PZ_SECURE_COOKIES=true PZ_BIND=0.0.0.0:8
 One ~11 MB binary with all web assets embedded, plus a SQLite file. Docker is optional:
 
 ```bash
+docker compose up --build -d     # http://127.0.0.1:8080
+docker compose logs -f
+docker compose down              # add -v to also drop the data volume
+```
+
+Set `PZ_JWT_SECRET` first (`export PZ_JWT_SECRET="$(openssl rand -hex 32)"`), otherwise every
+restart signs everyone out. The compose file reads it from your shell. Without Compose:
+
+```bash
 docker build -t paycheckzero .
 docker run -p 8080:8080 -v pz-data:/data -e PZ_JWT_SECRET=... paycheckzero
 ```
+
+Back up the whole `/data` volume (`paycheckzero.db` plus `paycheckzero.key`); losing the key
+means reconnecting every bank.
 
 ### Configuration (environment variables)
 

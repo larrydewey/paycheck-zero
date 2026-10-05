@@ -1,0 +1,36 @@
+# Local container deployment (spec §7.6). Build from this directory:
+#   docker compose up --build -d
+# Then open http://127.0.0.1:8080 and register the first user.
+services:
+  paycheckzero:
+    build: .
+    image: paycheckzero:local
+    container_name: paycheckzero
+    restart: unless-stopped
+    ports:
+      # "127.0.0.1:8080:8080" keeps it off the LAN. Use "8080:8080" to
+      # reach it from other machines, and set PZ_SECURE_COOKIES=true below
+      # if you terminate TLS in front of it.
+      - "127.0.0.1:8080:8080"
+    environment:
+      # Without a fixed secret every restart invalidates all sessions.
+      # Generate once with: openssl rand -hex 32
+      PZ_JWT_SECRET: "${PZ_JWT_SECRET:-change-me-to-32-plus-random-bytes-01}"
+      # Set to true once you serve over HTTPS, or browsers drop the cookie.
+      PZ_SECURE_COOKIES: "${PZ_SECURE_COOKIES:-false}"
+      # Plaid stays off until a client id and secret are set. Uncomment and
+      # fill in to enable bank sync; PZ_PLAID_ENV is sandbox or production.
+      # PZ_PLAID_CLIENT_ID: ""
+      # PZ_PLAID_SECRET: ""
+      # PZ_PLAID_ENV: "sandbox"
+      # Background bank sync interval in hours; 0 turns it off.
+      PZ_BANK_SYNC_HOURS: "${PZ_BANK_SYNC_HOURS:-6}"
+    volumes:
+      # Holds paycheckzero.db, its WAL files, and paycheckzero.key. Back up
+      # the whole directory together; without the key, banks must reconnect.
+      - paycheckzero-data:/data
+    # The image already sets PZ_BIND, PZ_DATABASE_URL and PZ_DATA_KEY_FILE,
+    # and declares USER paycheckzero. Do not run as root.
+
+volumes:
+  paycheckzero-data:
