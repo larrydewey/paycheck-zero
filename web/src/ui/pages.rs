@@ -1613,6 +1613,71 @@ pub fn render_months(c: &Ctx, metas: &[MonthMeta], months: &[Month], archived: b
 // Settings (spec §13.5, §13.9)
 // ----------------------------------------------------------------------
 
+pub async fn household(State(st): State<Shared>, Extension(user): Extension<AuthUser>) -> Sse {
+    match st.store.members(user.id()).await {
+        Ok(members) => Sse::new().patch(render_household(&user, &members)),
+        Err(e) => Sse::new().patch(html! { section id="household" class="card" { (page_error(&AppError::from(e), &user.0.currency)) } }),
+    }
+}
+
+/// Account card: who is signed in, shared-budget members, password.
+pub fn render_household(user: &AuthUser, members: &[UserRecord]) -> Markup {
+    let view = View::Settings;
+    html! {
+        section id="household" class="card" aria-labelledby="acct-h" {
+            h2 id="acct-h" class="h3" { (t("settings.account")) }
+            p { (tf("settings.signed_in_as", &[("email", &user.login().email)])) }
+            @if !user.is_owner() { p class="muted" { (tf("household.member_of", &[("email", &user.0.email)])) } }
+            div class="row-actions" {
+                form class="inline" data-on:submit__prevent=(post_form("/ui/logout")) {
+                    button type="submit" class="btn" { (t("settings.logout")) }
+                }
+                form class="inline" data-on:submit__prevent=(post_form("/ui/logout-all")) {
+                    button type="submit" class="btn danger" data-confirm=(t("settings.logout_all_confirm")) { (t("settings.logout_all")) }
+                }
+            }
+            h3 { (t("household.title")) }
+            p class="muted" { (t("household.body")) }
+            ul class="member-list" id="members" {
+                li { (user.0.email) " · " span class="muted" { (t("household.owner")) } }
+                @for m in members {
+                    li {
+                        (m.email)
+                        @if user.is_owner() {
+                            form class="inline" data-on:submit__prevent=(post_form(&format!("/ui/members/{}/delete", m.id))) {
+                                (view_input(&view))
+                                button type="submit" class="btn small danger" data-confirm=(tf("household.remove_confirm", &[("email", &m.email)])) { (t("household.remove")) }
+                            }
+                        }
+                    }
+                }
+            }
+            @if user.is_owner() {
+                form id="member-form" data-clear data-on:submit__prevent=(post_form("/ui/members")) {
+                    (view_input(&view))
+                    label for="member-email" { (t("auth.email")) }
+                    input id="member-email" name="email" type="email" autocomplete="off" required;
+                    label for="member-password" { (t("household.password")) }
+                    input id="member-password" name="password" type="password" autocomplete="new-password" minlength="8" required aria-describedby="member-hint";
+                    p id="member-hint" class="hint" { (t("household.password_hint")) }
+                    button type="submit" class="btn" { (t("household.add")) }
+                }
+            }
+            details {
+                summary { (t("password.change")) }
+                form id="password-form" data-clear data-on:submit__prevent=(post_form("/ui/password")) {
+                    (view_input(&view))
+                    label for="pw-current" { (t("password.current")) }
+                    input id="pw-current" name="current" type="password" autocomplete="current-password" required;
+                    label for="pw-new" { (t("password.new")) }
+                    input id="pw-new" name="new" type="password" autocomplete="new-password" minlength="8" required;
+                    button type="submit" class="btn" { (t("common.save")) }
+                }
+            }
+        }
+    }
+}
+
 /// IANA zones grouped by region (e.g. "America" → ["America/Chicago", …]).
 fn timezone_groups() -> Vec<(&'static str, Vec<&'static str>)> {
     let mut groups: Vec<(&'static str, Vec<&'static str>)> = Vec::new();
@@ -1645,17 +1710,9 @@ pub fn render_settings(c: &Ctx) -> Markup {
                 }
             }
         }
-        section class="card" aria-labelledby="acct-h" {
+        // Depends on who signed in, not just the budget: loaded separately.
+        section id="household" class="card" aria-labelledby="acct-h" data-init="@get('/settings/household')" {
             h2 id="acct-h" class="h3" { (t("settings.account")) }
-            p { (tf("settings.signed_in_as", &[("email", &c.user.email)])) }
-            div class="row-actions" {
-                form class="inline" data-on:submit__prevent=(post_form("/ui/logout")) {
-                    button type="submit" class="btn" { (t("settings.logout")) }
-                }
-                form class="inline" data-on:submit__prevent=(post_form("/ui/logout-all")) {
-                    button type="submit" class="btn danger" data-confirm=(t("settings.logout_all_confirm")) { (t("settings.logout_all")) }
-                }
-            }
         }
         section class="card" aria-labelledby="cur-h" {
             h2 id="cur-h" class="h3" { (t("settings.currency")) }

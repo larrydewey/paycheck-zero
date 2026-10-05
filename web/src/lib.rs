@@ -8,6 +8,7 @@ pub mod config;
 pub mod error;
 pub mod export;
 pub mod i18n;
+pub mod live;
 pub mod money;
 pub mod service;
 pub mod sse;
@@ -63,6 +64,8 @@ pub struct AppState {
     pub providers: RwLock<bank::SavedProviders>,
     /// Test mode: behave as if no provider environment variables were set.
     ignore_env_providers: std::sync::atomic::AtomicBool,
+    /// Live-update fan-out to open pages.
+    pub live: live::Hub,
 }
 
 impl AppState {
@@ -76,6 +79,7 @@ impl AppState {
             refresh_grace: tokio::sync::Mutex::new(HashMap::new()),
             providers: RwLock::new(bank::SavedProviders::default()),
             ignore_env_providers: std::sync::atomic::AtomicBool::new(false),
+            live: live::Hub::default(),
         }
     }
 
@@ -172,7 +176,7 @@ pub fn app(state: Shared) -> Router {
     let mut router = Router::new()
         .merge(static_routes())
         .merge(ui::routes(state.clone()))
-        .nest("/api/v1", api::routes())
+        .nest("/api/v1", api::routes().layer(middleware::from_fn_with_state(state.clone(), live::notify_api)))
         .route("/healthz", get(|| async { "ok" }));
     if state.cfg.test_mode {
         router = router.nest("/__test", testing::routes());

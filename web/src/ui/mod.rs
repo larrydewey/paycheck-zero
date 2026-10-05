@@ -80,6 +80,10 @@ pub fn routes(state: Shared) -> Router<Shared> {
         .route("/ui/goals/{id}/delete", post(accounts::delete_goal))
         .route("/settings", get(pages::settings_page))
         .route("/settings/content", get(pages::settings_content))
+        .route("/settings/household", get(pages::household))
+        .route("/ui/members", post(actions::add_member))
+        .route("/ui/members/{id}/delete", post(actions::remove_member))
+        .route("/ui/password", post(actions::change_password))
         .route("/ui/logout", post(actions::logout))
         .route("/ui/logout-all", post(actions::logout_all))
         .route("/ui/settings/currency", post(actions::change_currency))
@@ -122,6 +126,8 @@ pub fn routes(state: Shared) -> Router<Shared> {
         .route("/ui/transactions/{id}", post(actions::update_transaction))
         .route("/ui/transactions/{id}/delete", post(actions::delete_transaction))
         .route("/sync", post(crate::sync::sync))
+        .route("/live", get(crate::live::stream))
+        .layer(middleware::from_fn_with_state(state.clone(), crate::live::notify))
         .layer(middleware::from_fn(auth::require_datastar_header))
         .layer(middleware::from_fn_with_state(state, auth::require_session));
 
@@ -674,6 +680,7 @@ pub fn layout(user: Option<&UserRecord>, title: &str, header: Option<(&MonthHead
                 @match (view, body) {
                     (_, Some(b)) => { main id="content" tabindex="-1" { (b) } },
                     (Some(v), None) => {
+                        div id="pz-live" hidden data-on:pz-live__window="@get(pz.liveUrl())" {}
                         main id="content" tabindex="-1" aria-busy="true" data-init=(format!("@get('{}')", v.content_url())) {
                             (skeleton())
                             div class="load-error" hidden {

@@ -14,7 +14,11 @@
 //! - `refresh_tokens` and `sync_ops` support auth and offline sync.
 
 /// Ordered migrations: (version, statements).
-pub const MIGRATIONS: &[(i64, &[&str])] = &[(1, V1), (2, V2), (3, V3), (4, V4), (5, V5), (6, V6)];
+pub const MIGRATIONS: &[(i64, &[&str])] = &[(1, V1), (2, V2), (3, V3), (4, V4), (5, V5), (6, V6), (7, V7)];
+
+/// v7: shared budgets. A member's login points at the owner whose data it
+/// uses; owners have `owner_id` NULL.
+const V7: &[&str] = &["ALTER TABLE users ADD COLUMN owner_id VARCHAR(36)"];
 
 /// v6: server-wide settings made in the app (bank provider credentials,
 /// stored encrypted by the web layer).

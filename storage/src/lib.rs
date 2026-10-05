@@ -49,7 +49,7 @@ pub enum Dialect {
     MySql,
 }
 
-/// A registered user (single-user in v1, multi-user ready).
+/// A login. Owners hold a budget; members (`owner_id` set) share one.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UserRecord {
     pub id: Id,
@@ -59,6 +59,7 @@ pub struct UserRecord {
     pub currency: String,
     pub token_version: i64,
     pub last_month_id: Option<Id>,
+    pub owner_id: Option<Id>,
 }
 
 /// Listing entry for a month.
@@ -269,10 +270,11 @@ impl Store {
             currency: row.try_get("currency")?,
             token_version: row.try_get("token_version")?,
             last_month_id: opt_id(row.try_get("last_month_id")?),
+            owner_id: opt_id(row.try_get("owner_id")?),
         })
     }
 
-    const USER_COLS: &'static str = "id, email, password_hash, timezone, currency, token_version, last_month_id";
+    const USER_COLS: &'static str = "id, email, password_hash, timezone, currency, token_version, last_month_id, owner_id";
 
     pub async fn user_by_id(&self, id: &Id) -> Result<Option<UserRecord>> {
         let row = sqlx::query(&self.sql(&format!("SELECT {} FROM users WHERE id = ?", Self::USER_COLS)))
@@ -288,6 +290,63 @@ impl Store {
             .fetch_optional(&self.pool)
             .await?;
         row.as_ref().map(Self::user_from_row).transpose()
+    }
+
+    /// Adds a login that shares `owner`'s budget.
+    pub async fn create_member(&self, owner: &UserRecord, email: &str, password_hash: &str) -> Result<UserRecord> {
+        let id = Id::generate();
+        let ts = now();
+        sqlx::query(&self.sql(
+            "INSERT INTO users (id, email, password_hash, timezone, currency, token_version, owner_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?)",
+        ))
+        .bind(id.as_str())
+        .bind(email)
+        .bind(password_hash)
+        .bind(&owner.timezone)
+        .bind(&owner.currency)
+        .bind(owner.id.as_str())
+        .bind(&ts)
+        .bind(&ts)
+        .execute(&self.pool)
+        .await
+        .map_err(map_db)?;
+        self.user_by_id(&id).await?.ok_or_else(|| StorageError::Corrupt("user vanished".into()))
+    }
+
+    /// Logins sharing `owner`'s budget, oldest first.
+    pub async fn members(&self, owner: &Id) -> Result<Vec<UserRecord>> {
+        let rows = sqlx::query(&self.sql(&format!("SELECT {} FROM users WHERE owner_id = ? ORDER BY created_at", Self::USER_COLS)))
+            .bind(owner.as_str())
+            .fetch_all(&self.pool)
+            .await?;
+        rows.iter().map(Self::user_from_row).collect()
+    }
+
+    /// Removes a member login; false when it isn't `owner`'s.
+    pub async fn delete_member(&self, owner: &Id, member: &Id) -> Result<bool> {
+        let mut tx = self.pool.begin().await?;
+        let owned = sqlx::query(&self.sql("SELECT id FROM users WHERE id = ? AND owner_id = ?"))
+            .bind(member.as_str())
+            .bind(owner.as_str())
+            .fetch_optional(&mut *tx)
+            .await?
+            .is_some();
+        if owned {
+            sqlx::query(&self.sql("DELETE FROM refresh_tokens WHERE user_id = ?")).bind(member.as_str()).execute(&mut *tx).await?;
+            sqlx::query(&self.sql("DELETE FROM users WHERE id = ?")).bind(member.as_str()).execute(&mut *tx).await?;
+        }
+        tx.commit().await?;
+        Ok(owned)
+    }
+
+    pub async fn set_password(&self, user: &Id, password_hash: &str) -> Result<()> {
+        sqlx::query(&self.sql("UPDATE users SET password_hash = ?, updated_at = ? WHERE id = ?"))
+            .bind(password_hash)
+            .bind(now())
+            .bind(user.as_str())
+            .execute(&self.pool)
+            .await?;
+        Ok(())
     }
 
     pub async fn set_timezone(&self, user: &Id, timezone: &str) -> Result<()> {
@@ -829,9 +888,9 @@ impl Store {
         Ok(())
     }
 
-    /// Every user id (for the background bank sync).
+    /// Every budget owner's id (for the background bank sync).
     pub async fn user_ids(&self) -> Result<Vec<Id>> {
-        let rows = sqlx::query("SELECT id FROM users").fetch_all(&self.pool).await?;
+        let rows = sqlx::query("SELECT id FROM users WHERE owner_id IS NULL").fetch_all(&self.pool).await?;
         rows.iter().map(|r| r.try_get::<String, _>(0).map(Id::new).map_err(StorageError::from)).collect()
     }
 

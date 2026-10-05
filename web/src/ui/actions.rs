@@ -188,7 +188,7 @@ pub async fn logout(State(st): State<Shared>, headers: HeaderMap) -> Sse {
 }
 
 pub async fn logout_all(State(st): State<Shared>, Extension(user): Extension<AuthUser>) -> Sse {
-    let _ = auth::revoke_all(&st, user.id()).await;
+    let _ = auth::revoke_all(&st, &user.login().id).await;
     Sse::new().with_cookies(auth::clear_cookies(&st)).redirect("/login")
 }
 
@@ -214,6 +214,22 @@ pub async fn change_timezone(State(st): State<Shared>, Extension(user): Extensio
     };
     let user = st.store.user_by_id(&user.id).await.ok().flatten().unwrap_or(user);
     finish(&st, &user, &headers, &View::Settings, r, |()| vec![toast(ToastKind::Success, &t("settings.timezone_saved"), None)]).await
+}
+
+pub async fn add_member(State(st): State<Shared>, Extension(user): Extension<AuthUser>, headers: HeaderMap, Form(f): F) -> Sse {
+    let r = st.add_member(&user, field(&f, "email"), f.get("password").map_or("", String::as_str)).await;
+    finish(&st, &user.0, &headers, &View::Settings, r, |m| vec![toast(ToastKind::Success, &tf("household.added", &[("email", &m.email)]), None)]).await
+}
+
+pub async fn remove_member(State(st): State<Shared>, Extension(user): Extension<AuthUser>, headers: HeaderMap, Path(id): Path<Id>) -> Sse {
+    let r = st.remove_member(&user, &id).await;
+    finish(&st, &user.0, &headers, &View::Settings, r, |()| vec![toast(ToastKind::Success, &t("household.removed"), None)]).await
+}
+
+pub async fn change_password(State(st): State<Shared>, Extension(user): Extension<AuthUser>, headers: HeaderMap, Form(f): F) -> Sse {
+    let get = |k: &str| f.get(k).map_or("", String::as_str);
+    let r = st.change_password(&user, get("current"), get("new")).await;
+    finish(&st, &user.0, &headers, &View::Settings, r, |()| vec![toast(ToastKind::Success, &t("password.changed"), None)]).await
 }
 
 // ----------------------------------------------------------------------

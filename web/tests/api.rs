@@ -349,3 +349,99 @@ async fn offline_sync_applies_and_detects_conflicts() {
     let r = send(&app, sync(json!({"ops": [{"op_id": "c", "force": true, "kind": "update_transaction", "month_id": mid, "id": tx_id, "base": stale, "tx": edit}]}))).await;
     assert_eq!(r.json["results"][0]["status"], "applied");
 }
+
+fn ui_post(uri: &str, jar: &str, form: &str) -> Request<Body> {
+    Request::builder()
+        .method("POST")
+        .uri(uri)
+        .header(header::COOKIE, jar)
+        .header("datastar-request", "true")
+        .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+        .body(Body::from(form.to_string()))
+        .unwrap()
+}
+
+fn ui_get(uri: &str, jar: &str) -> Request<Body> {
+    Request::builder().uri(uri).header(header::COOKIE, jar).body(Body::empty()).unwrap()
+}
+
+async fn ui_signin(app: &Router, email: &str, password: &str) -> String {
+    let req = Request::builder()
+        .method("POST")
+        .uri("/ui/login")
+        .header("datastar-request", "true")
+        .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+        .body(Body::from(format!("email={}&password={password}", email.replace('@', "%40"))))
+        .unwrap();
+    let r = send(app, req).await;
+    assert!(r.text.contains("window.location.assign"), "{}", r.text);
+    cookie_header(&r.cookies)
+}
+
+#[tokio::test]
+async fn shared_budget_members() {
+    let app = app().await;
+    let owner = cookie_header(&ui_login(&app).await);
+    let r = send(&app, ui_post("/ui/members", &owner, "email=Partner%40example.com&password=partner-pass&view=settings")).await;
+    assert!(r.text.contains("partner@example.com can now sign in"), "{}", r.text);
+    // Same email twice is refused.
+    let r = send(&app, ui_post("/ui/members", &owner, "email=partner%40example.com&password=partner-pass&view=settings")).await;
+    assert!(r.text.contains("already has an account"), "{}", r.text);
+
+    let member = ui_signin(&app, "partner@example.com", "partner-pass").await;
+    let r = send(&app, ui_get("/months/content", &member)).await;
+    assert!(r.text.contains("September 2026"), "member sees the owner's months");
+    let r = send(&app, ui_get("/settings/household", &member)).await;
+    assert!(r.text.contains("Signed in as partner@example.com"), "{}", r.text);
+    assert!(r.text.contains("sharing me@example.com"), "{}", r.text);
+    assert!(!r.text.contains("member-form"), "members can't invite");
+    let r = send(&app, ui_post("/ui/members", &member, "email=x%40example.com&password=whatever-1&view=settings")).await;
+    assert!(r.text.contains("Only the budget"), "{}", r.text);
+
+    // Member writes land in the shared budget.
+    let r = send(&app, ui_post("/ui/months", &member, "year_month=2026-10&copy_mode=blank&view=months%3A0")).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text);
+    let r = send(&app, ui_get("/months/content", &owner)).await;
+    assert!(r.text.contains("October 2026"), "owner sees the member's month");
+
+    // Password change applies to the member's login only.
+    let r = send(&app, ui_post("/ui/password", &member, "current=partner-pass&new=partner-pass-2&view=settings")).await;
+    assert!(r.text.contains("Password changed"), "{}", r.text);
+    ui_signin(&app, "partner@example.com", "partner-pass-2").await;
+    ui_signin(&app, "me@example.com", "secret-pass").await;
+
+    // Removing the member ends their session at once.
+    let id = {
+        let r = send(&app, ui_get("/settings/household", &owner)).await;
+        let at = r.text.find("/ui/members/").unwrap() + "/ui/members/".len();
+        r.text[at..at + 36].to_string()
+    };
+    let r = send(&app, ui_post(&format!("/ui/members/{id}/delete"), &owner, "view=settings")).await;
+    assert!(r.text.contains("Removed"), "{}", r.text);
+    let member_at = member.split("; ").find(|c| c.starts_with("pz_at=")).unwrap().to_string();
+    let r = send(&app, ui_get("/months/content", &member_at)).await;
+    assert_eq!(r.status, StatusCode::SEE_OTHER, "sent to sign-in");
+}
+
+#[tokio::test]
+async fn live_stream_announces_writes_to_the_budget() {
+    let app = app().await;
+    let owner = cookie_header(&ui_login(&app).await);
+    send(&app, ui_post("/ui/members", &owner, "email=partner%40example.com&password=partner-pass&view=settings")).await;
+    let member = ui_signin(&app, "partner@example.com", "partner-pass").await;
+
+    let res = app.clone().oneshot(ui_get("/live", &owner)).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    assert_eq!(res.headers()[header::CONTENT_TYPE], "text/event-stream");
+    let mut body = res.into_body();
+
+    // A read doesn't announce; the member's write does.
+    send(&app, ui_get("/months/content", &member)).await;
+    send(&app, ui_post("/ui/months", &member, "year_month=2026-11&copy_mode=blank&view=months%3A0")).await;
+    let frame = tokio::time::timeout(std::time::Duration::from_secs(2), body.frame()).await.expect("event in time").unwrap().unwrap();
+    let text = String::from_utf8_lossy(frame.data_ref().unwrap()).to_string();
+    assert!(text.contains("event: changed"), "{text}");
+
+    // Nothing more until the next write.
+    assert!(tokio::time::timeout(std::time::Duration::from_millis(300), body.frame()).await.is_err());
+}
