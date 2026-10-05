@@ -25,3 +25,8 @@ paycheckzero.key
 *.key
 *.db.bak*
 *.bak-before-*
+
+# Secrets. .env.example is committed instead.
+.env
+.env.*
+!.env.example

@@ -13,16 +13,24 @@ services:
       # if you terminate TLS in front of it.
       - "127.0.0.1:8080:8080"
     environment:
-      # Without a fixed secret every restart invalidates all sessions.
-      # Generate once with: openssl rand -hex 32
-      PZ_JWT_SECRET: "${PZ_JWT_SECRET:-change-me-to-32-plus-random-bytes-01}"
+      # Without a fixed secret every restart invalidates all sessions. The
+      # default below is deliberately under 32 bytes so the server rejects it,
+      # falls back to a random per-start secret and logs a warning, rather
+      # than quietly running on a secret published in this repository.
+      # Generate a real one with: openssl rand -hex 32
+      PZ_JWT_SECRET: "${PZ_JWT_SECRET:-change-me}"
       # Set to true once you serve over HTTPS, or browsers drop the cookie.
       PZ_SECURE_COOKIES: "${PZ_SECURE_COOKIES:-false}"
-      # Plaid stays off until a client id and secret are set. Uncomment and
-      # fill in to enable bank sync; PZ_PLAID_ENV is sandbox or production.
-      # PZ_PLAID_CLIENT_ID: ""
-      # PZ_PLAID_SECRET: ""
-      # PZ_PLAID_ENV: "sandbox"
+      # Encrypts bank tokens at rest, 64 hex chars. Leave blank and the server
+      # writes paycheckzero.key into the volume below on first boot, which is
+      # simpler. Set it to hold the key outside Docker instead.
+      PZ_DATA_KEY: "${PZ_DATA_KEY:-}"
+      # Plaid stays off until a client id and secret are set. PZ_PLAID_ENV is
+      # sandbox or production; PZ_PLAID_COUNTRIES defaults to US.
+      PZ_PLAID_CLIENT_ID: "${PZ_PLAID_CLIENT_ID:-}"
+      PZ_PLAID_SECRET: "${PZ_PLAID_SECRET:-}"
+      PZ_PLAID_ENV: "${PZ_PLAID_ENV:-sandbox}"
+      PZ_PLAID_COUNTRIES: "${PZ_PLAID_COUNTRIES:-}"
       # Background bank sync interval in hours; 0 turns it off.
       PZ_BANK_SYNC_HOURS: "${PZ_BANK_SYNC_HOURS:-6}"
     volumes:

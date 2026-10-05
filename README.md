@@ -47,6 +47,9 @@ and signs everyone out on each restart.
 export PZ_JWT_SECRET="$(openssl rand -hex 32)"
 ```
 
+You can skip this by using a `.env` file instead — see
+[keep the key outside Docker](#optional-keep-the-key-outside-docker).
+
 **2. Build and start.** Compose reads that variable from your shell.
 
 ```bash
@@ -90,8 +93,19 @@ export PZ_DATA_KEY="$(openssl rand -hex 32)"     # 64 hex chars = 32 bytes
 
 `PZ_DATA_KEY` takes precedence over `PZ_DATA_KEY_FILE`; setting both means the file is ignored.
 Losing `PZ_DATA_KEY` makes every stored bank token undecryptable, so store it as carefully as a
-password. `.env` next to `compose.yaml` is read automatically if you would rather not re-export
-on each new shell — add `.env` to `.gitignore` first, and `chmod 600 .env`.
+password.
+
+Rather than re-export on each new shell, put both in a `.env` file next to `compose.yaml`,
+which Compose reads automatically. Start from the committed example:
+
+```bash
+cp .env.example .env      # then paste in the two openssl rand -hex 32 values
+chmod 600 .env
+docker compose up --build -d
+```
+
+`.env` is gitignored and `.env.example` is not, so the template is safe to commit. See the
+comments in that file for every supported variable.
 
 #### Enabling Plaid in Docker
 
