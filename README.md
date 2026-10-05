@@ -33,24 +33,78 @@ PZ_JWT_SECRET="$(openssl rand -hex 32)" PZ_SECURE_COOKIES=true PZ_BIND=0.0.0.0:8
   ./target/release/paycheckzero
 ```
 
-One ~11 MB binary with all web assets embedded, plus a SQLite file. Docker is optional:
+One ~11 MB binary with all web assets embedded, plus a SQLite file. Docker is optional — see
+[Docker](#docker-optional) below.
+
+### Docker (optional)
+
+The image wraps exactly that: one `paycheckzero` binary and a SQLite file in a volume.
+
+**1. Create the session secret.** Without it the server invents a random one at every start
+and signs everyone out on each restart.
 
 ```bash
-docker compose up --build -d     # http://127.0.0.1:8080
-docker compose logs -f
-docker compose down              # add -v to also drop the data volume
+export PZ_JWT_SECRET="$(openssl rand -hex 32)"
 ```
 
-Set `PZ_JWT_SECRET` first (`export PZ_JWT_SECRET="$(openssl rand -hex 32)"`), otherwise every
-restart signs everyone out. The compose file reads it from your shell. Without Compose:
+**2. Build and start.** Compose reads that variable from your shell.
+
+```bash
+docker compose up --build -d     # then open http://127.0.0.1:8080
+```
+
+Create the account in the browser, add your first paycheck, and start funding it.
+
+```bash
+docker compose logs -f           # follow the log
+docker compose ps                # status and port mapping
+docker compose down              # stop; add -v to also delete the data volume
+```
+
+The published port is `127.0.0.1:8080`, so nothing on your network can reach it. To reach the
+app from your phone, change that line to `"8080:8080"`, allow the port through the firewall, and
+open `http://<this computer's IP>:8080`. Leave `PZ_SECURE_COOKIES` alone unless you serve over
+HTTPS; set it to `true` in `compose.yaml` once you do.
+
+**3. Keep the data key.** The volume holds `paycheckzero.db` and `paycheckzero.key`. Back up the
+whole thing together:
+
+```bash
+docker run --rm -v paycheck-zero_paycheckzero-data:/data -v "$PWD":/backup debian:bookworm-slim \
+  tar czf /backup/paycheckzero-backup.tgz -C /data .
+```
+
+Losing the key does not lose your transactions, but every connected bank has to be linked again.
+
+The volume name is prefixed with the directory name, so it is
+`paycheck-zero_paycheckzero-data`; confirm it with `docker volume ls`.
+
+#### Optional: keep the key outside Docker
+
+By default the server writes the key itself on first boot and keeps it in the volume. To hold it
+somewhere else (a password manager, for instance), generate one and pass it in:
+
+```bash
+export PZ_DATA_KEY="$(openssl rand -hex 32)"     # 64 hex chars = 32 bytes
+```
+
+`PZ_DATA_KEY` takes precedence over `PZ_DATA_KEY_FILE`; setting both means the file is ignored.
+Losing `PZ_DATA_KEY` makes every stored bank token undecryptable, so store it as carefully as a
+password. `.env` next to `compose.yaml` is read automatically if you would rather not re-export
+on each new shell — add `.env` to `.gitignore` first, and `chmod 600 .env`.
+
+#### Enabling Plaid in Docker
+
+Bank sync stays off until a client id and secret are set. Uncomment `PZ_PLAID_CLIENT_ID`,
+`PZ_PLAID_SECRET` and `PZ_PLAID_ENV` in `compose.yaml`, then `docker compose up -d`. You can also
+turn Plaid on later from **Settings → Bank providers** without touching the file.
+
+#### Without Compose
 
 ```bash
 docker build -t paycheckzero .
-docker run -p 8080:8080 -v pz-data:/data -e PZ_JWT_SECRET=... paycheckzero
+docker run -p 8080:8080 -v pz-data:/data -e PZ_JWT_SECRET="$(openssl rand -hex 32)" paycheckzero
 ```
-
-Back up the whole `/data` volume (`paycheckzero.db` plus `paycheckzero.key`); losing the key
-means reconnecting every bank.
 
 ### Configuration (environment variables)
 
