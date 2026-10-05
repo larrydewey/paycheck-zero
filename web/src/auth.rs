@@ -45,14 +45,37 @@ pub struct Tokens {
     pub expires_in: i64,
 }
 
-/// The authenticated user, available to handlers.
+/// The authenticated user: `.0` owns the budget the data comes from, `.1`
+/// is who signed in (the same user unless a member of a shared budget).
 #[derive(Debug, Clone)]
-pub struct AuthUser(pub UserRecord);
+pub struct AuthUser(pub UserRecord, pub UserRecord);
 
 impl AuthUser {
+    /// Budget owner's id; all data is keyed by it.
     #[must_use]
     pub fn id(&self) -> &Id {
         &self.0.id
+    }
+
+    #[must_use]
+    pub fn login(&self) -> &UserRecord {
+        &self.1
+    }
+
+    #[must_use]
+    pub fn is_owner(&self) -> bool {
+        self.1.owner_id.is_none()
+    }
+
+    /// Maps a login to the budget it uses.
+    pub async fn resolve(state: &AppState, login: UserRecord) -> Option<Self> {
+        match &login.owner_id {
+            None => Some(Self(login.clone(), login)),
+            Some(owner) => {
+                let owner = state.store.user_by_id(owner).await.ok()??;
+                Some(Self(owner, login))
+            }
+        }
     }
 }
 
@@ -192,7 +215,8 @@ impl FromRequestParts<Arc<AppState>> for AuthUser {
             .and_then(|v| v.to_str().ok())
             .and_then(|v| v.strip_prefix("Bearer "))
             .ok_or(AppError::Unauthorized)?;
-        user_from_access(state, token).await.map(AuthUser).ok_or(AppError::Unauthorized)
+        let login = user_from_access(state, token).await.ok_or(AppError::Unauthorized)?;
+        AuthUser::resolve(state, login).await.ok_or(AppError::Unauthorized)
     }
 }
 
@@ -212,7 +236,11 @@ pub async fn session_user(state: &AppState, headers: &HeaderMap) -> Option<(User
 /// Middleware for web UI routes. Unauthenticated page loads go to the login
 /// page; Datastar requests receive a script that navigates there.
 pub async fn require_session(State(state): State<Arc<AppState>>, mut req: Request, next: Next) -> Response {
-    let Some((user, cookies)) = session_user(&state, req.headers()).await else {
+    let session = match session_user(&state, req.headers()).await {
+        Some((login, cookies)) => AuthUser::resolve(&state, login).await.map(|u| (u, cookies)),
+        None => None,
+    };
+    let Some((user, cookies)) = session else {
         let datastar = req.headers().contains_key("datastar-request");
         // Just signed in but no session came back: the browser refused the cookie.
         let just_signed_in = req.uri().query().is_some_and(|q| q.split('&').any(|kv| kv == "signed_in=1"));
@@ -230,7 +258,7 @@ pub async fn require_session(State(state): State<Arc<AppState>>, mut req: Reques
         }
         return resp;
     };
-    req.extensions_mut().insert(AuthUser(user));
+    req.extensions_mut().insert(user);
     let mut resp = next.run(req).await;
     for c in cookies {
         resp.headers_mut().append(SET_COOKIE, c);

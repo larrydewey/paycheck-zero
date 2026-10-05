@@ -10,7 +10,7 @@ Specification: [`PaycheckZero_Formal_Specification_v0.4.4.md`](./PaycheckZero_Fo
 cargo run -p paycheckzero-web          # http://127.0.0.1:8080, data in ./paycheckzero.db
 ```
 
-Open the app, create the (single) account, add your first paycheck, and start funding it.
+Open the app, create the account, add your first paycheck, and start funding it. To budget with someone else, add them under **Settings › Account › Shared budget**. Each person signs in with their own email, and changes show up live on every open screen.
 
 ### Using it from your phone
 

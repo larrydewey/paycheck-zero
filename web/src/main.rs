@@ -36,12 +36,13 @@ async fn main() {
     }
     // SimpleFIN needs no settings, so background sync always runs (unless 0 hours).
     paycheckzero_web::bank::spawn_background_sync(state.clone());
+    let st = state.clone();
     let app = paycheckzero_web::app(state);
-    if let Err(e) = axum::serve(listener, app).with_graceful_shutdown(shutdown()).await {
+    let shutdown = async move {
+        let _ = tokio::signal::ctrl_c().await;
+        st.live.close();
+    };
+    if let Err(e) = axum::serve(listener, app).with_graceful_shutdown(shutdown).await {
         tracing::error!("server error: {e}");
     }
-}
-
-async fn shutdown() {
-    let _ = tokio::signal::ctrl_c().await;
 }

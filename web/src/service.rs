@@ -3,7 +3,7 @@
 //! the Datastar UI go through here, so rules are never enforced only in a
 //! client.
 
-use crate::auth::{hash_password, verify_password};
+use crate::auth::{hash_password, verify_password, AuthUser};
 use crate::error::{AppError, AppResult};
 use crate::i18n::t;
 use crate::AppState;
@@ -65,6 +65,43 @@ impl AppState {
             Some(u) if verify_password(password, &u.password_hash) => Ok(u),
             _ => Err(AppError::InvalidCredentials),
         }
+    }
+
+    /// Adds a login to `owner`'s budget. Only the owner may.
+    pub async fn add_member(&self, user: &AuthUser, email: &str, password: &str) -> AppResult<UserRecord> {
+        if !user.is_owner() {
+            return Err(AppError::bad(t("err.owner_only")));
+        }
+        let email = email.trim().to_lowercase();
+        if !email.contains('@') || email.len() > 255 {
+            return Err(AppError::bad(t("err.email")));
+        }
+        if password.chars().count() < MIN_PASSWORD {
+            return Err(AppError::bad(t("err.password_short")));
+        }
+        let hash = hash_password(password)?;
+        match self.store.create_member(&user.0, &email, &hash).await {
+            Err(paycheckzero_storage::StorageError::Duplicate) => Err(AppError::bad(t("err.email_taken"))),
+            r => Ok(r?),
+        }
+    }
+
+    pub async fn remove_member(&self, user: &AuthUser, member: &Id) -> AppResult<()> {
+        if !user.is_owner() {
+            return Err(AppError::bad(t("err.owner_only")));
+        }
+        if self.store.delete_member(user.id(), member).await? { Ok(()) } else { Err(AppError::NotFound) }
+    }
+
+    /// Changes the signed-in login's password.
+    pub async fn change_password(&self, user: &AuthUser, current: &str, new: &str) -> AppResult<()> {
+        if !verify_password(current, &user.login().password_hash) {
+            return Err(AppError::bad(t("err.password_wrong")));
+        }
+        if new.chars().count() < MIN_PASSWORD {
+            return Err(AppError::bad(t("err.password_short")));
+        }
+        Ok(self.store.set_password(&user.login().id, &hash_password(new)?).await?)
     }
 
     /// "Today" in the user's timezone (spec §13.9).

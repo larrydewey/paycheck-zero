@@ -198,6 +198,14 @@ The owner reported Teller as no longer working, so it was removed:
 
 Existing Teller connections, if any, show "no longer supported". Disconnecting keeps their accounts and history. The end-to-end bank scenarios (dedupe, transfer pairing, paycheck deposits, pending, incremental sync, reconnect, mapping to existing accounts) now run against the fake Plaid. The sections above describe the history.
 
+## Shared budget + live updates (2026-10-05)
+
+Departs from the frozen spec (single user). Asked for by the owner so two people can budget together.
+
+- **Shared budget.** `users.owner_id` (migration v7). NULL means the user owns a budget; set means the user is a member signing in to the owner's budget. `AuthUser(budget, login)`: all data stays keyed by the owner's id, so queries are unchanged. The login is used for sign-out-everywhere, the password and "Signed in as". Settings › Account: the owner adds or removes people (email plus a starting password). Anyone can change their own password. Removing a member ends their session at once. Registration stays closed after the first account. Background bank sync runs once per owner.
+- **Live updates.** `GET /live` is an SSE stream per open page (`web/src/live.rs`). Middleware publishes the budget id after every successful UI or API write. Background bank sync publishes after each run. The page reloads its own `/content` through Datastar (`#pz-live`, the `pz-live` window event). It waits while a dialog or sheet is open, a field is focused or has unsaved edits, a request is in flight, or the tab is hidden, and catches up afterwards. After a reconnect (sleep, network, restart) it refreshes once. Streams end after 10 minutes (the browser reconnects and the session is re-checked) and on shutdown. The service worker never caches `/live`.
+- Concurrent edits: month writes already use optimistic versions (`STALE_WRITE`). Everything else is last write wins, plus the live re-render.
+
 ## Known limitations
 
 - Playwright's WebKit build needs Ubuntu 24.04 libraries. On this Omarchy host it runs through Playwright's Docker image automatically (`e2e/global-setup.ts`).

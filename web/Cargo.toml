@@ -16,6 +16,7 @@ paycheckzero-storage = { path = "../storage" }
 axum = { version = "0.8", features = ["json", "form", "query", "macros"] }
 axum-extra = { version = "0.10", features = ["cookie"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "signal", "sync", "time"] }
+futures-util = { version = "0.3", default-features = false }
 tower-http = { version = "0.6", features = ["compression-gzip", "trace"] }
 maud = { version = "0.27", features = ["axum"] }
 serde.workspace = true

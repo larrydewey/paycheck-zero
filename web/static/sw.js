@@ -24,7 +24,7 @@ self.addEventListener("activate", (event) => {
 
 const neverCache = (url) =>
   url.pathname.startsWith("/ui/") || url.pathname.startsWith("/api/") || url.pathname.startsWith("/__test") ||
-  url.pathname === "/sync" || url.pathname === "/login" || url.pathname === "/register" ||
+  url.pathname === "/sync" || url.pathname === "/live" || url.pathname === "/login" || url.pathname === "/register" ||
   url.pathname.endsWith(".csv") || url.pathname.endsWith(".json");
 
 self.addEventListener("fetch", (event) => {

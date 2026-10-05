@@ -465,7 +465,7 @@
     if (empty) empty.hidden = shown !== 0;
   });
 
-  window.pz = { openSheet: openSheet, closeSheet: closeSheet, clearDone: clearDone, checkSplit: checkSplit, cents: cents, fmt: fmt, guard: guard, t: t, fillIncome: fillIncome, toast: toast, resetInline: resetInline };
+  window.pz = { openSheet: openSheet, closeSheet: closeSheet, clearDone: clearDone, checkSplit: checkSplit, cents: cents, fmt: fmt, guard: guard, t: t, fillIncome: fillIncome, toast: toast, resetInline: resetInline, liveUrl: function () { return liveUrl(); } };
 
   // ------------------------------------------------------------------
   // Confirmations: buttons with data-confirm open a styled, accessible dialog.
@@ -725,6 +725,47 @@
         else toast("error", (res.error || t("restore_failed")));
       });
     }).catch(function () { toast("error", t("restore_failed")); });
+  });
+
+  // ------------------------------------------------------------------
+  // Live updates: /live says "changed" when this budget is written anywhere;
+  // reload the page's content unless the user is mid-edit, then catch up.
+  var inflight = 0, livePending = false, liveTimer = 0;
+  document.addEventListener("datastar-fetch", function (e) {
+    var type = e.detail && e.detail.type;
+    if (type === "started") inflight++;
+    else if (type === "finished") { inflight = Math.max(0, inflight - 1); liveSoon(); }
+  });
+  function editing() {
+    if (inflight || document.hidden || document.querySelector("dialog[open]")) return true;
+    var a = document.activeElement;
+    if (a && a.matches && a.matches("input, select, textarea") && a.type !== "radio" && a.type !== "checkbox") return true;
+    return Array.prototype.some.call(document.querySelectorAll("#content input[type=text]"), function (i) { return i.value !== i.defaultValue; });
+  }
+  function liveSoon() {
+    if (!livePending) return;
+    clearTimeout(liveTimer);
+    liveTimer = setTimeout(function () {
+      if (!livePending || editing()) return;
+      livePending = false;
+      window.dispatchEvent(new CustomEvent("pz-live"));
+    }, 300);
+  }
+  function liveUrl() { return location.pathname.replace(/\/$/, "") + "/content" + location.search; }
+  function changed() { livePending = true; liveSoon(); }
+  ["focusout", "close", "visibilitychange"].forEach(function (ev) { document.addEventListener(ev, function () { setTimeout(liveSoon, 0); }, true); });
+  window.addEventListener("load", function () {
+    if (!byId("pz-live") || !window.EventSource) return;
+    var es, lost = false;
+    function connect() {
+      es = new EventSource("/live");
+      es.addEventListener("changed", changed);
+      // Back after a drop (sleep, network, server restart): changes may have been missed.
+      es.onopen = function () { if (lost) { lost = false; changed(); } };
+      es.onerror = function () { lost = true; };
+    }
+    connect();
+    window.addEventListener("online", function () { if (es.readyState === 2) { es.close(); connect(); } });
   });
 
   // ------------------------------------------------------------------

@@ -135,7 +135,7 @@ async fn logout(State(st): State<Shared>, Json(r): Json<RefreshReq>) -> AppResul
 }
 
 async fn logout_all(State(st): State<Shared>, user: AuthUser) -> AppResult<StatusCode> {
-    auth::revoke_all(&st, user.id()).await?;
+    auth::revoke_all(&st, &user.login().id).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 

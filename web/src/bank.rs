@@ -747,6 +747,7 @@ pub fn spawn_background_sync(st: Shared) {
                         Err(e) => tracing::warn!(institution = %l.institution, "bank sync failed: {e}"),
                     }
                 }
+                st.live.publish(&user.id);
             }
         }
     });
