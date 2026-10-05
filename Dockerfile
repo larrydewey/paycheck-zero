@@ -10,8 +10,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
     && useradd --system --home /data paycheckzero && mkdir -p /data && chown paycheckzero /data
 COPY --from=build /src/target/release/paycheckzero /usr/local/bin/paycheckzero
 USER paycheckzero
+# /data must be the working directory: PZ_DATA_KEY_FILE defaults to the relative
+# path "paycheckzero.key", and anything written outside the volume is lost on
+# container replacement (bank tokens stop decrypting).
+WORKDIR /data
 ENV PZ_BIND=0.0.0.0:8080 \
-    PZ_DATABASE_URL=sqlite:///data/paycheckzero.db?mode=rwc
+    PZ_DATABASE_URL=sqlite:///data/paycheckzero.db?mode=rwc \
+    PZ_DATA_KEY_FILE=/data/paycheckzero.key
 VOLUME /data
 EXPOSE 8080
 CMD ["paycheckzero"]
