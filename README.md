@@ -56,6 +56,10 @@ You can skip this by using a `.env` file instead — see
 docker compose up --build -d     # then open http://127.0.0.1:8080
 ```
 
+The first build compiles every dependency and takes a while on a small machine; later builds
+reuse BuildKit's cache and recompile only what changed. If the build runs out of memory, limit
+parallel jobs: `docker compose build --build-arg CARGO_BUILD_JOBS=1`.
+
 Create the account in the browser, add your first paycheck, and start funding it.
 
 ```bash

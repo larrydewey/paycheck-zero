@@ -21,3 +21,11 @@ lto = "fat"
 codegen-units = 1
 panic = "abort"
 strip = true
+
+# Used by the Dockerfile: much quicker and lighter to build than release
+# (fat LTO with one codegen unit is slow and memory-hungry on small machines),
+# for a slightly larger binary that runs about as fast.
+[profile.docker]
+inherits = "release"
+lto = "thin"
+codegen-units = 16
