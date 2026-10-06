@@ -805,8 +805,19 @@ pub async fn transfer_new_sheet(State(st): State<Shared>, Extension(user): Exten
     Sse::new().patch(sheet(&t("transfer.title"), Some(&t("transfer.sub")), transfer_form(&c, &m, &view, &w, None, &pre)))
 }
 
-fn goal_kind_fields(w: &Wallet, m: &Month, g: Option<&Goal>) -> Markup {
+/// A goal's money field, shown formatted ("$5,000.00") and re-formatted as
+/// the user leaves it.
+fn goal_money(c: &Ctx, id: &str, name: &str, value: Option<Cents>) -> Markup {
+    html! {
+        input id=(id) type="text" inputmode="decimal" autocomplete="off" class="money" data-format="money" name=(name)
+            placeholder=(c.money(Cents::ZERO)) value=[value.map(|v| c.money(v))];
+    }
+}
+
+fn goal_kind_fields(c: &Ctx, w: &Wallet, m: &Month, all: &[Month], g: Option<&Goal>) -> Markup {
     let kind = g.map_or(GoalKind::Save, |g| g.kind);
+    let owed = |track: GoalTrack| w.debt_now(&track, all, m.year_month);
+    let owed_label = |name: &str, debt: Cents| tf("goal.owed_option", &[("name", name), ("amount", &c.money(debt))]);
     let sel_line = |name: &str| matches!(g.map(|g| &g.track), Some(GoalTrack::Line { name: n }) if n.eq_ignore_ascii_case(name));
     let sel_acct = |id: &Id| matches!(g.map(|g| &g.track), Some(GoalTrack::Account { id: a }) if a == id);
     let accts = w.accounts_sorted();
@@ -823,8 +834,7 @@ fn goal_kind_fields(w: &Wallet, m: &Month, g: Option<&Goal>) -> Markup {
         }
         div class="field" data-show="$_gkind == 'save'" {
             label for="goal-target" { (t("goal.target")) }
-            input id="goal-target" type="text" inputmode="decimal" class="money" name="target_amount" placeholder="0.00"
-                value=[g.filter(|g| g.kind == GoalKind::Save).map(|g| crate::money::plain(g.target_amount))];
+            (goal_money(c, "goal-target", "target_amount", g.filter(|g| g.kind == GoalKind::Save).map(|g| g.target_amount)))
         }
         div class="field" data-show="$_gkind == 'save'" {
             label for="goal-track-save" { (t("goal.track_save")) }
@@ -844,22 +854,36 @@ fn goal_kind_fields(w: &Wallet, m: &Month, g: Option<&Goal>) -> Markup {
             }
             p class="hint" { (t("goal.track_save_hint")) }
         }
-        div class="field" data-show="$_gkind == 'payoff'" {
-            label for="goal-track-payoff" { (t("goal.track_payoff")) }
-            select id="goal-track-payoff" name="track_payoff" {
-                @let cards: Vec<&&Account> = accts.iter().filter(|a| a.kind.is_card()).collect();
-                @if !cards.is_empty() {
-                    optgroup label=(t("accounts.group_cards")) {
-                        @for a in cards { option value=(format!("account:{}", a.id)) selected[sel_acct(&a.id)] { (a.name) } }
+        @let cards: Vec<&&Account> = accts.iter().filter(|a| a.kind.is_card()).collect();
+        @if cards.is_empty() && debt_lines.is_empty() {
+            p class="hint" data-show="$_gkind == 'payoff'" data-goal-no-debts { (t("goal.no_debts")) }
+        } @else {
+            div class="field" data-show="$_gkind == 'payoff'" {
+                label for="goal-track-payoff" { (t("goal.track_payoff")) }
+                select id="goal-track-payoff" name="track_payoff" {
+                    @if !cards.is_empty() {
+                        optgroup label=(t("accounts.group_cards")) {
+                            @for a in &cards {
+                                option value=(format!("account:{}", a.id)) selected[sel_acct(&a.id)] { (owed_label(&a.name, owed(GoalTrack::Account { id: a.id.clone() }))) }
+                            }
+                        }
+                    }
+                    @if !debt_lines.is_empty() {
+                        optgroup label=(t("goal.track_debt_lines")) {
+                            @for l in &debt_lines {
+                                option value=(format!("line:{}", l.name)) selected[sel_line(&l.name)] { (owed_label(&l.name, owed(GoalTrack::Line { name: l.name.clone() }))) }
+                            }
+                        }
                     }
                 }
-                @if !debt_lines.is_empty() {
-                    optgroup label=(t("goal.track_debt_lines")) {
-                        @for l in &debt_lines { option value=(format!("line:{}", l.name)) selected[sel_line(&l.name)] { (l.name) } }
-                    }
-                }
+                p class="hint" { (t("goal.track_payoff_hint")) }
             }
-            p class="hint" { (t("goal.track_payoff_hint")) }
+            div class="field" data-show="$_gkind == 'payoff'" {
+                label for="goal-payoff" { (t("goal.payoff_amount")) }
+                // Blank means all of it.
+                (goal_money(c, "goal-payoff", "payoff_amount", g.filter(|g| g.kind == GoalKind::Payoff && g.target_amount < g.starting_amount).map(|g| g.target_amount)))
+                p class="hint" { (t("goal.payoff_amount_hint")) }
+            }
         }
         div class="two-col" {
             div class="field" {
@@ -869,24 +893,24 @@ fn goal_kind_fields(w: &Wallet, m: &Month, g: Option<&Goal>) -> Markup {
             }
             div class="field" data-show="$_gkind == 'save'" {
                 label for="goal-start" { (t("goal.starting")) }
-                input id="goal-start" type="text" inputmode="decimal" class="money" name="starting_amount" placeholder="0.00"
-                    value=[g.filter(|g| !g.starting_amount.is_zero()).map(|g| crate::money::plain(g.starting_amount))];
+                (goal_money(c, "goal-start", "starting_amount", g.filter(|g| g.kind == GoalKind::Save && !g.starting_amount.is_zero()).map(|g| g.starting_amount)))
             }
         }
     }
 }
 
-pub async fn goal_new_sheet(State(st): State<Shared>, Extension(user): Extension<AuthUser>, Query(q): Query<AccountQuery>) -> Sse {
+pub async fn goal_new_sheet(State(st): State<Shared>, Extension(user): Extension<AuthUser>, headers: HeaderMap, Query(q): Query<AccountQuery>) -> Sse {
     let user = user.0;
+    let c = ctx(&st, &user, &headers);
     let view = view_or(&q.view, &user);
-    let (m, w) = match (month_for_view(&st, &user, &view).await, st.wallet(&user).await) {
-        (Ok(m), Ok(w)) => (m, w),
-        (Err(e), _) | (_, Err(e)) => return sheet_error(&e, &user.currency),
+    let (m, w, all) = match (month_for_view(&st, &user, &view).await, st.wallet(&user).await, st.all_months(&user).await) {
+        (Ok(m), Ok(w), Ok(a)) => (m, w, a),
+        (Err(e), _, _) | (_, Err(e), _) | (_, _, Err(e)) => return sheet_error(&e, &user.currency),
     };
     Sse::new().patch(sheet(&t("goal.new_title"), Some(&t("goal.new_sub")), html! {
         form class="stack" id="goal-form" data-signals="{_gkind: 'save'}" data-on:submit__prevent=(post_form_guarded("/ui/goals")) {
             (view_input(&view))
-            (goal_kind_fields(&w, &m, None))
+            (goal_kind_fields(&c, &w, &m, &all, None))
             span class="field-error" aria-live="polite" {}
             button type="submit" class="btn primary block" { (t("goal.create")) }
         }
@@ -942,7 +966,7 @@ pub async fn goal_sheet(State(st): State<Shared>, Extension(user): Extension<Aut
             h3 id="ge-h" { (t("goal.edit")) }
             form class="stack" data-signals=(format!("{{_gkind: '{}'}}", g.kind.as_str())) data-on:submit__prevent=(post_form_guarded(&format!("/ui/goals/{id}"))) {
                 (view_input(&view))
-                (goal_kind_fields(&w, &m, Some(&g)))
+                (goal_kind_fields(&c, &w, &m, &all, Some(&g)))
                 span class="field-error" aria-live="polite" {}
                 button type="submit" class="btn primary" { (t("common.save")) }
             }
@@ -1201,7 +1225,9 @@ const NEW_LINE: &str = "new";
 /// A goal read from its form.
 struct GoalForm {
     goal: Goal,
-    payoff: bool,
+    /// Payoff: how much to pay off, or `None` for all of it. The goal's
+    /// amounts are filled in from the debt when it is saved.
+    payoff: Option<Option<Cents>>,
     /// The goal follows a line named after it, to be added if missing.
     new_line: bool,
 }
@@ -1224,7 +1250,7 @@ fn goal_from_form(f: &HashMap<String, String>, id: Id, start: chrono::NaiveDate)
     let starting = if kind == GoalKind::Save && matches!(track, GoalTrack::Line { .. }) { opt_money_field(f, "starting_amount")?.unwrap_or(Cents::ZERO) } else { Cents::ZERO };
     Ok(GoalForm {
         goal: Goal { id, name: field(f, "name").to_string(), kind, target_amount: target, target_month, track, start_month: start, starting_amount: starting, sort_order: 0 },
-        payoff: kind == GoalKind::Payoff,
+        payoff: if kind == GoalKind::Payoff { Some(opt_money_field(f, "payoff_amount")?) } else { None },
         new_line,
     })
 }
@@ -1254,6 +1280,21 @@ async fn ensure_goal_line(st: &Shared, user: &UserRecord, view: &View, goal: &Go
     Ok(added)
 }
 
+/// Fills in a payoff goal from the debt it starts at: pay off `amount`, or
+/// all of it when blank.
+fn set_payoff(goal: &mut Goal, debt: Cents, amount: Option<Cents>, currency: &str) -> AppResult<()> {
+    if debt.is_zero() {
+        return Err(AppError::bad(t("err.goal_no_debt")));
+    }
+    let target = amount.unwrap_or(debt);
+    if target > debt {
+        return Err(AppError::bad(tf("err.goal_over_debt", &[("amount", &crate::money::format(debt, currency))])));
+    }
+    goal.starting_amount = debt;
+    goal.target_amount = target;
+    Ok(())
+}
+
 async fn goal_start(st: &Shared, user: &UserRecord, view: &View) -> chrono::NaiveDate {
     match month_for_view(st, user, view).await {
         Ok(m) => m.year_month,
@@ -1278,13 +1319,12 @@ pub async fn add_goal(State(st): State<Shared>, Extension(user): Extension<AuthU
         false
     };
     let line_name = goal.name.trim().to_string();
+    let currency = user.currency.clone();
     wallet_action(&st, &user, &headers, view, move |w, all| {
         let mut goal = goal;
-        if payoff {
-            goal.target_amount = w.debt_now(&goal.track, all, start);
-            if goal.target_amount.is_zero() {
-                return Err(AppError::bad(t("err.goal_no_debt")));
-            }
+        if let Some(amount) = payoff {
+            let debt = w.debt_now(&goal.track, all, start);
+            set_payoff(&mut goal, debt, amount, &currency)?;
         }
         Ok(w.add_goal(goal)?)
     }, move |_, _| {
@@ -1299,6 +1339,7 @@ pub async fn update_goal(State(st): State<Shared>, Extension(user): Extension<Au
     let view = view_of(&f, fallback_view(&user));
     let old = st.wallet(&user).await.ok().and_then(|w| w.goal(&id).cloned());
     let Some(old) = old else { return failed(&st, &user, &headers, &view, &AppError::NotFound).await };
+    let currency = user.currency.clone();
     let GoalForm { goal, payoff, new_line } = match goal_from_form(&f, id, old.start_month) {
         Ok(v) => v,
         Err(e) => return failed(&st, &user, &headers, &view, &e).await,
@@ -1310,9 +1351,10 @@ pub async fn update_goal(State(st): State<Shared>, Extension(user): Extension<Au
     }
     wallet_action(&st, &user, &headers, view, move |w, all| {
         let mut goal = goal;
-        if payoff {
+        if let Some(amount) = payoff {
             // Keep the starting debt unless the goal now follows another debt.
-            goal.target_amount = if old.kind == GoalKind::Payoff && old.track == goal.track { old.target_amount } else { w.debt_now(&goal.track, all, old.start_month) };
+            let debt = if old.kind == GoalKind::Payoff && old.track == goal.track { old.starting_amount } else { w.debt_now(&goal.track, all, old.start_month) };
+            set_payoff(&mut goal, debt, amount, &currency)?;
         }
         Ok(w.update_goal(goal)?)
     }, |_, _| vec![toast(ToastKind::Success, &t("goal.saved_toast"), None)])

@@ -14,7 +14,12 @@
 //! - `refresh_tokens` and `sync_ops` support auth and offline sync.
 
 /// Ordered migrations: (version, statements).
-pub const MIGRATIONS: &[(i64, &[&str])] = &[(1, V1), (2, V2), (3, V3), (4, V4), (5, V5), (6, V6), (7, V7)];
+pub const MIGRATIONS: &[(i64, &[&str])] = &[(1, V1), (2, V2), (3, V3), (4, V4), (5, V5), (6, V6), (7, V7), (8, V8)];
+
+/// v8: a payoff goal may cover part of a debt. `starting_amount` now holds
+/// the debt when the goal started and `target_amount` how much of it to pay
+/// off; until now the starting debt was the target, for the whole debt.
+const V8: &[&str] = &["UPDATE goals SET starting_amount = target_amount WHERE kind = 'payoff'"];
 
 /// v7: shared budgets. A member's login points at the owner whose data it
 /// uses; owners have `owner_id` NULL.

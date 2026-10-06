@@ -226,6 +226,19 @@ test.describe("paycheck view (primary)", () => {
     await expect(pz.category(page, "Kids")).toBeVisible();
     await expect(page.getByLabel("Planned for Allowance from this paycheck")).toHaveValue("20.00");
     await expect(pz.sts(page)).toHaveText("$333.00");
+    // A debt line keeps what's owed apart from what this paycheck pays.
+    await pz.openSheet(page, "New line", { exact: true });
+    await sh.getByLabel("Line name").fill("Car loan");
+    await sh.getByLabel("Category", { exact: true }).selectOption({ label: "Debt" });
+    await sh.getByLabel("Balance owed").fill("$12,000");
+    await sh.getByLabel("Minimum payment").fill("250");
+    await sh.getByLabel("Payment from this paycheck").fill("50");
+    await sh.getByRole("button", { name: "Add line" }).click();
+    await expect(sh).toBeHidden();
+    await expect(page.getByLabel("Planned for Car loan from this paycheck")).toHaveValue("50.00");
+    await expect(pz.sts(page)).toHaveText("$283.00");
+    await pz.openSheet(page, "Car loan details");
+    await expect(pz.sheet(page).getByLabel("Balance")).toHaveValue("12000.00");
   });
 
   test("navigating between paychecks", async ({ page }) => {

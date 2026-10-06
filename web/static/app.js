@@ -79,12 +79,16 @@
     return out;
   }
 
-  /** "600+80" → "680.00" in the field, so users see what will be saved. */
+  /**
+   * "600+80" → "680.00" in the field, so users see what will be saved.
+   * Fields marked data-format="money" show it as currency: "5000" → "$5,000.00".
+   */
   function normalizeMoney(input) {
-    if (!/[+\-*/()xX\u00d7\u00f7]/.test(input.value.replace(/^\s*-/, ""))) return;
+    var formatted = input.dataset.format === "money";
+    if (!formatted && !/[+\-*/()xX\u00d7\u00f7]/.test(input.value.replace(/^\s*-/, ""))) return;
     var c = cents(input.value);
     if (c === null || Number.isNaN(c)) return;
-    input.value = (Math.floor(c / 100)) + "." + String(c % 100).padStart(2, "0");
+    input.value = formatted ? fmt(c) : (Math.floor(c / 100)) + "." + String(c % 100).padStart(2, "0");
   }
   document.addEventListener("blur", function (e) {
     var el = e.target;

@@ -649,9 +649,17 @@ pub async fn add_line(State(st): State<Shared>, Extension(user): Extension<AuthU
         Err(e) => return failed(&st, &user.0, &headers, &view, &e).await,
     };
     let paycheck = opt_id(&f, "paycheck_id");
+    let (bal, min) = match (opt_money_field(&f, "current_balance"), opt_money_field(&f, "minimum_payment")) {
+        (Ok(b), Ok(m)) => (b, m),
+        (Err(e), _) | (_, Err(e)) => return failed(&st, &user.0, &headers, &view, &e).await,
+    };
     month_action(&st, &user.0, &headers, view, Ok(id), |m| {
         let cat = if cat_field == "__new" { m.add_category(&new_cat, CategoryKind::Standard)? } else { Id::new(cat_field) };
         let lid = m.add_expense_line(&cat, field(&f, "name"))?;
+        // The form only offers these for a Debt category.
+        if (bal.is_some() || min.is_some()) && m.is_debt_line(&lid) {
+            m.set_debt_fields(&lid, bal, min)?;
+        }
         if let (Some(a), Some(p)) = (amount, paycheck.as_ref()) {
             m.set_allocation(p, &lid, a)?;
         }

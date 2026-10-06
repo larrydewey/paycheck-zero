@@ -488,6 +488,10 @@ pub async fn new_line(State(st): State<Shared>, Extension(user): Extension<AuthU
     let chosen = q.cat.as_deref().map(Id::new).filter(|x| m.category(x).is_some());
     let cats = m.categories_sorted();
     let initial_cat = chosen.clone().or_else(|| cats.first().map(|x| x.id.clone())).map(|x| x.to_string()).unwrap_or_else(|| "__new".into());
+    // Debt lines carry a balance owed, kept apart from what a paycheck pays
+    // toward it, so the total debt is never mistaken for this month's plan.
+    let debt_cats: Vec<String> = cats.iter().filter(|x| x.kind == CategoryKind::Debt).map(|x| format!("'{}'", x.id)).collect();
+    let is_debt = format!("[{}].includes($_nlcat)", debt_cats.join(","));
     Sse::new().patch(sheet(&t("plan.new_line"), pid.as_ref().and_then(|p| m.paycheck(p)).map(|p| tf("newline.sub", &[("date", &short_date(p.date))])).as_deref(), html! {
         form class="stack" id="new-line-form" data-signals=(format!("{{_nlcat: '{}'}}", initial_cat))
             data-on:submit__prevent=(post_form_guarded(&format!("/ui/months/{mid}/lines"))) {
@@ -508,10 +512,26 @@ pub async fn new_line(State(st): State<Shared>, Extension(user): Extension<AuthU
                 label for="nl-newcat" { (t("category.name_field")) }
                 input id="nl-newcat" type="text" name="new_category" maxlength="100";
             }
+            @if !debt_cats.is_empty() {
+                div class="two-col" data-show=(is_debt) {
+                    div class="field" {
+                        label for="nl-bal" { (t("newline.balance")) }
+                        input id="nl-bal" type="text" inputmode="decimal" class="money" name="current_balance" placeholder="0.00" autocomplete="off";
+                    }
+                    div class="field" {
+                        label for="nl-min" { (t("debt.minimum")) }
+                        input id="nl-min" type="text" inputmode="decimal" class="money" name="minimum_payment" placeholder="0.00" autocomplete="off";
+                    }
+                }
+                p class="hint" data-show=(is_debt) { (t("newline.balance_hint")) }
+            }
             @if let Some(f) = free {
                 div class="field" {
-                    label for="nl-amount" { (t("newline.amount")) }
-                    input id="nl-amount" type="text" inputmode="decimal" class="money" name="amount" placeholder="0.00" autocomplete="off" required data-max-cents=(f.get());
+                    label for="nl-amount" {
+                        span data-show=(format!("!{is_debt}")) { (t("newline.amount")) }
+                        span data-show=(is_debt) style="display: none" { (t("newline.payment")) }
+                    }
+                    input id="nl-amount" type="text" inputmode="decimal" class="money" name="amount" placeholder="0.00" autocomplete="off" data-max-cents=(f.get());
                     p class="hint" { (tf("fund.available", &[("amount", &c.money(f))])) }
                 }
             }

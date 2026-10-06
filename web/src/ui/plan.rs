@@ -89,8 +89,10 @@ fn add_line_row(m: &Month, view: &View, cat: &CategoryView, pid: Option<&Id>, ma
             input type="text" name="name" required maxlength="100" placeholder=(t("line.add_placeholder")) aria-label=(tf("line.add_label", &[("category", &cat.name)]));
             @if pid.is_some() {
                 span class="add-extra" {
-                    input type="text" inputmode="decimal" class="money" name="amount" placeholder="0.00" autocomplete="off" required
-                        data-max-cents=[max] aria-label=(tf("line.add_from_this_label", &[("category", &cat.name)]));
+                    @let debt = cat.kind == CategoryKind::Debt;
+                    input type="text" inputmode="decimal" class="money" name="amount" autocomplete="off" required data-max-cents=[max]
+                        placeholder=(if debt { t("line.add_payment_placeholder") } else { "0.00".into() })
+                        aria-label=(tf(if debt { "line.add_payment_label" } else { "line.add_from_this_label" }, &[("category", &cat.name)]));
                 }
             }
             button type="submit" class="btn small" { (t("line.add")) }

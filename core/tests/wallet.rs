@@ -211,7 +211,7 @@ fn payoff_goal_on_a_card_tracks_debt_paid_down() {
             target_month: Some(d(2026, 10, 1)),
             track,
             start_month: d(2026, 9, 1),
-            starting_amount: Cents::ZERO,
+            starting_amount: start,
             sort_order: 0,
         })
         .unwrap();
@@ -229,6 +229,39 @@ fn payoff_goal_on_a_card_tracks_debt_paid_down() {
 }
 
 #[test]
+fn payoff_goal_can_cover_part_of_a_debt() {
+    let mut f = fixture();
+    let months = [f.m.clone()];
+    let track = GoalTrack::Account { id: f.visa.clone() };
+    let start = f.w.debt_now(&track, &months, d(2026, 9, 1));
+    let goal = |target: Cents| Goal {
+        id: Id::generate(),
+        name: "Visa down".into(),
+        kind: GoalKind::Payoff,
+        target_amount: target,
+        target_month: None,
+        track: track.clone(),
+        start_month: d(2026, 9, 1),
+        starting_amount: start,
+        sort_order: 0,
+    };
+    assert_eq!(f.w.add_goal(goal(Cents::ZERO)), Err(DomainError::NonPositiveAmount));
+    let id = f.w.add_goal(goal(c(20_000))).unwrap();
+    f.m.add_transaction(transfer(d(2026, 9, 9), 15_000, &f.checking, &f.visa, Some(&f.card_line))).unwrap();
+    let months = [f.m.clone()];
+    let g = f.w.goal(&id).unwrap().clone();
+    let p = f.w.goal_progress(&g, &months, d(2026, 9, 20));
+    assert_eq!((p.current, p.target, p.remaining, p.percent), (c(15_000), c(20_000), c(5_000), 75));
+    assert_eq!(p.status, GoalStatus::NoDate);
+    // Reached once $200 is paid, though the card still carries a balance.
+    f.m.add_transaction(transfer(d(2026, 9, 25), 5_000, &f.checking, &f.visa, Some(&f.card_line))).unwrap();
+    let months = [f.m.clone()];
+    let p = f.w.goal_progress(&g, &months, d(2026, 9, 26));
+    assert_eq!((p.remaining, p.status), (Cents::ZERO, GoalStatus::Done));
+    assert_eq!(f.w.debt_now(&track, &months, d(2026, 9, 26)), c(30_000));
+}
+
+#[test]
 fn deleting_an_account_removes_its_goals_and_adjustments() {
     let mut f = fixture();
     f.w.add_goal(Goal {
@@ -239,7 +272,7 @@ fn deleting_an_account_removes_its_goals_and_adjustments() {
         target_month: None,
         track: GoalTrack::Account { id: f.visa.clone() },
         start_month: d(2026, 9, 1),
-        starting_amount: Cents::ZERO,
+        starting_amount: c(50_000),
         sort_order: 0,
     })
     .unwrap();

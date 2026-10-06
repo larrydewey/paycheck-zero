@@ -216,7 +216,11 @@ test.describe("goals", () => {
 
     await pz.openSheet(page, "Vacation goal");
     sh = pz.sheet(page);
+    // Amounts read as money, and what's typed is tidied up on the way out.
+    await expect(sh.getByLabel("Target amount")).toHaveValue("$1,200.00");
     await sh.getByLabel("Target amount").fill("8000");
+    await sh.getByLabel("Target amount").blur();
+    await expect(sh.getByLabel("Target amount")).toHaveValue("$8,000.00");
     await sh.getByLabel("Reach it by (optional)").fill("2027-08");
     await sh.getByRole("button", { name: "Save", exact: true }).click();
     await expect(vac).toContainText("$5,000.00 saved of $8,000.00 · 62%");
@@ -233,6 +237,26 @@ test.describe("goals", () => {
     await expect(pz.toast(page)).toContainText("Transfer saved.");
     await pz.overview(page, s);
     await expect(visaGoal).toContainText("$85.20 paid off of $917.20");
+
+    // A payoff goal can aim for part of a debt, never more than is owed.
+    await pz.openSheet(page, "New goal");
+    sh = pz.sheet(page);
+    await sh.getByRole("radio", { name: "Pay off debt" }).check();
+    await sh.getByLabel("Goal name").fill("Visa down");
+    const debt = sh.getByLabel("Debt to pay off");
+    await expect(debt.locator("option").first()).toHaveText(/^Visa \(\$[\d,]+\.\d\d owed\)$/);
+    await sh.getByLabel("Amount to pay off (optional)").fill("99999");
+    await sh.getByRole("button", { name: "Create goal" }).click();
+    await expect(pz.toast(page)).toContainText("That's more than is owed.");
+    await sh.getByLabel("Amount to pay off (optional)").fill("300");
+    await sh.getByRole("button", { name: "Create goal" }).click();
+    await expect(pz.toast(page)).toContainText("Goal created.");
+    const down = page.locator('li.goal[data-goal="Visa down"]');
+    await expect(down).toContainText("$0.00 paid off of $300.00");
+    await pz.openSheet(page, "Visa down goal");
+    await expect(pz.sheet(page).getByLabel("Amount to pay off (optional)")).toHaveValue("$300.00");
+    await expect(pz.sheet(page).locator("[data-col=remaining]")).toHaveText("$300.00");
+    await pz.closeSheet(page);
 
     await pz.openSheet(page, "Vacation goal");
     await pz.sheet(page).getByRole("button", { name: "Delete Vacation" }).click();

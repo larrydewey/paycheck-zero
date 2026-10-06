@@ -212,7 +212,8 @@ pub struct Goal {
     pub id: Id,
     pub name: String,
     pub kind: GoalKind,
-    /// Saving: the amount to reach. Payoff: the debt when the goal started.
+    /// Saving: the amount to reach. Payoff: how much of the debt to pay
+    /// off, up to all of it.
     pub target_amount: Cents,
     /// First day of the month the goal should be reached by.
     pub target_month: Option<NaiveDate>,
@@ -220,6 +221,7 @@ pub struct Goal {
     /// First day of the month progress is counted from.
     pub start_month: NaiveDate,
     /// Saving tracked by a line: what was already saved before the goal.
+    /// Payoff: the debt when the goal started.
     pub starting_amount: Cents,
     pub sort_order: i32,
 }
@@ -261,9 +263,9 @@ pub struct GoalMonth {
 pub struct GoalProgress {
     /// Saved so far, or debt paid down so far.
     pub current: Cents,
-    /// Saving: the target. Payoff: the starting debt.
+    /// Saving: the target. Payoff: how much to pay off.
     pub target: Cents,
-    /// Left to save, or debt still owed.
+    /// Left to save, or left to pay off.
     pub remaining: Cents,
     pub percent: i64,
     /// Progress made this month (planned for line goals).
@@ -712,7 +714,7 @@ impl Wallet {
         if g.name.trim().is_empty() || g.name.chars().count() > MAX_ACCOUNT_NAME {
             return Err(DomainError::InvalidName { max: MAX_ACCOUNT_NAME });
         }
-        if g.kind == GoalKind::Save && !g.target_amount.is_positive() {
+        if !g.target_amount.is_positive() || (g.kind == GoalKind::Payoff && !g.starting_amount.is_positive()) {
             return Err(DomainError::NonPositiveAmount);
         }
         if g.target_amount.is_negative() || g.starting_amount.is_negative() {
@@ -725,8 +727,8 @@ impl Wallet {
         }
     }
 
-    /// Adds a goal. For a payoff goal, `target_amount` should be the debt
-    /// today (see [`Wallet::debt_now`]).
+    /// Adds a goal. For a payoff goal, `starting_amount` should be the debt
+    /// today (see [`Wallet::debt_now`]) and `target_amount` at most that.
     pub fn add_goal(&mut self, mut g: Goal) -> Result<Id, DomainError> {
         g.name = g.name.trim().to_string();
         g.start_month = first_of(g.start_month);
@@ -790,7 +792,7 @@ impl Wallet {
                         .sum::<Cents>()
             }
             (GoalKind::Save, GoalTrack::Account { id }) => self.balance_on(id, months, month_end(ym)).max(Cents::ZERO),
-            (GoalKind::Payoff, track) => (g.target_amount - self.debt_at(track, months, ym)).max(Cents::ZERO),
+            (GoalKind::Payoff, track) => (g.starting_amount - self.debt_at(track, months, ym)).max(Cents::ZERO),
         }
     }
 
@@ -814,10 +816,7 @@ impl Wallet {
         let current = first_of(current);
         let target = g.target_amount;
         let value = self.value_at(g, months, current);
-        let remaining = match g.kind {
-            GoalKind::Save => (target - value).max(Cents::ZERO),
-            GoalKind::Payoff => self.debt_at(&g.track, months, current),
-        };
+        let remaining = (target - value).max(Cents::ZERO);
         let before = self.value_before(g, months, current);
         let this_month = value - before;
         let percent = if target.is_positive() { (value.get().saturating_mul(100) / target.get()).clamp(0, 100) } else { 100 };
@@ -826,7 +825,7 @@ impl Wallet {
         // months that remain.
         let left_at_start = (remaining + this_month.max(Cents::ZERO)).max(Cents::ZERO);
         let needed_this_month = months_left.map(|n| Cents::new((left_at_start.get() + n - 1) / n));
-        let status = if remaining.is_zero() && (g.kind == GoalKind::Payoff || value >= target) {
+        let status = if remaining.is_zero() {
             GoalStatus::Done
         } else {
             match needed_this_month {

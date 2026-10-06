@@ -341,7 +341,7 @@ async fn reset(State(st): State<Shared>, Json(r): Json<ResetReq>) -> AppResult<J
                 target_month: Some(d(2027, 3, 1)),
                 track: GoalTrack::Account { id: visa },
                 start_month: d(2026, 9, 1),
-                starting_amount: Cents::ZERO,
+                starting_amount: debt,
                 sort_order: 0,
             })?;
             months.push((m, pcs));

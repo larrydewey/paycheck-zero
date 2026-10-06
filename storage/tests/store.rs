@@ -175,7 +175,7 @@ async fn storage_behaviour() {
         target_month: None,
         track: GoalTrack::Account { id: visa.clone() },
         start_month: d(2026, 9, 1),
-        starting_amount: Cents::ZERO,
+        starting_amount: Cents::new(82_000),
         sort_order: 0,
     })
     .unwrap();
