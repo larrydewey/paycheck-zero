@@ -453,7 +453,7 @@ pub async fn income_suggestions(State(st): State<Shared>, Extension(user): Exten
                         };
                         @let js = format!(
                             "pz.fillIncome({{name: {}, amount: {}, kind: {}, date: {}, anchor: {}, days: {}}}); $_newkind = {}; $_sugoff = document.getElementById('new-name').value",
-                            js_str(&s.name), js_str(&crate::money::plain(s.planned_amount)), js_str(kind), js_str(&date), js_str(&anchor), js_str(&days), js_str(kind)
+                            js_str(&s.name), js_str(&crate::money::format(s.planned_amount, &user.currency)), js_str(kind), js_str(&date), js_str(&anchor), js_str(&days), js_str(kind)
                         );
                         li {
                             button type="button" class="suggest" data-on:click=(js) {

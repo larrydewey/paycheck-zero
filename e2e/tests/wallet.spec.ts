@@ -75,7 +75,7 @@ test.describe("accounts and credit cards", () => {
     await expect(sh.locator("#transfer-form")).toBeVisible();
     await expect(sh.getByLabel("From")).toHaveValue(s.accounts!["Checking"]);
     await expect(sh.getByLabel("To")).toHaveValue(s.accounts!["Visa"]);
-    await expect(sh.getByLabel("Amount", { exact: true })).toHaveValue("85.20");
+    await expect(sh.getByLabel("Amount", { exact: true })).toHaveValue("$85.20");
     await sh.getByRole("button", { name: "Save transfer" }).click();
     await expect(pz.toast(page)).toContainText("Transfer saved.");
     await expect(visa.locator("[data-col=owed]")).toHaveText("$832.00");

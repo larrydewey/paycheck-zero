@@ -66,7 +66,7 @@ test.describe("months", () => {
     await page.getByRole("link", { name: "Budget", exact: true }).click();
     await waitForContent(page);
     await expect(pz.line(page, "Rent")).toBeVisible();
-    await expect(page.getByLabel("Total planned for Rent")).toHaveValue("0.00");
+    await expect(page.getByLabel("Total planned for Rent")).toHaveValue("$0.00");
     await expect(pz.line(page, "Rent")).not.toContainText("Target");
   });
 

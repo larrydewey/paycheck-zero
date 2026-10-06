@@ -492,7 +492,7 @@ pub(super) fn fund_form(c: &Ctx, m: &Month, pid: &Id, view: &View, unallocated: 
     let url = format!("/ui/months/{}/fund", m.id);
     let cats = m.categories_sorted();
     let default_cat = cats.first().map(|c| c.id.clone());
-    let fill_all = format!("document.getElementById('fund-amount').value = '{}'", crate::money::plain(unallocated));
+    let fill_all = format!("document.getElementById('fund-amount').value = '{}'", c.money(unallocated));
     html! {
         section class="fund" aria-labelledby="fund-h" data-signals=(format!("{{_fundline: '', _fundcat: '{}'}}", default_cat.as_ref().map(ToString::to_string).unwrap_or_default())) {
             h2 id="fund-h" { (t("fund.title")) }
@@ -679,7 +679,7 @@ pub fn render_income(c: &Ctx, m: &Month, archived: bool, welcome: bool) -> Marku
                 @if structure {
                     details class="edit-income" {
                         summary { (t("income.edit")) }
-                        (income_form(&view, &format!("/ui/income/{}", l.id), "edit", Some(l), m))
+                        (income_form(c, &view, &format!("/ui/income/{}", l.id), "edit", Some(l), m))
                         form class="inline" id=(format!("add-date-form-{}", l.id)) data-clear data-on:submit__prevent=(post_form(&format!("/ui/income/{}/paychecks", l.id))) {
                             (view_input(&view))
                             label for=(format!("add-date-{}", l.id)) { (t("income.add_date")) }
@@ -698,14 +698,14 @@ pub fn render_income(c: &Ctx, m: &Month, archived: bool, welcome: bool) -> Marku
         @if structure {
             section class="card add-income" aria-labelledby="add-income-h" {
                 h2 id="add-income-h" class="h3" { (t("income.add")) }
-                (income_form(&view, &format!("/ui/months/{}/income", m.id), "new", None, m))
+                (income_form(c, &view, &format!("/ui/months/{}/income", m.id), "new", None, m))
             }
         }
     }
 }
 
 /// Income line form. The "new" form offers smart suggestions from history.
-fn income_form(view: &View, url: &str, prefix: &str, line: Option<&IncomeLine>, m: &Month) -> Markup {
+fn income_form(c: &Ctx, view: &View, url: &str, prefix: &str, line: Option<&IncomeLine>, m: &Month) -> Markup {
     let kind = match line.and_then(|l| l.recurrence_rule.as_ref()) {
         None => "one_off",
         Some(Recurrence::Weekly { .. }) => "weekly",
@@ -743,7 +743,7 @@ fn income_form(view: &View, url: &str, prefix: &str, line: Option<&IncomeLine>, 
             div class="field" {
                 label for=(id("amount")) { (t("income.amount")) }
                 input id=(id("amount")) type="text" inputmode="decimal" class="money" name="amount" required placeholder="0.00"
-                    value=[line.map(|l| crate::money::plain(l.planned_amount))];
+                    value=[line.map(|l| c.money(l.planned_amount))];
             }
             div class="field" {
                 label for=(id("kind")) { (t("income.schedule")) }
@@ -826,7 +826,7 @@ pub(super) fn tx_fields(c: &Ctx, m: &Month, prefix: &str, parts: &[&Transaction]
         div class="field wide big-amount" {
             label for=(id("amount")) { (t("tx.amount")) }
             input id=(id("amount")) type="text" inputmode="decimal" class="money" name="amount" required placeholder="0.00"
-                value=[first.map(|_| crate::money::plain(total))] data-split-total;
+                value=[first.map(|_| c.money(total))] data-split-total;
         }
         div class="field wide" {
             label for=(id("payee")) { (t("tx.payee")) }
@@ -866,7 +866,7 @@ pub(super) fn tx_fields(c: &Ctx, m: &Month, prefix: &str, parts: &[&Transaction]
                             }
                         }
                         input type="text" inputmode="decimal" class="money part-amount" name=(format!("part_amount_{i}")) placeholder="0.00"
-                            value=[amt.filter(|_| split).map(crate::money::plain)] aria-label=(tf("split.part_amount", &[("n", &n)])) data-part-amount;
+                            value=[amt.filter(|_| split).map(|v| c.money(v))] aria-label=(tf("split.part_amount", &[("n", &n)])) data-part-amount;
                         button type="button" class="icon-btn danger part-remove" data-remove-part aria-label=(tf("split.remove_part", &[("n", &n)])) { (icon("trash")) }
                     }
                 }

@@ -32,8 +32,8 @@ test.describe("paycheck view (primary)", () => {
     await page.goBack();
     await waitForContent(page);
     await pz.lineSheet(page, "Groceries");
-    await expect(pz.sheet(page).getByLabel("Groceries from the Sep 4 paycheck")).toHaveValue("300.00");
-    await expect(pz.sheet(page).getByLabel("Groceries from the Sep 18 paycheck")).toHaveValue("300.00");
+    await expect(pz.sheet(page).getByLabel("Groceries from the Sep 4 paycheck")).toHaveValue("$300.00");
+    await expect(pz.sheet(page).getByLabel("Groceries from the Sep 18 paycheck")).toHaveValue("$300.00");
   });
 
   test("inline Planned edit updates Safe to Spend and category totals live", async ({ page }) => {
@@ -42,7 +42,7 @@ test.describe("paycheck view (primary)", () => {
     await input.press("Enter");
     await expect(pz.sts(page)).toHaveText("$587.50");
     await expect(pz.category(page, "Housing").locator("summary [data-col=this]")).toContainText("$1,000.50");
-    await expect(input).toHaveValue("1000.50");
+    await expect(input).toHaveValue("$1,000.50");
     await expect(page.getByRole("button", { name: "Assign $599.50" })).toBeVisible();
   });
 
@@ -58,7 +58,7 @@ test.describe("paycheck view (primary)", () => {
     await pz.sheet(page).getByLabel("Expense line").selectOption({ label: "Gas" });
     await pz.sheet(page).getByLabel("Amount", { exact: true }).fill("60");
     await pz.sheet(page).getByRole("button", { name: "Assign", exact: true }).click();
-    await expect(page.getByLabel("Planned for Gas from this paycheck")).toHaveValue("60.00");
+    await expect(page.getByLabel("Planned for Gas from this paycheck")).toHaveValue("$60.00");
   });
 
   test("over-allocation is blocked in the browser before sending", async ({ page }) => {
@@ -80,7 +80,7 @@ test.describe("paycheck view (primary)", () => {
     await expect(toast).toContainText("That would over-allocate the Sep 4 paycheck by $12.50.");
     await toast.getByText("Technical details").click();
     await expect(toast.locator("code")).toContainText("INVARIANT_VIOLATION");
-    await expect(input).toHaveValue("1200.00");
+    await expect(input).toHaveValue("$1,200.00");
     await expect(pz.sts(page)).toHaveText("$388.00");
   });
 
@@ -112,7 +112,7 @@ test.describe("paycheck view (primary)", () => {
     await expect(sh).toBeHidden();
     await expect(pz.sts(page)).toHaveText("$338.00");
     await pz.openSheet(page, "Car loan details");
-    await expect(pz.sheet(page).getByLabel("Balance")).toHaveValue("12000.00");
+    await expect(pz.sheet(page).getByLabel("Balance")).toHaveValue("$12,000.00");
   });
 
   test("assign blocks amounts above what's left", async ({ page }) => {
@@ -146,8 +146,8 @@ test.describe("paycheck view (primary)", () => {
     await pz.overview(page, s);
     await expect(pz.line(page, "Groceries").locator("[data-col=planned]")).toHaveText("$750.00");
     await pz.lineSheet(page, "Groceries");
-    await expect(pz.sheet(page).getByLabel("Groceries from the Sep 4 paycheck")).toHaveValue("300.00");
-    await expect(pz.sheet(page).getByLabel("Groceries from the Sep 18 paycheck")).toHaveValue("450.00");
+    await expect(pz.sheet(page).getByLabel("Groceries from the Sep 4 paycheck")).toHaveValue("$300.00");
+    await expect(pz.sheet(page).getByLabel("Groceries from the Sep 18 paycheck")).toHaveValue("$450.00");
   });
 
   test("rename a line from its sheet", async ({ page }) => {
@@ -203,7 +203,7 @@ test.describe("paycheck view (primary)", () => {
     await pz.openSheet(page, "Assign $400.00");
     const sh = pz.sheet(page);
     await sh.getByRole("button", { name: "Use all $400.00" }).click();
-    await expect(sh.getByLabel("Amount", { exact: true })).toHaveValue("400.00");
+    await expect(sh.getByLabel("Amount", { exact: true })).toHaveValue("$400.00");
     await sh.getByLabel("Expense line").selectOption({ label: "Emergency Fund" });
     await sh.getByRole("button", { name: "Assign", exact: true }).click();
     await expect(sh).toBeHidden();
@@ -228,7 +228,7 @@ test.describe("paycheck view (primary)", () => {
     await input.fill("Dining out");
     await page.getByLabel("Amount from this paycheck for the new line in Food").fill("35");
     await pz.category(page, "Food").getByRole("button", { name: "Add line" }).click();
-    await expect(page.getByLabel("Planned for Dining out from this paycheck")).toHaveValue("35.00");
+    await expect(page.getByLabel("Planned for Dining out from this paycheck")).toHaveValue("$35.00");
     await expect(pz.sts(page)).toHaveText("$353.00");
     await expect(input).toHaveValue("");
     // A brand-new category and line, funded in one go.
@@ -241,7 +241,7 @@ test.describe("paycheck view (primary)", () => {
     await sh.getByRole("button", { name: "Add line" }).click();
     await expect(sh).toBeHidden();
     await expect(pz.category(page, "Kids")).toBeVisible();
-    await expect(page.getByLabel("Planned for Allowance from this paycheck")).toHaveValue("20.00");
+    await expect(page.getByLabel("Planned for Allowance from this paycheck")).toHaveValue("$20.00");
     await expect(pz.sts(page)).toHaveText("$333.00");
     // A debt line keeps what's owed apart from what this paycheck pays.
     await pz.openSheet(page, "New line", { exact: true });
@@ -252,10 +252,10 @@ test.describe("paycheck view (primary)", () => {
     await sh.getByLabel("Payment from this paycheck").fill("50");
     await sh.getByRole("button", { name: "Add line" }).click();
     await expect(sh).toBeHidden();
-    await expect(page.getByLabel("Planned for Car loan from this paycheck")).toHaveValue("50.00");
+    await expect(page.getByLabel("Planned for Car loan from this paycheck")).toHaveValue("$50.00");
     await expect(pz.sts(page)).toHaveText("$283.00");
     await pz.openSheet(page, "Car loan details");
-    await expect(pz.sheet(page).getByLabel("Balance")).toHaveValue("12000.00");
+    await expect(pz.sheet(page).getByLabel("Balance")).toHaveValue("$12,000.00");
   });
 
   test("navigating between paychecks", async ({ page }) => {

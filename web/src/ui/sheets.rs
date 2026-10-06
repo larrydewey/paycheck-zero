@@ -96,7 +96,7 @@ pub async fn line(State(st): State<Shared>, Extension(user): Extension<AuthUser>
                         @if alloc && p.status != PaycheckStatus::Skipped {
                             form data-on:submit__prevent=(post_form_guarded(&format!("/ui/paychecks/{}/lines/{}", p.id, lid))) {
                                 (view_input(&view))
-                                (money_input("amount", Some(this), &tf("line.from_paycheck_label", &[("name", &l.name), ("date", &short_date(p.date))]), Some((this + free).get())))
+                                (money_input(&c, "amount", Some(this), &tf("line.from_paycheck_label", &[("name", &l.name), ("date", &short_date(p.date))]), Some((this + free).get())))
                                 span class="field-error" aria-live="polite" {}
                             }
                         } @else {
@@ -117,11 +117,11 @@ pub async fn line(State(st): State<Shared>, Extension(user): Extension<AuthUser>
                         div class="two-col" {
                             div class="field" {
                                 label for="ls-bal" { (t("debt.balance")) }
-                                input id="ls-bal" type="text" inputmode="decimal" class="money" name="current_balance" value=[l.current_balance.map(crate::money::plain)];
+                                input id="ls-bal" type="text" inputmode="decimal" class="money" name="current_balance" value=[l.current_balance.map(|v| c.money(v))];
                             }
                             div class="field" {
                                 label for="ls-min" { (t("debt.minimum")) }
-                                input id="ls-min" type="text" inputmode="decimal" class="money" name="minimum_payment" value=[l.minimum_payment.map(crate::money::plain)];
+                                input id="ls-min" type="text" inputmode="decimal" class="money" name="minimum_payment" value=[l.minimum_payment.map(|v| c.money(v))];
                             }
                         }
                         button type="submit" class="btn" { (t("common.save")) }
@@ -130,6 +130,7 @@ pub async fn line(State(st): State<Shared>, Extension(user): Extension<AuthUser>
                     p { (t("debt.balance")) " " (l.current_balance.map(|b| c.money(b)).unwrap_or_else(|| "—".into())) " · "
                         (t("debt.minimum")) " " (l.minimum_payment.map(|b| c.money(b)).unwrap_or_else(|| "—".into())) }
                 }
+                p { (super::plan::debt_outlook(&c, &l, true)) }
                 @if let Some(min) = l.minimum_payment {
                     @if l.planned < min { p class="warn-text" { (tf("debt.below_minimum", &[("amount", &c.money(min - l.planned))])) } }
                 }
@@ -281,14 +282,14 @@ pub async fn paycheck(State(st): State<Shared>, Extension(user): Extension<AuthU
             (stat(&t("col.status"), t(&format!("status.{}", p.status.as_str())), "", "status"))
         }
         @if !archived && p.status != PaycheckStatus::Skipped {
-            (actual_form(&m, p, &view))
+            (actual_form(&c, &m, p, &view))
         }
         @if structure {
             form class="stack" data-on:submit__prevent=(post_form(&format!("/ui/paychecks/{pid}/planned"))) {
                 (view_input(&view))
                 label for="pc-planned" { (t("paycheck.planned_amount")) }
                 div class="inline-field" {
-                    input id="pc-planned" type="text" inputmode="decimal" class="money" name="amount" value=(crate::money::plain(p.planned_amount)) required;
+                    input id="pc-planned" type="text" inputmode="decimal" class="money" name="amount" value=(c.money(p.planned_amount)) required;
                     button type="submit" class="btn" { (t("common.save")) }
                 }
             }
@@ -368,14 +369,14 @@ pub(super) fn offline_templates(c: &Ctx, m: &Month, view: &View, wallet: &Wallet
             @if let Some(p) = m.paycheck(paycheck).filter(|p| p.status != PaycheckStatus::Skipped) {
                 @let name = m.income_line(&p.income_line_id).map(|l| l.name.clone()).unwrap_or_default();
                 template id="offline-paycheck" data-paycheck=(p.id) {
-                    (sheet(&tf("paycheck.sheet_title", &[("date", &short_date(p.date))]), Some(&name), actual_form(m, p, view)))
+                    (sheet(&tf("paycheck.sheet_title", &[("date", &short_date(p.date))]), Some(&name), actual_form(c, m, p, view)))
                 }
             }
         }
     }
 }
 
-fn actual_form(m: &Month, p: &Paycheck, view: &View) -> Markup {
+fn actual_form(c: &Ctx, m: &Month, p: &Paycheck, view: &View) -> Markup {
     let pid = &p.id;
     html! {
         form class="stack" data-offline="actual" data-month=(m.id) data-paycheck=(pid)
@@ -384,7 +385,7 @@ fn actual_form(m: &Month, p: &Paycheck, view: &View) -> Markup {
             (view_input(view))
             label for="pc-actual" { (t("paycheck.actual_amount")) }
             div class="inline-field" {
-                input id="pc-actual" type="text" inputmode="decimal" class="money" name="amount" value=[p.actual_amount.map(crate::money::plain)] placeholder=(t("paycheck.actual_placeholder"));
+                input id="pc-actual" type="text" inputmode="decimal" class="money" name="amount" value=[p.actual_amount.map(|v| c.money(v))] placeholder=(t("paycheck.actual_placeholder"));
                 button type="submit" class="btn primary" { (t("paycheck.record_actual")) }
             }
             p class="hint" { (t("paycheck.actual_hint")) }

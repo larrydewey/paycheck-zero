@@ -26,8 +26,8 @@ test.describe("monthly overview", () => {
     await expect(page.locator("#zero-status")).toContainText("$1,375.00 left");
     // Earliest paycheck with free money (Sep 4 had $400) is used first.
     await pz.lineSheet(page, "Rent");
-    await expect(pz.sheet(page).getByLabel("Rent from the Sep 4 paycheck")).toHaveValue("1600.00");
-    await expect(pz.sheet(page).getByLabel("Rent from the Sep 18 paycheck")).toHaveValue("100.00");
+    await expect(pz.sheet(page).getByLabel("Rent from the Sep 4 paycheck")).toHaveValue("$1,600.00");
+    await expect(pz.sheet(page).getByLabel("Rent from the Sep 18 paycheck")).toHaveValue("$100.00");
   });
 
   test("each line's sheet edits what every paycheck puts in (zeros included)", async ({ page }) => {
@@ -36,8 +36,8 @@ test.describe("monthly overview", () => {
     await expect(sh.getByText("Funded by")).toBeVisible();
     const sep4 = sh.getByLabel("Rent from the Sep 4 paycheck");
     const sep18 = sh.getByLabel("Rent from the Sep 18 paycheck");
-    await expect(sep4).toHaveValue("1200.00");
-    await expect(sep18).toHaveValue("0.00");
+    await expect(sep4).toHaveValue("$1,200.00");
+    await expect(sep18).toHaveValue("$0.00");
     await sep18.fill("100");
     await sep18.press("Enter");
     await expect(sh).toBeHidden();
@@ -83,7 +83,7 @@ test.describe("monthly overview", () => {
     await expect(sh).toBeHidden();
     await expect(pz.line(page, "Dining out").locator("[data-col=planned]")).toHaveText("$60.00");
     await pz.lineSheet(page, "Dining out");
-    await expect(sh.getByLabel("Dining out from the Sep 18 paycheck")).toHaveValue("60.00");
+    await expect(sh.getByLabel("Dining out from the Sep 18 paycheck")).toHaveValue("$60.00");
   });
 
   test("quick add a line by name inside a category", async ({ page }) => {
@@ -100,7 +100,7 @@ test.describe("monthly overview", () => {
     await input.fill("5000");
     await input.press("Enter");
     await expect(pz.toast(page)).toContainText("you're $1,925.00 short");
-    await expect(input).toHaveValue("1200.00");
+    await expect(input).toHaveValue("$1,200.00");
   });
 
   test("add, rename, reorder and delete categories and lines", async ({ page }) => {
@@ -174,9 +174,14 @@ test.describe("monthly overview", () => {
   });
 
   test("debt lines carry balance and minimum payment", async ({ page }) => {
+    // The budget shows what's owed beside the plan, per line and per category.
+    const visa = pz.line(page, "Visa").locator("[data-debt]");
+    await expect(visa).toHaveText("$3,200.00 owed · $3,125.00 after this month · ~43 months to go");
+    await expect(pz.category(page, "Debt").locator("[data-col=cat-owed]")).toHaveText("$3,200.00 owed · $3,125.00 after this month");
     await pz.lineSheet(page, "Visa");
+    await expect(pz.sheet(page)).toContainText("paid off in about 43 months at this pace, before interest");
     const sh = pz.sheet(page);
-    await expect(sh.getByLabel("Balance")).toHaveValue("3200.00");
+    await expect(sh.getByLabel("Balance")).toHaveValue("$3,200.00");
     await sh.getByLabel("Minimum payment").fill("100");
     await sh.getByLabel("Minimum payment").press("Enter");
     await expect(sh).toBeHidden();

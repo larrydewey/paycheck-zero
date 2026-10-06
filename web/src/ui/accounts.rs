@@ -546,7 +546,7 @@ pub async fn account_sheet(State(st): State<Shared>, Extension(user): Extension<
                 label for="rec-amount" { (if card { t("cards.reconcile_label") } else { t("accounts.reconcile_label") }) }
                 div class="inline-field" {
                     input id="rec-amount" type="text" inputmode="decimal" class="money" name="balance" required autocomplete="off"
-                        value=(crate::money::plain(if card { (-bal).max(Cents::ZERO) } else { bal }));
+                        value=(c.money(if card { (-bal).max(Cents::ZERO) } else { bal }));
                     button type="submit" class="btn primary" { (t("accounts.reconcile")) }
                 }
                 p class="hint" { (t("accounts.reconcile_hint")) }
@@ -561,7 +561,7 @@ pub async fn account_sheet(State(st): State<Shared>, Extension(user): Extension<
             }
         }
 
-        (edit_section(&a, &view, !txs.is_empty()))
+        (edit_section(&c, &a, &view, !txs.is_empty()))
     }))
 }
 
@@ -597,7 +597,7 @@ fn invested_sheet(c: &Ctx, view: &View, w: &Wallet, all: &[Month], a: &Account, 
                 (view_input(view))
                 label for="inv-balance" { (t("invest.update_label")) }
                 div class="inline-field" {
-                    input id="inv-balance" type="text" inputmode="decimal" class="money" name="balance" required autocomplete="off" value=(crate::money::plain(s.balance));
+                    input id="inv-balance" type="text" inputmode="decimal" class="money" name="balance" required autocomplete="off" value=(c.money(s.balance));
                     button type="submit" class="btn primary" { (t("accounts.reconcile")) }
                 }
                 p class="hint" { (t("invest.update_hint")) }
@@ -657,12 +657,12 @@ fn invested_sheet(c: &Ctx, view: &View, w: &Wallet, all: &[Month], a: &Account, 
                 }
             }
         }
-        (edit_section(a, view, w.is_used(id, all)))
+        (edit_section(c, a, view, w.is_used(id, all)))
     }
 }
 
 /// Rename, card details, reorder, archive or delete.
-fn edit_section(a: &Account, view: &View, has_history: bool) -> Markup {
+fn edit_section(c: &Ctx, a: &Account, view: &View, has_history: bool) -> Markup {
     html! {
         section class="sheet-section" aria-labelledby="acct-edit-h" {
             h3 id="acct-edit-h" { (t("accounts.edit")) }
@@ -676,11 +676,11 @@ fn edit_section(a: &Account, view: &View, has_history: bool) -> Markup {
                     div class="two-col" {
                         div class="field" {
                             label for="ae-limit" { (t("cards.limit")) }
-                            input id="ae-limit" type="text" inputmode="decimal" class="money" name="credit_limit" value=[a.credit_limit.map(crate::money::plain)];
+                            input id="ae-limit" type="text" inputmode="decimal" class="money" name="credit_limit" value=[a.credit_limit.map(|v| c.money(v))];
                         }
                         div class="field" {
                             label for="ae-min" { (t("cards.minimum")) }
-                            input id="ae-min" type="text" inputmode="decimal" class="money" name="minimum_payment" value=[a.minimum_payment.map(crate::money::plain)];
+                            input id="ae-min" type="text" inputmode="decimal" class="money" name="minimum_payment" value=[a.minimum_payment.map(|v| c.money(v))];
                         }
                     }
                     div class="field" {
@@ -752,7 +752,7 @@ pub fn transfer_form(c: &Ctx, m: &Month, view: &View, w: &Wallet, existing: Opti
             div class="field big-amount" {
                 label for="tr-amount" { (t("tx.amount")) }
                 input id="tr-amount" type="text" inputmode="decimal" class="money" name="amount" required placeholder="0.00" autocomplete="off"
-                    value=[amount.map(crate::money::plain)];
+                    value=[amount.map(|v| c.money(v))];
             }
             div class="two-col" {
                 div class="field" {
@@ -809,7 +809,7 @@ pub async fn transfer_new_sheet(State(st): State<Shared>, Extension(user): Exten
 /// the user leaves it.
 fn goal_money(c: &Ctx, id: &str, name: &str, value: Option<Cents>) -> Markup {
     html! {
-        input id=(id) type="text" inputmode="decimal" autocomplete="off" class="money" data-format="money" name=(name)
+        input id=(id) type="text" inputmode="decimal" autocomplete="off" class="money" name=(name)
             placeholder=(c.money(Cents::ZERO)) value=[value.map(|v| c.money(v))];
     }
 }

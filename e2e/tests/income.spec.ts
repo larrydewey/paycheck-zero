@@ -60,7 +60,7 @@ test.describe("income lines", () => {
     await expect(suggestion).toContainText("(from September 2026)");
     await suggestion.click();
     await expect(page.getByLabel("Name")).toHaveValue("Acme Payroll");
-    await expect(page.getByLabel("Take-home per paycheck")).toHaveValue("2000.00");
+    await expect(page.getByLabel("Take-home per paycheck")).toHaveValue("$2,000.00");
     await expect(page.getByLabel("How often")).toHaveValue("biweekly");
     await expect(page.getByLabel("A recent or upcoming payday")).toHaveValue("2026-09-04");
     await page.getByLabel("Take-home per paycheck").fill("2100");

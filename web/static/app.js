@@ -80,15 +80,15 @@
   }
 
   /**
-   * "600+80" → "680.00" in the field, so users see what will be saved.
-   * Fields marked data-format="money" show it as currency: "5000" → "$5,000.00".
+   * Money fields show what will be saved, as currency: "5000" → "$5,000.00",
+   * "600+80" → "$680.00". A leading minus (an overdrawn balance) is kept.
    */
   function normalizeMoney(input) {
-    var formatted = input.dataset.format === "money";
-    if (!formatted && !/[+\-*/()xX\u00d7\u00f7]/.test(input.value.replace(/^\s*-/, ""))) return;
-    var c = cents(input.value);
+    if (!input.classList.contains("money")) return;
+    var neg = /^\s*[-\u2212]/.test(input.value);
+    var c = cents(neg ? input.value.replace(/^\s*[-\u2212]/, "") : input.value);
     if (c === null || Number.isNaN(c)) return;
-    input.value = formatted ? fmt(c) : (Math.floor(c / 100)) + "." + String(c % 100).padStart(2, "0");
+    input.value = fmt(neg ? -c : c);
   }
   document.addEventListener("blur", function (e) {
     var el = e.target;

@@ -269,6 +269,9 @@ details.category[open] > summary .cat-name::before { transform: rotate(45deg); }
 .row-amount > .num { display: block; text-align: right; font-weight: 700; padding-right: 4px; }
 .row.unfunded .row-name { color: var(--muted); font-weight: 600; }
 .row.unfunded .row-amount input.money { color: var(--muted); font-weight: 600; }
+.row-debt { display: block; font-size: 0.85rem; color: var(--muted); margin-top: 2px; }
+.row-debt[data-debt="paid"] { color: var(--ok, inherit); }
+.cat-debt { display: block; }
 .row.over { background: color-mix(in srgb, var(--danger-soft) 55%, transparent); }
 .over-badge { display: inline-flex; align-items: center; gap: 3px; color: var(--danger); font-size: 0.75rem; font-weight: 750; }
 .over-badge .icon { width: 0.95em; height: 0.95em; }

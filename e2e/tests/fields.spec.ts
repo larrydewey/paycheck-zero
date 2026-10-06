@@ -6,17 +6,17 @@ test.describe("field behaviour", () => {
     await login();
   });
 
-  test("amount fields evaluate arithmetic (600 + 80 → 680.00)", async ({ page }) => {
+  test("amount fields evaluate arithmetic (600 + 80 → $680.00)", async ({ page }) => {
     const input = page.getByLabel("Planned for Rent from this paycheck");
     await input.fill("600 + 80");
     await input.press("Enter");
-    await expect(input).toHaveValue("680.00");
+    await expect(input).toHaveValue("$680.00");
     await expect(pz.category(page, "Housing").locator("summary [data-col=this]")).toContainText("$680.00");
     const form = await pz.addTx(page);
     const amt = form.getByLabel("Amount", { exact: true });
     await amt.fill("(100+20)/3");
     await amt.blur();
-    await expect(amt).toHaveValue("40.00");
+    await expect(amt).toHaveValue("$40.00");
   });
 
   test("the browser guard understands arithmetic too", async ({ page }) => {
@@ -57,6 +57,6 @@ test.describe("field behaviour", () => {
     await amt.fill("999");
     await sh.getByRole("button", { name: "Assign", exact: true }).click();
     await expect(pz.toast(page)).toContainText("over-allocate");
-    await expect(amt).toHaveValue("999");
+    await expect(amt).toHaveValue("$999.00");
   });
 });

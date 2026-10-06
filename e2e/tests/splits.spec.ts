@@ -15,7 +15,7 @@ test.describe("split transactions (one form for plain and split)", () => {
     // …and the same fields become part 1 of a split.
     await form.getByRole("button", { name: "Split into parts" }).click();
     await expect(form.getByLabel("Part 1 line")).toHaveValue(s.months["2026-09"].lines["Groceries"]);
-    await expect(form.getByLabel("Part 1 amount")).toHaveValue("120");
+    await expect(form.getByLabel("Part 1 amount")).toHaveValue("$120.00");
     await form.getByLabel("Part 1 amount").fill("80");
     await form.getByLabel("Part 2 line").selectOption({ label: "Electric" });
     await form.getByLabel("Part 2 paycheck").selectOption({ label: "Sep 18 · Acme Payroll" });

@@ -27,6 +27,30 @@ fn meter(part: Cents, whole: Cents, over: bool, label: &str) -> Markup {
     }
 }
 
+/// What a debt line still owes once this month's plan is paid, and roughly
+/// how long the rest takes at this pace (before interest). `full` spells it
+/// out (the line's sheet); otherwise it's short enough for a budget row.
+pub(super) fn debt_outlook(c: &Ctx, l: &LineView, full: bool) -> Markup {
+    html! {
+        @match l.current_balance {
+            None => { span class="row-debt muted" data-debt="unknown" { (t("debt.no_balance")) } },
+            Some(b) if b.is_zero() => { span class="row-debt" data-debt="paid" { (icon("check")) " " (t("debt.paid_off")) } },
+            Some(b) => {
+                span class="row-debt" data-debt="owed" {
+                    strong data-col="owed" { (c.money(b)) } " " (t("debt.owed_word"))
+                    @if l.planned.is_positive() {
+                        " · " (tf("debt.after_month", &[("amount", &c.money((b - l.planned).max(Cents::ZERO)))]))
+                        @let months = (b.get() + l.planned.get() - 1) / l.planned.get();
+                        @if months > 1 { " · " (tf(if full { "debt.payoff_months_full" } else { "debt.payoff_months" }, &[("n", &months.to_string())])) }
+                    } @else {
+                        " · " (t("debt.nothing_planned"))
+                    }
+                }
+            },
+        }
+    }
+}
+
 /// "Spent $85.20 of $600.00 · $514.80 left" (Planned / Spent / Remaining).
 fn line_meta(c: &Ctx, l: &LineView) -> Markup {
     html! {
@@ -57,6 +81,7 @@ fn line_row(c: &Ctx, l: &LineView, sheet_url: &str, amount: Option<Markup>, fall
                 aria-label=(tf("row.details", &[("name", &l.name)])) {
                 span class="row-name" { (l.name) (over_badge(c, l)) }
                 (line_meta(c, l))
+                @if l.is_debt { (debt_outlook(c, l, false)) }
                 @if l.spent.is_positive() { (meter(l.spent, l.planned, over, &tf("row.meter", &[("name", &l.name)]))) }
             }
             div class="row-amount" {
@@ -69,11 +94,11 @@ fn line_row(c: &Ctx, l: &LineView, sheet_url: &str, amount: Option<Markup>, fall
     }
 }
 
-fn amount_form(url: &str, view: &View, value: Cents, label: &str, max: Option<i64>) -> Markup {
+fn amount_form(c: &Ctx, url: &str, view: &View, value: Cents, label: &str, max: Option<i64>) -> Markup {
     html! {
         form data-on:submit__prevent=(post_form_guarded(url)) {
             (view_input(view))
-            (money_input("amount", Some(value), label, max))
+            (money_input(c, "amount", Some(value), label, max))
             span class="field-error" aria-live="polite" {}
         }
     }
@@ -338,7 +363,7 @@ pub fn render_paycheck(c: &Ctx, m: &Month, archived: bool, pid: &Id, wallet: &Wa
                         }
                         ul class="rows" {
                             @for l in &cat.lines {
-                                @let form = editable.then(|| amount_form(
+                                @let form = editable.then(|| amount_form(c,
                                     &format!("/ui/paychecks/{}/lines/{}", pid, l.id), &view, l.this_paycheck,
                                     &tf("line.planned_label", &[("name", &l.name)]), Some((l.this_paycheck + v.unallocated).get())));
                                 (line_row(c, l, &format!("/ui/sheet/line/{}?view={enc}&pid={pid}", l.id), form, l.this_paycheck, false))
@@ -416,6 +441,13 @@ pub fn render_overview(c: &Ctx, m: &Month, archived: bool, wallet: &Wallet, all:
                                 span data-col="spent" { (c.money(cat.spent)) } " " (t("cat.spent")) " · "
                                 span class=(if cat.remaining.is_negative() { "neg" } else { "" }) data-col="remaining" { (c.money(cat.remaining)) } " " (t("row.left"))
                             }
+                            @if cat.kind == CategoryKind::Debt {
+                                @let owed: Cents = cat.lines.iter().filter_map(|l| l.current_balance).sum();
+                                @let after: Cents = cat.lines.iter().filter_map(|l| l.current_balance.map(|b| (b - l.planned).max(Cents::ZERO))).sum();
+                                @if owed.is_positive() {
+                                    span class="cat-sub cat-debt" data-col="cat-owed" { (tf("debt.cat_owed", &[("amount", &c.money(owed)), ("after", &c.money(after))])) }
+                                }
+                            }
                         }
                     }
                     @if structure {
@@ -424,7 +456,7 @@ pub fn render_overview(c: &Ctx, m: &Month, archived: bool, wallet: &Wallet, all:
                     }
                     ul class="rows" {
                         @for l in &cat.lines {
-                            @let form = alloc.then(|| amount_form(
+                            @let form = alloc.then(|| amount_form(c,
                                 &format!("/ui/lines/{}/planned", l.id), &view, l.planned,
                                 &tf("line.total_planned_label", &[("name", &l.name)]), Some((l.planned + free).get())));
                             (line_row(c, l, &format!("/ui/sheet/line/{}?view={enc}", l.id), form, l.planned, false))
