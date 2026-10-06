@@ -1,10 +1,16 @@
-# Local container deployment (spec §7.6). Build from this directory:
-#   docker compose up --build -d
+# Local container deployment (spec §7.6). Pulls the published image:
+#   docker compose up -d
 # Then open http://127.0.0.1:8080 and register the first user.
+# To compile from this checkout instead, comment out `image:` below and
+# uncomment `build:`.
 services:
   paycheckzero:
-    build: .
-    image: paycheckzero:local
+    # Published by .github/workflows/publish-image.yml for linux/amd64 and
+    # linux/arm64. `0.1.0` pins the release; `0.1` follows patch releases and
+    # `latest` follows everything. Pin a digest (repo@sha256:…) for an exact,
+    # auditable build.
+    image: ghcr.io/larrydewey/paycheck-zero:0.1.0
+    # build: .
     container_name: paycheckzero
     restart: unless-stopped
     ports:

@@ -50,15 +50,18 @@ export PZ_JWT_SECRET="$(openssl rand -hex 32)"
 You can skip this by using a `.env` file instead — see
 [keep the key outside Docker](#optional-keep-the-key-outside-docker).
 
-**2. Build and start.** Compose reads that variable from your shell.
+**2. Start it.** Compose reads that variable from your shell and pulls the published
+image — built for both amd64 and arm64 — from GitHub Container Registry.
 
 ```bash
-docker compose up --build -d     # then open http://127.0.0.1:8080
+docker compose up -d             # then open http://127.0.0.1:8080
 ```
 
-The first build compiles every dependency and takes a while on a small machine; later builds
-reuse BuildKit's cache and recompile only what changed. If the build runs out of memory, limit
-parallel jobs: `docker compose build --build-arg CARGO_BUILD_JOBS=1`.
+To compile from source instead, uncomment `build: .` in `compose.yaml` and use
+`docker compose up --build -d`. The first build compiles every dependency and takes a
+while on a small machine; later builds reuse BuildKit's cache and recompile only what
+changed. If the build runs out of memory, limit parallel jobs:
+`docker compose build --build-arg CARGO_BUILD_JOBS=1`.
 
 Create the account in the browser, add your first paycheck, and start funding it.
 
