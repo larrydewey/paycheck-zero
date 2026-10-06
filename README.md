@@ -117,6 +117,23 @@ Bank sync stays off until a client id and secret are set. Uncomment `PZ_PLAID_CL
 `PZ_PLAID_SECRET` and `PZ_PLAID_ENV` in `compose.yaml`, then `docker compose up -d`. You can also
 turn Plaid on later from **Settings → Bank providers** without touching the file.
 
+#### Pre-built image (no build step)
+
+Every version tag publishes a ready-to-run image to GitHub Container Registry,
+built for both `linux/amd64` and `linux/arm64`, so it runs natively on Intel/AMD
+and Apple Silicon. Pull it instead of compiling:
+
+```bash
+docker run -p 8080:8080 -v pz-data:/data \
+  -e PZ_JWT_SECRET="$PZ_JWT_SECRET" \
+  ghcr.io/larrydewey/paycheck-zero:0.1.0
+```
+
+Drop the tag to follow the newest release, or pin the digest (from
+`docker buildx imagetools inspect`) when you want a build you can reproduce
+exactly. Image contents and provenance are listed at
+[github.com/larrydewey/paycheck-zero/pkgs/container/paycheck-zero](https://github.com/larrydewey/paycheck-zero/pkgs/container/paycheck-zero).
+
 #### Without Compose
 
 ```bash
