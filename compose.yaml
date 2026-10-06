@@ -6,10 +6,10 @@
 services:
   paycheckzero:
     # Published by .github/workflows/publish-image.yml for linux/amd64 and
-    # linux/arm64. `0.1.0` pins the release; `0.1` follows patch releases and
-    # `latest` follows everything. Pin a digest (repo@sha256:…) for an exact,
+    # linux/arm64. `latest` follows every release; use `0.1` to take only patch
+    # releases, `0.1.1` to pin one, or a digest (repo@sha256:…) for an exact,
     # auditable build.
-    image: ghcr.io/larrydewey/paycheck-zero:0.1.0
+    image: ghcr.io/larrydewey/paycheck-zero:latest
     # build: .
     container_name: paycheckzero
     restart: unless-stopped
