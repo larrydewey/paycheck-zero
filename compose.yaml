@@ -36,7 +36,7 @@ services:
       PZ_PLAID_CLIENT_ID: "${PZ_PLAID_CLIENT_ID:-}"
       PZ_PLAID_SECRET: "${PZ_PLAID_SECRET:-}"
       PZ_PLAID_ENV: "${PZ_PLAID_ENV:-sandbox}"
-      PZ_PLAID_COUNTRIES: "${PZ_PLAID_COUNTRIES:-}"
+      PZ_PLAID_COUNTRIES: "${PZ_PLAID_COUNTRIES:-US}"
       # Background bank sync interval in hours; 0 turns it off.
       PZ_BANK_SYNC_HOURS: "${PZ_BANK_SYNC_HOURS:-6}"
     volumes:

@@ -60,6 +60,13 @@ fn plaid_button(cfg: &crate::config::PlaidConfig, token: &str, label: &str, clas
     }
 }
 
+/// Why Plaid Link can't start, logged and shown in place of the button.
+fn plaid_unavailable(e: &crate::bank::ProviderError) -> String {
+    let (crate::bank::ProviderError::Other(m) | crate::bank::ProviderError::Reconnect(m)) = e;
+    tracing::warn!(error = %m, "Plaid Link token request failed");
+    format!("{} {m}", t("bank.plaid_unavailable"))
+}
+
 /// Paste-a-token form for SimpleFIN (new, or reconnecting `link`).
 fn simplefin_form(view: &View, reconnect: Option<&Id>) -> Markup {
     html! {
@@ -82,7 +89,7 @@ pub async fn connect_sheet(State(st): State<Shared>, Extension(user): Extension<
     let first = c.today.with_day(1).unwrap_or(c.today);
     // A Plaid Link token is made per connection attempt.
     let plaid_token = match st.plaid() {
-        Ok(p) => p.link_token(user.id.as_str(), None).await.ok(),
+        Ok(p) => Some(p.link_token(user.id.as_str(), None).await.map_err(|e| plaid_unavailable(&e))),
         Err(_) => None,
     };
     Sse::new().patch(sheet(&t("bank.connect_title"), Some(&t("bank.connect_sub")), html! {
@@ -98,12 +105,17 @@ pub async fn connect_sheet(State(st): State<Shared>, Extension(user): Extension<
         }
         h3 class="provider-h" { (t("bank.choose_provider")) }
         div class="providers" {
-            @if let (Some(cfg), Some(token)) = (st.plaid_cfg().as_ref(), plaid_token.as_deref()) {
+            @if let (Some(cfg), Some(token)) = (st.plaid_cfg().as_ref(), plaid_token.as_ref()) {
                 section class="provider" aria-labelledby="pv-plaid" {
                     h4 id="pv-plaid" { "Plaid" }
                     p class="small muted" { (t("bank.pv_plaid")) }
-                    (plaid_form(&view, None))
-                    (plaid_button(cfg, token, &t("bank.continue_plaid"), "btn primary block"))
+                    @match token {
+                        Ok(token) => {
+                            (plaid_form(&view, None))
+                            (plaid_button(cfg, token, &t("bank.continue_plaid"), "btn primary block"))
+                        },
+                        Err(msg) => p class="warn-text" role="alert" { (icon("alert")) " " (msg) },
+                    }
                 }
             }
             @if st.plaid_cfg().is_none() {
@@ -193,7 +205,7 @@ pub async fn link_sheet(State(st): State<Shared>, Extension(user): Extension<Aut
     // Plaid reconnects through Link "update mode", which needs its own token.
     let plaid_update = if link.provider == crate::bank::PLAID && link.status != LinkStatus::Active {
         match (st.plaid(), crate::bank::open(&st.cfg.data_key, &link.access_token)) {
-            (Ok(p), Some(access)) => p.link_token(user.id.as_str(), Some(&access)).await.ok(),
+            (Ok(p), Some(access)) => Some(p.link_token(user.id.as_str(), Some(&access)).await.map_err(|e| plaid_unavailable(&e))),
             _ => None,
         }
     } else {
@@ -208,9 +220,13 @@ pub async fn link_sheet(State(st): State<Shared>, Extension(user): Extension<Aut
                     (simplefin_form(&view, Some(&link.id)))
                 },
                 crate::bank::PLAID => {
-                    @if let (Some(cfg), Some(token)) = (st.plaid_cfg().as_ref(), plaid_update.as_deref()) {
-                        (plaid_form(&view, Some(&link.id)))
-                        (plaid_button(cfg, token, &t("bank.reconnect"), "btn primary block"))
+                    @match (st.plaid_cfg().as_ref(), plaid_update.as_ref()) {
+                        (Some(cfg), Some(Ok(token))) => {
+                            (plaid_form(&view, Some(&link.id)))
+                            (plaid_button(cfg, token, &t("bank.reconnect"), "btn primary block"))
+                        },
+                        (_, Some(Err(msg))) => p class="warn-text" role="alert" { (icon("alert")) " " (msg) },
+                        _ => {},
                     }
                 },
                 _ => {
@@ -605,10 +621,7 @@ pub async fn save_plaid(State(st): State<Shared>, Extension(user): Extension<Aut
         return failed(&st, &user, &headers, &view, &AppError::bad(t("bank.err_plaid_keys"))).await;
     }
     let environment = pick_env(field(&f, "environment"), &["sandbox", "production"], "sandbox");
-    let mut countries: Vec<String> = field(&f, "countries").split(',').map(|c| c.trim().to_uppercase()).filter(|c| c.len() == 2).collect();
-    if countries.is_empty() {
-        countries.push("US".into());
-    }
+    let countries = crate::config::plaid_countries(field(&f, "countries"));
     let candidate = crate::config::PlaidConfig {
         client_id: client_id.clone(),
         secret: secret.clone(),

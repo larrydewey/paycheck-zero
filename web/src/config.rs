@@ -50,7 +50,7 @@ impl PlaidConfig {
     fn from_env() -> Option<PlaidConfig> {
         let client_id = std::env::var("PZ_PLAID_CLIENT_ID").ok().filter(|s| !s.trim().is_empty())?;
         let secret = std::env::var("PZ_PLAID_SECRET").ok().filter(|s| !s.trim().is_empty())?;
-        let environment = std::env::var("PZ_PLAID_ENV").unwrap_or_else(|_| "sandbox".into());
+        let environment = std::env::var("PZ_PLAID_ENV").ok().map(|s| s.trim().to_lowercase()).filter(|s| !s.is_empty()).unwrap_or_else(|| "sandbox".into());
         let api = plaid_api(&environment);
         Some(PlaidConfig {
             client_id: client_id.trim().into(),
@@ -59,9 +59,17 @@ impl PlaidConfig {
             api,
             from_env: true,
             link_js: plaid_link_js(),
-            countries: std::env::var("PZ_PLAID_COUNTRIES").unwrap_or_else(|_| "US".into()).split(',').map(|c| c.trim().to_uppercase()).filter(|c| !c.is_empty()).collect(),
+            countries: plaid_countries(&std::env::var("PZ_PLAID_COUNTRIES").unwrap_or_default()),
         })
     }
+}
+
+/// Parses a comma separated country list; blank (as compose passes it when
+/// unset) means `US`, since Plaid refuses a Link token without countries.
+#[must_use]
+pub fn plaid_countries(raw: &str) -> Vec<String> {
+    let countries: Vec<String> = raw.split(',').map(|c| c.trim().to_uppercase()).filter(|c| c.len() == 2).collect();
+    if countries.is_empty() { vec!["US".into()] } else { countries }
 }
 
 #[must_use]
@@ -150,4 +158,16 @@ fn random_secret() -> Vec<u8> {
     let mut b = vec![0u8; 48];
     rand::thread_rng().fill_bytes(&mut b);
     b
+}
+
+#[cfg(test)]
+mod tests {
+    use super::plaid_countries;
+
+    #[test]
+    fn blank_plaid_countries_mean_us() {
+        assert_eq!(plaid_countries(""), ["US"]);
+        assert_eq!(plaid_countries(" , "), ["US"]);
+        assert_eq!(plaid_countries("us, ca"), ["US", "CA"]);
+    }
 }

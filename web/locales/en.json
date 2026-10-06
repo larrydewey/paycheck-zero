@@ -851,6 +851,7 @@
   "bank.pv_plaid": "The widest coverage (US, Canada, UK and Europe).",
   "bank.pv_simplefin": "About $15 a year at bridge.simplefin.org; you link your banks there, then paste a setup token here.",
   "bank.continue_plaid": "Continue with Plaid",
+  "bank.plaid_unavailable": "Plaid couldn't start a connection. Check the Plaid settings, or use SimpleFIN for now.",
   "bank.sf_open": "Paste a SimpleFIN setup token",
   "bank.sf_token": "Setup token",
   "bank.sf_token_placeholder": "Paste the token from SimpleFIN Bridge",
