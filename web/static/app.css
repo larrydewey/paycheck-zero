@@ -382,8 +382,8 @@ dialog::backdrop { background: rgb(8 12 20 / 50%); }
 .targets li { display: flex; justify-content: space-between; gap: 8px; align-items: center; flex-wrap: wrap; }
 .fund { margin-top: 8px; }
 .fund h2 { display: none; }
-.fund-grid { display: grid; gap: 0 12px; grid-template-columns: 1fr 1fr; grid-template-areas: "line line" "name name" "cat cat" "amount btn"; align-items: end; }
-.f-line { grid-area: line; } .f-name { grid-area: name; } .f-cat { grid-area: cat; } .f-amount { grid-area: amount; }
+.fund-grid { display: grid; gap: 0 12px; grid-template-columns: 1fr 1fr; grid-template-areas: "line line" "name name" "cat cat" "debt debt" "amount btn"; align-items: end; }
+.f-line { grid-area: line; } .f-name { grid-area: name; } .f-cat { grid-area: cat; } .f-amount { grid-area: amount; } .f-debt { grid-area: debt; }
 .f-btn { grid-area: btn; margin-bottom: 14px; }
 .fund-grid .field { margin-bottom: 14px; }
 

@@ -149,7 +149,7 @@ pub async fn line(State(st): State<Shared>, Extension(user): Extension<AuthUser>
         @if structure {
             section class="sheet-section" aria-labelledby="ls-edit" {
                 h3 id="ls-edit" { (t("line.edit_title")) }
-                form class="stack" data-on:submit__prevent=(post_form(&format!("/ui/lines/{lid}/edit"))) {
+                form class="stack" data-signals=(format!("{{_lscat: '{}'}}", l.category_id)) data-on:submit__prevent=(post_form(&format!("/ui/lines/{lid}/edit"))) {
                     (view_input(&view))
                     div class="field" {
                         label for="ls-name" { (t("line.name_field")) }
@@ -157,8 +157,17 @@ pub async fn line(State(st): State<Shared>, Extension(user): Extension<AuthUser>
                     }
                     div class="field" {
                         label for="ls-cat" { (t("fund.new_category")) }
-                        select id="ls-cat" name="category_id" {
+                        select id="ls-cat" name="category_id" data-bind:_lscat {
                             @for cat in m.categories_sorted() { option value=(cat.id) selected[cat.id == l.category_id] { (cat.name) } }
+                        }
+                    }
+                    // One position list per category; the chosen category's shows.
+                    @for cat in m.categories_sorted() {
+                        @let others: Vec<(&str, usize)> = m.lines_of(&cat.id).into_iter().filter(|x| x.id != lid).enumerate().map(|(i, x)| (x.name.as_str(), i + 1)).collect();
+                        @let current = (cat.id == l.category_id).then(|| m.lines_of(&cat.id).iter().position(|x| x.id == lid).unwrap_or(0));
+                        div class="field" data-show=(format!("$_lscat == '{}'", cat.id)) style=[(cat.id != l.category_id).then_some("display: none")] {
+                            label for=(format!("ls-pos-{}", cat.id)) { (t("position.label")) }
+                            (position_select(&format!("ls-pos-{}", cat.id), &format!("pos_{}", cat.id), &others, current))
                         }
                     }
                     button type="submit" class="btn primary" { (t("common.save")) }
@@ -437,6 +446,52 @@ pub async fn tx_edit(State(st): State<Shared>, Extension(user): Extension<AuthUs
 // Category and new line
 // ----------------------------------------------------------------------
 
+/// A Datastar expression: is the category id in `signal` a Debt category?
+pub(super) fn debt_category_check(m: &Month, signal: &str) -> String {
+    let ids: Vec<String> = m.categories.iter().filter(|x| x.kind == CategoryKind::Debt).map(|x| format!("'{}'", x.id)).collect();
+    format!("[{}].includes({signal})", ids.join(","))
+}
+
+/// Balance owed and minimum payment for a new debt line, shown while `show`
+/// holds. They're kept apart from the paycheck amount so the total debt is
+/// never mistaken for what a paycheck puts toward it.
+pub(super) fn debt_fields(m: &Month, prefix: &str, show: &str) -> Markup {
+    html! {
+        @if m.categories.iter().any(|x| x.kind == CategoryKind::Debt) {
+            div class="two-col" data-show=(show) style="display: none" {
+                div class="field" {
+                    label for=(format!("{prefix}-bal")) { (t("newline.balance")) }
+                    input id=(format!("{prefix}-bal")) type="text" inputmode="decimal" class="money" name="current_balance" placeholder="0.00" autocomplete="off";
+                }
+                div class="field" {
+                    label for=(format!("{prefix}-min")) { (t("debt.minimum")) }
+                    input id=(format!("{prefix}-min")) type="text" inputmode="decimal" class="money" name="minimum_payment" placeholder="0.00" autocomplete="off";
+                }
+            }
+            p class="hint" data-show=(show) style="display: none" { (t("newline.balance_hint")) }
+        }
+    }
+}
+
+/// Where to put an item: "At the top" or "After X", for each `(X, index)`
+/// in `after`, where index is where the item lands among the rest. The
+/// choice nearest at or before `current` (its index now) is selected, or the
+/// last when it isn't in this list yet.
+fn position_select(id: &str, name: &str, after: &[(&str, usize)], current: Option<usize>) -> Markup {
+    let chosen = match current {
+        Some(cur) => after.iter().map(|(_, i)| *i).filter(|i| *i <= cur).max().unwrap_or(0),
+        None => after.last().map_or(0, |(_, i)| *i),
+    };
+    html! {
+        select id=(id) name=(name) {
+            option value="0" selected[chosen == 0] { (t("position.top")) }
+            @for (o, i) in after {
+                option value=(i) selected[chosen == *i] { (tf("position.after", &[("name", o)])) }
+            }
+        }
+    }
+}
+
 pub async fn category(State(st): State<Shared>, Extension(user): Extension<AuthUser>, headers: HeaderMap, Path(cid): Path<Id>, Query(q): Query<SheetQuery>) -> Sse {
     let user = user.0;
     let (m, _) = match month_of(&st, &user, Owner::Category, &cid).await {
@@ -453,6 +508,22 @@ pub async fn category(State(st): State<Shared>, Extension(user): Extension<AuthU
             div class="inline-field" {
                 input id="cs-name" type="text" name="name" value=(cat.name) required maxlength="100";
                 button type="submit" class="btn primary" { (t("common.save")) }
+            }
+        }
+        @let cats = m.categories_sorted();
+        // Only categories with lines are in the main list, so only they are
+        // offered; the index still counts every category.
+        @let others: Vec<(&str, usize)> = cats.iter().filter(|x| x.id != cid).enumerate()
+            .filter(|(_, x)| !m.lines_of(&x.id).is_empty()).map(|(i, x)| (x.name.as_str(), i + 1)).collect();
+        form class="stack" data-on:submit__prevent=(post_form(&format!("/ui/months/{}/place", m.id))) {
+            (view_input(&view))
+            input type="hidden" name="kind" value="category";
+            input type="hidden" name="id" value=(cid);
+            input type="hidden" name="category_id" value=(cid);
+            label for="cs-pos" { (t("position.label")) }
+            div class="inline-field" {
+                (position_select("cs-pos", "index", &others, cats.iter().position(|x| x.id == cid)))
+                button type="submit" class="btn" { (t("position.move")) }
             }
         }
         div class="sheet-actions" {
@@ -490,8 +561,7 @@ pub async fn new_line(State(st): State<Shared>, Extension(user): Extension<AuthU
     let initial_cat = chosen.clone().or_else(|| cats.first().map(|x| x.id.clone())).map(|x| x.to_string()).unwrap_or_else(|| "__new".into());
     // Debt lines carry a balance owed, kept apart from what a paycheck pays
     // toward it, so the total debt is never mistaken for this month's plan.
-    let debt_cats: Vec<String> = cats.iter().filter(|x| x.kind == CategoryKind::Debt).map(|x| format!("'{}'", x.id)).collect();
-    let is_debt = format!("[{}].includes($_nlcat)", debt_cats.join(","));
+    let is_debt = debt_category_check(&m, "$_nlcat");
     Sse::new().patch(sheet(&t("plan.new_line"), pid.as_ref().and_then(|p| m.paycheck(p)).map(|p| tf("newline.sub", &[("date", &short_date(p.date))])).as_deref(), html! {
         form class="stack" id="new-line-form" data-signals=(format!("{{_nlcat: '{}'}}", initial_cat))
             data-on:submit__prevent=(post_form_guarded(&format!("/ui/months/{mid}/lines"))) {
@@ -512,19 +582,7 @@ pub async fn new_line(State(st): State<Shared>, Extension(user): Extension<AuthU
                 label for="nl-newcat" { (t("category.name_field")) }
                 input id="nl-newcat" type="text" name="new_category" maxlength="100";
             }
-            @if !debt_cats.is_empty() {
-                div class="two-col" data-show=(is_debt) {
-                    div class="field" {
-                        label for="nl-bal" { (t("newline.balance")) }
-                        input id="nl-bal" type="text" inputmode="decimal" class="money" name="current_balance" placeholder="0.00" autocomplete="off";
-                    }
-                    div class="field" {
-                        label for="nl-min" { (t("debt.minimum")) }
-                        input id="nl-min" type="text" inputmode="decimal" class="money" name="minimum_payment" placeholder="0.00" autocomplete="off";
-                    }
-                }
-                p class="hint" data-show=(is_debt) { (t("newline.balance_hint")) }
-            }
+            (debt_fields(&m, "nl", &is_debt))
             @if let Some(f) = free {
                 div class="field" {
                     label for="nl-amount" {

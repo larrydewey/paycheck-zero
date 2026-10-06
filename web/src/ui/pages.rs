@@ -494,7 +494,7 @@ pub(super) fn fund_form(c: &Ctx, m: &Month, pid: &Id, view: &View, unallocated: 
     let default_cat = cats.first().map(|c| c.id.clone());
     let fill_all = format!("document.getElementById('fund-amount').value = '{}'", crate::money::plain(unallocated));
     html! {
-        section class="fund" aria-labelledby="fund-h" data-signals="{_fundline: ''}" {
+        section class="fund" aria-labelledby="fund-h" data-signals=(format!("{{_fundline: '', _fundcat: '{}'}}", default_cat.as_ref().map(ToString::to_string).unwrap_or_default())) {
             h2 id="fund-h" { (t("fund.title")) }
             form id="fund-form" data-clear data-on:submit__prevent=(post_form_guarded(&url)) {
                 (view_input(view))
@@ -526,12 +526,15 @@ pub(super) fn fund_form(c: &Ctx, m: &Month, pid: &Id, view: &View, unallocated: 
                         }
                         div class="field f-cat" data-show="$_fundline == '__new'" {
                             label for="fund-new-cat" { (t("fund.new_category")) }
-                            select id="fund-new-cat" name="new_category" {
+                            select id="fund-new-cat" name="new_category" data-bind:_fundcat {
                                 @for cat in &cats {
                                     option value=(cat.id) selected[Some(&cat.id) == default_cat.as_ref()] { (cat.name) }
                                 }
                             }
                         }
+                    }
+                    @if structure {
+                        div class="f-debt" { (super::sheets::debt_fields(m, "fund", &format!("$_fundline == '__new' && {}", super::sheets::debt_category_check(m, "$_fundcat")))) }
                     }
                     div class="field f-amount" {
                         label for="fund-amount" { (t("fund.amount")) }

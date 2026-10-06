@@ -98,6 +98,23 @@ test.describe("paycheck view (primary)", () => {
     await expect(pz.sts(page)).toHaveText("$343.00");
   });
 
+  test("a new debt line from Assign takes its balance apart from the payment", async ({ page }) => {
+    await pz.openSheet(page, "Assign $400.00");
+    const sh = pz.sheet(page);
+    await sh.getByLabel("Expense line").selectOption("__new");
+    await sh.getByLabel("New line name").fill("Car loan");
+    await expect(sh.getByLabel("Balance owed")).toBeHidden();
+    await sh.getByLabel("Category", { exact: true }).selectOption({ label: "Debt" });
+    await sh.getByLabel("Balance owed").fill("12000");
+    await sh.getByLabel("Minimum payment").fill("250");
+    await sh.getByLabel("Amount", { exact: true }).fill("50");
+    await sh.getByRole("button", { name: "Assign", exact: true }).click();
+    await expect(sh).toBeHidden();
+    await expect(pz.sts(page)).toHaveText("$338.00");
+    await pz.openSheet(page, "Car loan details");
+    await expect(pz.sheet(page).getByLabel("Balance")).toHaveValue("12000.00");
+  });
+
   test("assign blocks amounts above what's left", async ({ page }) => {
     await pz.openSheet(page, "Assign $400.00");
     const sh = pz.sheet(page);

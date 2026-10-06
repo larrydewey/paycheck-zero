@@ -582,8 +582,20 @@ pub async fn fund(State(st): State<Shared>, Extension(user): Extension<AuthUser>
     let line = field(&f, "line_id").to_string();
     let new_name = field(&f, "new_name").to_string();
     let new_cat = Id::new(field(&f, "new_category"));
+    let (bal, min) = match (opt_money_field(&f, "current_balance"), opt_money_field(&f, "minimum_payment")) {
+        (Ok(b), Ok(m)) => (b, m),
+        (Err(e), _) | (_, Err(e)) => return failed(&st, &user, &headers, &view, &e).await,
+    };
     month_action(&st, &user, &headers, view, Ok(id), move |m| {
-        let lid = if line == "__new" { m.add_expense_line(&new_cat, &new_name)? } else { Id::new(line) };
+        let lid = if line == "__new" {
+            let lid = m.add_expense_line(&new_cat, &new_name)?;
+            if (bal.is_some() || min.is_some()) && m.is_debt_line(&lid) {
+                m.set_debt_fields(&lid, bal, min)?;
+            }
+            lid
+        } else {
+            Id::new(line)
+        };
         let existing = m.allocation_for(&pid, &lid).map_or(Cents::ZERO, |a| a.amount);
         m.set_allocation(&pid, &lid, existing + amount)?;
         Ok(lid)
@@ -672,10 +684,13 @@ pub async fn add_line(State(st): State<Shared>, Extension(user): Extension<AuthU
 pub async fn edit_line(State(st): State<Shared>, Extension(user): Extension<AuthUser>, headers: HeaderMap, Path(id): Path<Id>, Form(f): F) -> Sse {
     let (mid, view) = owner_view(&st, &user.0, &f, Owner::ExpenseLine, &id).await;
     let cat = opt_id(&f, "category_id");
+    let pos = cat.as_ref().and_then(|c| field(&f, &format!("pos_{c}")).parse::<usize>().ok());
     month_action(&st, &user.0, &headers, view, mid, |m| {
         m.rename_expense_line(&id, field(&f, "name"))?;
-        if let Some(c) = &cat {
-            m.set_line_category(&id, c)?;
+        match (&cat, pos) {
+            (Some(c), Some(p)) => m.place_line(&id, c, p)?,
+            (Some(c), None) => m.set_line_category(&id, c)?,
+            _ => {}
         }
         Ok(())
     }, |_, _| vec![toast(ToastKind::Success, &t("common.saved"), None)])

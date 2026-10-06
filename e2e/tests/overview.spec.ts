@@ -45,6 +45,33 @@ test.describe("monthly overview", () => {
     await expect(pz.line(page, "Rent").locator("[data-col=planned]")).toHaveText("$1,300.00");
   });
 
+  test("move a line or category to any spot, in one step", async ({ page }) => {
+    const names = (cat: string) => pz.category(page, cat).locator("li.line").evaluateAll((els) => els.map((e) => e.getAttribute("data-line")));
+    expect(await names("Housing")).toEqual(["Rent", "Electric"]);
+    // Within its category.
+    await pz.lineSheet(page, "Electric");
+    let sh = pz.sheet(page);
+    await sh.getByRole("combobox", { name: "Position" }).selectOption({ label: "At the top" });
+    await sh.getByRole("button", { name: "Save", exact: true }).click();
+    await expect.poll(() => names("Housing")).toEqual(["Electric", "Rent"]);
+    // Into a chosen spot in another category.
+    await pz.lineSheet(page, "Rent");
+    sh = pz.sheet(page);
+    await sh.getByLabel("Category", { exact: true }).selectOption({ label: "Food" });
+    await sh.getByRole("combobox", { name: "Position" }).selectOption({ label: "At the top" });
+    await sh.getByRole("button", { name: "Save", exact: true }).click();
+    await expect.poll(() => names("Food")).toEqual(["Rent", "Groceries"]);
+    expect(await names("Housing")).toEqual(["Electric"]);
+    // A category jumps several places at once.
+    const cats = () => page.locator("details.category").evaluateAll((els) => els.map((e) => e.getAttribute("data-category")));
+    expect((await cats()).indexOf("Debt")).toBeGreaterThan(2);
+    await pz.openSheet(page, "Edit Debt");
+    sh = pz.sheet(page);
+    await sh.getByRole("combobox", { name: "Position" }).selectOption({ label: "After Saving" });
+    await sh.getByRole("button", { name: "Move", exact: true }).click();
+    await expect.poll(async () => (await cats()).slice(0, 2)).toEqual(["Saving", "Debt"]);
+  });
+
   test("adding a line from the month view can fund it from a chosen paycheck", async ({ page }) => {
     await pz.openSheet(page, "New line", { exact: true });
     const sh = pz.sheet(page);
