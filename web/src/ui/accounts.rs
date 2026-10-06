@@ -829,9 +829,10 @@ fn goal_kind_fields(w: &Wallet, m: &Month, g: Option<&Goal>) -> Markup {
         div class="field" data-show="$_gkind == 'save'" {
             label for="goal-track-save" { (t("goal.track_save")) }
             select id="goal-track-save" name="track_save" {
+                option value=(NEW_LINE) selected[g.is_none()] { (t("goal.track_new")) }
                 optgroup label=(t("goal.track_lines")) {
                     @for l in m.expense_lines.iter().filter(|l| !m.is_debt_line(&l.id)) {
-                        option value=(format!("line:{}", l.name)) selected[sel_line(&l.name) || (g.is_none() && l.name.eq_ignore_ascii_case("emergency fund"))] { (l.name) }
+                        option value=(format!("line:{}", l.name)) selected[sel_line(&l.name)] { (l.name) }
                     }
                 }
                 @let savings: Vec<&&Account> = accts.iter().filter(|a| !a.kind.is_card()).collect();
@@ -1194,10 +1195,23 @@ fn parse_track(v: &str) -> Option<GoalTrack> {
     v.strip_prefix("account:").filter(|s| !s.is_empty()).map(|id| GoalTrack::Account { id: Id::new(id) })
 }
 
+/// The saving goal's "Counts" choice that makes a budget line for it.
+const NEW_LINE: &str = "new";
+
+/// A goal read from its form.
+struct GoalForm {
+    goal: Goal,
+    payoff: bool,
+    /// The goal follows a line named after it, to be added if missing.
+    new_line: bool,
+}
+
 /// Reads the goal form. `start` is the month progress counts from.
-fn goal_from_form(f: &HashMap<String, String>, id: Id, start: chrono::NaiveDate) -> AppResult<(Goal, bool)> {
+fn goal_from_form(f: &HashMap<String, String>, id: Id, start: chrono::NaiveDate) -> AppResult<GoalForm> {
     let kind = GoalKind::parse(field(f, "kind")).unwrap_or(GoalKind::Save);
-    let track = parse_track(field(f, if kind == GoalKind::Save { "track_save" } else { "track_payoff" }))
+    let raw_track = field(f, if kind == GoalKind::Save { "track_save" } else { "track_payoff" });
+    let new_line = kind == GoalKind::Save && raw_track == NEW_LINE;
+    let track = if new_line { Some(GoalTrack::Line { name: field(f, "name").trim().to_string() }) } else { parse_track(raw_track) }
         .ok_or_else(|| AppError::bad(t("err.goal_track")))?;
     let target_month = match field(f, "target_month") {
         "" => None,
@@ -1208,10 +1222,36 @@ fn goal_from_form(f: &HashMap<String, String>, id: Id, start: chrono::NaiveDate)
     }
     let target = if kind == GoalKind::Save { money_field(f, "target_amount")? } else { Cents::ZERO };
     let starting = if kind == GoalKind::Save && matches!(track, GoalTrack::Line { .. }) { opt_money_field(f, "starting_amount")?.unwrap_or(Cents::ZERO) } else { Cents::ZERO };
-    Ok((
-        Goal { id, name: field(f, "name").to_string(), kind, target_amount: target, target_month, track, start_month: start, starting_amount: starting, sort_order: 0 },
-        kind == GoalKind::Payoff,
-    ))
+    Ok(GoalForm {
+        goal: Goal { id, name: field(f, "name").to_string(), kind, target_amount: target, target_month, track, start_month: start, starting_amount: starting, sort_order: 0 },
+        payoff: kind == GoalKind::Payoff,
+        new_line,
+    })
+}
+
+/// Adds a budget line named after a new saving goal to the viewed month,
+/// under Saving, unless a line by that name is already there. Returns
+/// whether a line was added. The goal is checked first so a bad form
+/// doesn't leave a stray line behind.
+async fn ensure_goal_line(st: &Shared, user: &UserRecord, view: &View, goal: &Goal) -> AppResult<bool> {
+    st.wallet(user).await?.validate_goal(goal)?;
+    let GoalTrack::Line { name } = &goal.track else { return Ok(false) };
+    let mid = view.month().ok_or(AppError::NotFound)?.clone();
+    let name = name.clone();
+    let (added, _) = st
+        .mutate(user, &mid, move |m| {
+            if m.expense_lines.iter().any(|l| l.name.eq_ignore_ascii_case(&name)) {
+                return Ok(false);
+            }
+            let cat = match m.categories.iter().find(|c| c.kind == CategoryKind::Standard && c.name.eq_ignore_ascii_case("Saving")) {
+                Some(c) => c.id.clone(),
+                None => m.add_category("Saving", CategoryKind::Standard)?,
+            };
+            m.add_expense_line(&cat, &name)?;
+            Ok(true)
+        })
+        .await?;
+    Ok(added)
 }
 
 async fn goal_start(st: &Shared, user: &UserRecord, view: &View) -> chrono::NaiveDate {
@@ -1225,10 +1265,19 @@ pub async fn add_goal(State(st): State<Shared>, Extension(user): Extension<AuthU
     let user = user.0;
     let view = view_of(&f, fallback_view(&user));
     let start = goal_start(&st, &user, &view).await;
-    let (goal, payoff) = match goal_from_form(&f, Id::generate(), start) {
+    let GoalForm { goal, payoff, new_line } = match goal_from_form(&f, Id::generate(), start) {
         Ok(v) => v,
         Err(e) => return failed(&st, &user, &headers, &view, &e).await,
     };
+    let added = if new_line {
+        match ensure_goal_line(&st, &user, &view, &goal).await {
+            Ok(a) => a,
+            Err(e) => return failed(&st, &user, &headers, &view, &e).await,
+        }
+    } else {
+        false
+    };
+    let line_name = goal.name.trim().to_string();
     wallet_action(&st, &user, &headers, view, move |w, all| {
         let mut goal = goal;
         if payoff {
@@ -1238,7 +1287,10 @@ pub async fn add_goal(State(st): State<Shared>, Extension(user): Extension<AuthU
             }
         }
         Ok(w.add_goal(goal)?)
-    }, |_, _| vec![toast(ToastKind::Success, &t("goal.created"), None)])
+    }, move |_, _| {
+        let msg = if added { tf("goal.created_line", &[("name", &line_name)]) } else { t("goal.created") };
+        vec![toast(ToastKind::Success, &msg, None)]
+    })
     .await
 }
 
@@ -1247,10 +1299,15 @@ pub async fn update_goal(State(st): State<Shared>, Extension(user): Extension<Au
     let view = view_of(&f, fallback_view(&user));
     let old = st.wallet(&user).await.ok().and_then(|w| w.goal(&id).cloned());
     let Some(old) = old else { return failed(&st, &user, &headers, &view, &AppError::NotFound).await };
-    let (goal, payoff) = match goal_from_form(&f, id, old.start_month) {
+    let GoalForm { goal, payoff, new_line } = match goal_from_form(&f, id, old.start_month) {
         Ok(v) => v,
         Err(e) => return failed(&st, &user, &headers, &view, &e).await,
     };
+    if new_line {
+        if let Err(e) = ensure_goal_line(&st, &user, &view, &goal).await {
+            return failed(&st, &user, &headers, &view, &e).await;
+        }
+    }
     wallet_action(&st, &user, &headers, view, move |w, all| {
         let mut goal = goal;
         if payoff {

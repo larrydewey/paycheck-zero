@@ -182,6 +182,21 @@ test.describe("goals", () => {
     await expect(pz.line(page, "Emergency Fund").locator("[data-col=planned]")).toHaveText("$400.00");
   });
 
+  test("a savings goal can start its own budget line", async ({ page, seed, login }) => {
+    const s = await seed("basic");
+    await login();
+    await pz.overview(page, s);
+    await pz.openSheet(page, "New goal");
+    const sh = pz.sheet(page);
+    await expect(sh.getByLabel("Counts")).toHaveValue("new");
+    await sh.getByLabel("Goal name").fill("New car");
+    await sh.getByLabel("Target amount").fill("3000");
+    await sh.getByRole("button", { name: "Create goal" }).click();
+    await expect(pz.toast(page)).toContainText("Goal created. Added a New car line under Saving");
+    await expect(page.locator('li.goal[data-goal="New car"]')).toContainText("$0.00 saved of $3,000.00");
+    await expect(pz.line(page, "New car")).toBeVisible();
+  });
+
   test("create, edit and delete goals; payoff goals follow the card", async ({ page, seed, login }) => {
     const s = await seed("wallet");
     await login();

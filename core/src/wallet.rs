@@ -707,7 +707,8 @@ impl Wallet {
     // Goals
     // ------------------------------------------------------------------
 
-    fn validate_goal(&self, g: &Goal) -> Result<(), DomainError> {
+    /// Checks a goal the way [`Wallet::add_goal`] would, without adding it.
+    pub fn validate_goal(&self, g: &Goal) -> Result<(), DomainError> {
         if g.name.trim().is_empty() || g.name.chars().count() > MAX_ACCOUNT_NAME {
             return Err(DomainError::InvalidName { max: MAX_ACCOUNT_NAME });
         }
