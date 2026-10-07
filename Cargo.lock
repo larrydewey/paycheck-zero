@@ -1441,7 +1441,7 @@ dependencies = [
 
 [[package]]
 name = "paycheckzero-core"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "chrono",
  "serde",
@@ -1452,7 +1452,7 @@ dependencies = [
 
 [[package]]
 name = "paycheckzero-storage"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "chrono",
  "paycheckzero-core",
@@ -1465,7 +1465,7 @@ dependencies = [
 
 [[package]]
 name = "paycheckzero-web"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "argon2",
  "axum",
