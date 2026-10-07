@@ -206,14 +206,48 @@ fn acceptance_rent_500_500_then_0_1000_in_another_month() {
 }
 
 #[test]
-fn over_allocation_is_rejected_with_exact_amount() {
+fn planning_over_the_month_is_allowed_and_reads_as_over_budget() {
+    let mut f = fixture();
+    // Every dollar of income is already spoken for.
+    f.m.set_allocation(&f.p1, &f.rent, c(100_000)).unwrap();
+    f.m.set_allocation(&f.p2, &f.food, c(100_000)).unwrap();
+    assert!(f.m.is_zero());
+    // Asking for more than the month brings in is not refused: the overage
+    // rides on the last paycheck so the line's planned total stays exact.
+    f.m.set_line_planned(&f.food, c(150_000)).unwrap();
+    assert_eq!(f.m.line_planned(&f.food), c(150_000));
+    assert!(f.m.allocation_for(&f.p1, &f.food).is_none(), "p1 had nothing free");
+    assert_eq!(f.m.allocation_for(&f.p2, &f.food).unwrap().amount, c(150_000));
+    assert_eq!(f.m.paycheck_allocated(&f.p2), c(150_000));
+    assert_eq!(f.m.zero_difference(), c(-50_000));
+    assert_eq!(f.m.paycheck_unallocated(&f.p2), c(-50_000));
+    assert_eq!(f.m.safe_to_spend(&f.p2), c(-50_000));
+    f.m.check_invariants().unwrap();
+    // Over budget cannot be locked; trimming one line brings the month back.
+    assert_eq!(f.m.lock(), Err(DomainError::NotZero { diff: c(-50_000) }));
+    f.m.set_line_planned(&f.food, c(100_000)).unwrap();
+    assert!(f.m.is_zero() && f.m.lock().is_ok());
+}
+
+#[test]
+fn over_budget_needs_some_paycheck_to_land_on() {
+    let mut f = fixture();
+    for p in [f.p1.clone(), f.p2.clone()] {
+        f.m.set_paycheck_status(&p, PaycheckStatus::Skipped).unwrap();
+    }
+    assert_eq!(f.m.set_line_planned(&f.rent, c(10_000)), Err(DomainError::InsufficientUnallocated { short: c(10_000) }));
+    assert_eq!(f.m.set_allocation(&f.p1, &f.rent, c(10_000)), Err(DomainError::PaycheckSkipped(f.p1.clone())));
+}
+
+#[test]
+fn is_paycheck_fully_allocated_needs_an_exact_match() {
     let mut f = fixture();
     f.m.set_allocation(&f.p1, &f.rent, c(90_000)).unwrap();
-    let err = f.m.set_allocation(&f.p1, &f.food, c(11_250)).unwrap_err();
-    assert_eq!(err, DomainError::OverAllocated { paycheck: f.p1.clone(), over: c(1_250) });
-    // Raising an existing allocation only counts the difference.
-    f.m.set_allocation(&f.p1, &f.rent, c(100_000)).unwrap();
+    assert!(!f.m.is_paycheck_fully_allocated(&f.p1));
+    f.m.set_allocation(&f.p1, &f.food, c(10_000)).unwrap();
     assert!(f.m.is_paycheck_fully_allocated(&f.p1));
+    f.m.set_allocation(&f.p1, &f.food, c(10_001)).unwrap();
+    assert!(!f.m.is_paycheck_fully_allocated(&f.p1));
 }
 
 #[test]
@@ -240,6 +274,19 @@ fn reducing_paycheck_below_allocations_cascades() {
     assert_eq!(impact.reduced_lines, vec![f.food.clone(), f.rent.clone()]);
     assert!(f.m.allocation_for(&f.p1, &f.food).is_none());
     assert_eq!(f.m.paycheck_allocated(&f.p1), c(50_000));
+    f.m.check_invariants().unwrap();
+}
+
+#[test]
+fn reducing_a_deliberately_over_allocated_paycheck_keeps_the_plan() {
+    let mut f = fixture();
+    // Over budget on purpose: the last paycheck carries the overage.
+    f.m.set_allocation(&f.p2, &f.rent, c(250_000)).unwrap();
+    assert_eq!(f.m.zero_difference(), c(-50_000));
+    let impact = f.m.set_paycheck_planned(&f.p2, c(90_000)).unwrap();
+    assert!(impact.reduced_lines.is_empty(), "an overage is not trimmed away");
+    assert_eq!(f.m.allocation_for(&f.p2, &f.rent).unwrap().amount, c(250_000));
+    assert_eq!(f.m.zero_difference(), c(-60_000));
     f.m.check_invariants().unwrap();
 }
 
@@ -283,12 +330,15 @@ fn transfer_moves_money_between_paychecks() {
         f.m.transfer(&f.p1, &f.p2, &f.rent, c(1)),
         Err(DomainError::TransferExceedsAllocation { requested: c(1), available: c(0) })
     );
-    // Destination capacity is enforced and nothing changes on failure.
+    // The destination may go over what it brings in; only the source limits it.
     f.m.set_allocation(&f.p1, &f.food, c(50_000)).unwrap();
-    f.m.set_allocation(&f.p2, &f.food, c(20_000)).unwrap();
-    let before = f.m.clone();
-    assert!(matches!(f.m.transfer(&f.p1, &f.p2, &f.food, c(50_000)), Err(DomainError::OverAllocated { .. })));
-    assert_eq!(f.m, before);
+    f.m.transfer(&f.p1, &f.p2, &f.food, c(50_000)).unwrap();
+    assert!(f.m.allocation_for(&f.p1, &f.food).is_none());
+    assert_eq!(f.m.allocation_for(&f.p2, &f.food).unwrap().amount, c(50_000));
+    assert_eq!(f.m.zero_difference(), c(70_000));
+    f.m.set_allocation(&f.p2, &f.food, c(0)).unwrap();
+    assert_eq!(f.m.paycheck_allocated(&f.p1), c(0));
+    assert_eq!(f.m.paycheck_allocated(&f.p2), c(80_000));
 }
 
 #[test]
@@ -303,8 +353,11 @@ fn overview_edit_translates_into_allocations() {
     f.m.set_line_planned(&f.rent, c(5_000)).unwrap();
     assert!(f.m.allocation_for(&f.p2, &f.rent).is_none());
     assert_eq!(f.m.allocation_for(&f.p1, &f.rent).unwrap().amount, c(5_000));
-    // Not enough money anywhere.
-    assert_eq!(f.m.set_line_planned(&f.rent, c(200_000)), Err(DomainError::InsufficientUnallocated { short: c(90_000) }));
+    // More than the month brings in: the shortfall rides on the last paycheck.
+    f.m.set_line_planned(&f.rent, c(200_000)).unwrap();
+    assert_eq!(f.m.line_planned(&f.rent), c(200_000));
+    assert_eq!(f.m.paycheck_allocated(&f.p2), c(190_000));
+    assert_eq!(f.m.zero_difference(), c(-90_000));
     f.m.check_invariants().unwrap();
 }
 
@@ -572,8 +625,13 @@ fn future_month_reports_show_planned_and_zero_actuals() {
 fn invariant_check_catches_corruption() {
     let mut f = balanced();
     f.m.check_invariants().unwrap();
-    f.m.allocations[0].amount = c(100_001);
-    assert!(matches!(f.m.check_invariants(), Err(DomainError::OverAllocated { .. })));
+    // Planning over income is legal, but a locked month must stay at zero.
+    f.m.set_line_planned(&f.food, c(150_000)).unwrap();
+    f.m.check_invariants().unwrap();
+    let mut f = balanced();
+    f.m.lock().unwrap();
+    f.m.allocations[0].amount = c(150_000);
+    assert!(matches!(f.m.check_invariants(), Err(DomainError::Invariant(_))));
     let mut f = balanced();
     f.m.allocations[0].amount = c(0);
     assert!(f.m.check_invariants().is_err());
@@ -616,11 +674,13 @@ fn one_click_ten_percent_giving() {
     f.m.set_paycheck_planned(&f.p1, c(12_345)).unwrap();
     f.m.give_percent(&f.p1, 10).unwrap();
     assert_eq!(f.m.allocation_for(&f.p1, &line).unwrap().amount, c(1_234));
-    // Not enough room.
+    // With the paycheck's money already spoken for, giving still lands on it and
+    // the month reads as over budget.
     f.m.set_allocation(&f.p1, &f.rent, c(12_345 - 1_234)).unwrap();
     f.m.set_allocation(&f.p1, &line, c(0)).unwrap();
     f.m.set_allocation(&f.p1, &f.rent, c(12_345)).unwrap();
-    assert!(matches!(f.m.give_percent(&f.p1, 10), Err(DomainError::OverAllocated { .. })));
+    f.m.give_percent(&f.p1, 10).unwrap();
+    assert_eq!(f.m.paycheck_unallocated(&f.p1), c(-1_234));
     f.m.check_invariants().unwrap();
 }
 

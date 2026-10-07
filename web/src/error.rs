@@ -99,14 +99,6 @@ impl AppError {
         };
         match self {
             AppError::Domain(d) => match d {
-                DomainError::OverAllocated { paycheck, over } => {
-                    let date = pc_date(paycheck);
-                    if date.is_empty() {
-                        tf("err.over_allocated", &[("amount", &m(*over))])
-                    } else {
-                        tf("err.over_allocated_dated", &[("amount", &m(*over)), ("date", &date)])
-                    }
-                }
                 DomainError::InsufficientUnallocated { short } => tf("err.insufficient", &[("amount", &m(*short))]),
                 DomainError::TransferExceedsAllocation { available, .. } => {
                     tf("err.transfer_exceeds", &[("amount", &m(*available))])
@@ -164,9 +156,6 @@ impl AppError {
 
     fn details_json(&self) -> serde_json::Value {
         match self {
-            AppError::Domain(DomainError::OverAllocated { paycheck, over }) => {
-                json!({ "paycheck_id": paycheck, "over_cents": over })
-            }
             AppError::Domain(DomainError::NotZero { diff }) => json!({ "difference_cents": diff }),
             AppError::Domain(DomainError::InsufficientUnallocated { short }) => json!({ "short_cents": short }),
             AppError::Domain(DomainError::TransferExceedsAllocation { requested, available }) => {

@@ -823,7 +823,8 @@ impl Month {
     }
 
     /// Invariant 6: reducing a paycheck below its allocations reduces or
-    /// deletes the excess, latest-created allocations first.
+    /// deletes the excess, latest-created allocations first. A paycheck that is
+    /// already over-allocated keeps its plan and simply goes further over.
     pub fn set_paycheck_planned(&mut self, id: &Id, amount: Cents) -> Result<Impact, DomainError> {
         self.require_draft()?;
         self.set_planned_unchecked(id, amount)
@@ -833,9 +834,13 @@ impl Month {
         if amount.is_negative() {
             return Err(DomainError::NegativeAmount);
         }
+        // A paycheck that already carries an overage is holding a deliberate
+        // plan that outruns its income; lowering the income deepens the
+        // overage rather than trimming money the user still wants assigned.
+        let over = self.paycheck(id).is_some_and(|p| self.paycheck_allocated(id) > p.planned_amount);
         self.paycheck_mut(id)?.planned_amount = amount;
         let mut impact = Impact::default();
-        let mut excess = self.paycheck_allocated(id) - amount;
+        let mut excess = if over { Cents::ZERO } else { self.paycheck_allocated(id) - amount };
         while excess.is_positive() {
             let Some(idx) = self.allocations.iter().rposition(|a| &a.paycheck_id == id) else {
                 break;
@@ -891,18 +896,16 @@ impl Month {
     // Allocations (spec §2.6)
     // ------------------------------------------------------------------
 
-    fn check_capacity(&self, paycheck: &Id, line: &Id, new_amount: Cents) -> Result<(), DomainError> {
+    /// Allocations may exceed a paycheck's planned amount: planning over what
+    /// comes in is allowed and shows up as a negative Safe-to-Spend. This
+    /// still refuses the cases that can never be funded at all.
+    fn check_fundable(&self, paycheck: &Id, line: &Id) -> Result<(), DomainError> {
         let p = self.paycheck(paycheck).ok_or_else(|| DomainError::not_found("paycheck", paycheck))?;
         if p.status == PaycheckStatus::Skipped {
             return Err(DomainError::PaycheckSkipped(paycheck.clone()));
         }
         if self.expense_line(line).is_none() {
             return Err(DomainError::not_found("expense line", line));
-        }
-        let existing = self.allocation_for(paycheck, line).map_or(Cents::ZERO, |a| a.amount);
-        let total = self.paycheck_allocated(paycheck) - existing + new_amount;
-        if total > p.planned_amount {
-            return Err(DomainError::OverAllocated { paycheck: paycheck.clone(), over: total - p.planned_amount });
         }
         Ok(())
     }
@@ -914,7 +917,7 @@ impl Month {
         if amount.is_negative() {
             return Err(DomainError::NonPositiveAmount);
         }
-        self.check_capacity(paycheck, line, amount)?;
+        self.check_fundable(paycheck, line)?;
         let idx = self.allocations.iter().position(|a| &a.paycheck_id == paycheck && &a.expense_line_id == line);
         match (idx, amount.is_zero()) {
             (Some(i), true) => {
@@ -978,7 +981,7 @@ impl Month {
             return Err(DomainError::TransferExceedsAllocation { requested: amount, available });
         }
         let dest = self.allocation_for(to, line).map_or(Cents::ZERO, |a| a.amount);
-        self.check_capacity(to, line, dest + amount)?;
+        self.check_fundable(to, line)?;
         self.set_allocation(from, line, available - amount)?;
         self.set_allocation(to, line, dest + amount)?;
         Ok(())
@@ -988,6 +991,11 @@ impl Month {
     /// amount by translating the change into allocation operations.
     /// Increases draw on paychecks with unallocated money, earliest first;
     /// decreases come off the line's latest-dated allocations first.
+    ///
+    /// Planning more than the month brings in is allowed: whatever no
+    /// paycheck can cover is assigned to the last one, so the line's planned
+    /// total is exact and the month reads as over budget instead of refusing
+    /// the edit.
     pub fn set_line_planned(&mut self, line: &Id, total: Cents) -> Result<(), DomainError> {
         self.require_allocations_editable()?;
         if total.is_negative() {
@@ -997,14 +1005,10 @@ impl Month {
             return Err(DomainError::not_found("expense line", line));
         }
         let current = self.line_planned(line);
-        let pcs: Vec<(Id, NaiveDate)> = self.paychecks_by_date().iter().map(|p| (p.id.clone(), p.date)).collect();
+        let pcs: Vec<Id> = self.paychecks_by_date().iter().map(|p| p.id.clone()).collect();
         if total > current {
             let mut need = total - current;
-            let free: Cents = pcs.iter().map(|(p, _)| self.paycheck_unallocated(p)).filter(|c| c.is_positive()).sum();
-            if free < need {
-                return Err(DomainError::InsufficientUnallocated { short: need - free });
-            }
-            for (p, _) in &pcs {
+            for p in &pcs {
                 if need.is_zero() {
                     break;
                 }
@@ -1017,9 +1021,19 @@ impl Month {
                 self.set_allocation(p, line, existing + take)?;
                 need -= take;
             }
+            // Still short: park the overage on the last paycheck that can take
+            // it, which is what makes the month over budget rather than invalid.
+            if need.is_positive() {
+                let Some(last) = pcs.iter().rev().find(|p| self.paycheck(p).is_some_and(|pc| pc.status != PaycheckStatus::Skipped))
+                else {
+                    return Err(DomainError::InsufficientUnallocated { short: need });
+                };
+                let existing = self.allocation_for(last, line).map_or(Cents::ZERO, |a| a.amount);
+                self.set_allocation(last, line, existing + need)?;
+            }
         } else if total < current {
             let mut cut = current - total;
-            for (p, _) in pcs.iter().rev() {
+            for p in pcs.iter().rev() {
                 if cut.is_zero() {
                     break;
                 }
@@ -1387,10 +1401,6 @@ impl Month {
         for p in &self.paychecks {
             if p.planned_amount.is_negative() {
                 return fail(format!("paycheck {} has a negative planned amount", p.id));
-            }
-            let allocated = self.paycheck_allocated(&p.id);
-            if allocated > p.planned_amount {
-                return Err(DomainError::OverAllocated { paycheck: p.id.clone(), over: allocated - p.planned_amount });
             }
             if self.income_line(&p.income_line_id).is_none() {
                 return fail(format!("paycheck {} has no income line", p.id));

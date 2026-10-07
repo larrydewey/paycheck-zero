@@ -99,14 +99,7 @@ test.describe("monthly overview", () => {
     await expect(input).toHaveValue("");
   });
 
-  test("asking for more than all paychecks have is refused", async ({ page }) => {
-    const input = page.getByLabel("Total planned for Rent");
-    await page.evaluate(() => document.querySelectorAll("[data-max-cents]").forEach((e) => e.removeAttribute("data-max-cents")));
-    await input.fill("5000");
-    await input.press("Enter");
-    await expect(pz.toast(page)).toContainText("you're $1,925.00 short");
-    await expect(input).toHaveValue("$1,200.00");
-  });
+  
 
   test("add, rename, reorder and delete categories and lines", async ({ page }) => {
     pz.acceptDialogs(page);
@@ -197,6 +190,36 @@ test.describe("monthly overview", () => {
   test("locking a month that isn't at zero is blocked with the exact difference", async ({ page }) => {
     await page.getByRole("button", { name: "Lock month" }).click();
     await expect(pz.toast(page)).toContainText("You can't lock yet: $1,875.00 is still unassigned.");
+  });
+
+  test("a line can be planned past the month's income, which locks no month", async ({ page }) => {
+    const input = page.getByLabel("Total planned for Rent");
+    // Income is $4,000 and $2,125 is planned; this asks for $2,125 more.
+    await input.fill("4250");
+    await input.press("Enter");
+    await expect(input).toHaveValue("$4,250.00");
+
+    // The summary swaps "Left to budget" for "Over budget".
+    const left = page.locator('[data-card="left"]');
+    await expect(left).toContainText("Over budget");
+    await expect(left).toContainText("$1,175.00");
+    await expect(left.locator(".stat-value")).toHaveClass(/neg/);
+    await expect(page.locator("#zero-status")).toContainText("Assigned $1,175.00 more than this month's income");
+    await expect(page.locator("#zero-status")).toHaveClass(/danger/);
+
+    // Locking is off until the plan fits the income again.
+    const lock = page.getByRole("button", { name: "Lock month" });
+    await expect(lock).toBeDisabled();
+    await expect(lock).toHaveAttribute("title", "Trim $1,175.00 off the plan to lock this month.");
+
+    // Trim the same line back and the month is lockable again.
+    await input.fill("3075");
+    await input.press("Enter");
+    await expect(page.locator("#zero-status")).toContainText("Every dollar has a job");
+    await expect(left).toContainText("Left to budget");
+    await expect(lock).toBeEnabled();
+    await lock.click();
+    await expect(pz.toast(page)).toContainText("Month locked.");
   });
 });
 

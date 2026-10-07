@@ -111,17 +111,16 @@
     return neg ? "-" + str : str;
   }
 
-  /** Client-side guard: blocks an allocation that would over-allocate a paycheck. */
+  /** Client-side guard: rejects an amount that isn't a number. */
   function guard(form) {
-    var input = form.querySelector("input[data-max-cents]") || form.querySelector("input.money");
+    // Forms carry several money fields (balance, minimum payment); the amount
+    // being edited is the one named "amount".
+    var input = form.querySelector("input[name=amount]") || form.querySelector("input.money");
     if (!input) return true;
     var err = form.querySelector(".field-error");
     var value = cents(input.value);
     var msg = "";
     if (Number.isNaN(value)) msg = t("invalid_amount");
-    else if (input.dataset.maxCents !== undefined && value !== null && value > Number(input.dataset.maxCents)) {
-      msg = t("over_allocated", { amount: fmt(value - Number(input.dataset.maxCents)) });
-    }
     if (err) err.textContent = msg;
     if (msg) {
       input.setAttribute("aria-invalid", "true");

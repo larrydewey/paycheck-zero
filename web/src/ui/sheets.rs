@@ -105,7 +105,7 @@ pub(super) async fn line_sse(st: &Shared, user: &UserRecord, headers: &HeaderMap
                             form data-on:submit__prevent=(post_form_guarded(&format!("/ui/paychecks/{}/lines/{}", p.id, lid))) {
                                 (view_input(&view))
                                 input type="hidden" name="sheet" value="line";
-                                (money_input(&c, "amount", Some(this), &tf("line.from_paycheck_label", &[("name", &l.name), ("date", &short_date(p.date))]), Some((this + free).get())))
+                                (money_input(&c, "amount", Some(this), &tf("line.from_paycheck_label", &[("name", &l.name), ("date", &short_date(p.date))])))
                                 span class="field-error" aria-live="polite" {}
                             }
                         } @else {
@@ -115,8 +115,8 @@ pub(super) async fn line_sse(st: &Shared, user: &UserRecord, headers: &HeaderMap
                 }
                 @if m.paychecks.is_empty() { li class="muted" { (t("overview.no_income_title")) } }
             }
-            // Moving funding between paychecks in one step: lowering one and
-            // raising the other separately can trip over the paycheck's limit.
+            // Moving funding between paychecks in one step: it saves editing
+            // two amounts when the money is really coming from another date.
             @let funded: Vec<&Paycheck> = m.paychecks_by_date().into_iter().filter(|p| m.allocation_for(&p.id, &lid).is_some_and(|a| a.amount.is_positive())).collect();
             @let targets: Vec<&Paycheck> = m.paychecks_by_date().into_iter().filter(|p| p.status != PaycheckStatus::Skipped).collect();
             @if alloc && !funded.is_empty() && targets.len() > 1 {
@@ -681,7 +681,7 @@ pub async fn new_line(State(st): State<Shared>, Extension(user): Extension<AuthU
                         span data-show=(format!("!{is_debt}")) { (t("newline.amount")) }
                         span data-show=(is_debt) style="display: none" { (t("newline.payment")) }
                     }
-                    input id="nl-amount" type="text" inputmode="decimal" class="money" name="amount" placeholder="0.00" autocomplete="off" data-max-cents=(f.get());
+                    input id="nl-amount" type="text" inputmode="decimal" class="money" name="amount" placeholder="0.00" autocomplete="off";
                     p class="hint" { (tf("fund.available", &[("amount", &c.money(f))])) }
                 }
             }

@@ -69,8 +69,11 @@ fn impact_toasts(user: &UserRecord, m: &Month, impact: &Impact) -> Vec<Markup> {
         msg.push_str(&tf("impact.reduced", &[("lines", &names.join(", "))]));
         msg.push(' ');
     }
-    if !m.is_zero() {
-        msg.push_str(&tf("impact.rebalance", &[("amount", &crate::money::format(m.zero_difference(), &user.currency))]));
+    let diff = m.zero_difference();
+    if diff.is_positive() {
+        msg.push_str(&tf("impact.rebalance", &[("amount", &crate::money::format(diff, &user.currency))]));
+    } else if diff.is_negative() {
+        msg.push_str(&tf("impact.rebalance_over", &[("amount", &crate::money::format(diff.abs(), &user.currency))]));
     }
     vec![toast(ToastKind::Warning, msg.trim(), None)]
 }

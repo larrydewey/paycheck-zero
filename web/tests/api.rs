@@ -116,20 +116,35 @@ async fn allocations_and_invariants() {
     let a1 = call(&app, "POST", &format!("/api/v1/paychecks/{p1}/allocations"), Some(&tok), Some(json!({"expense_line_id": rent, "amount": 50_000}))).await;
     assert_eq!(a1.status, StatusCode::CREATED, "{}", a1.text);
     assert_eq!(a1.json["safe_to_spend"], 50_000);
+    let aid = a1.json["allocation"]["id"].as_str().unwrap().to_string();
     let a2 = call(&app, "POST", &format!("/api/v1/paychecks/{p2}/allocations"), Some(&tok), Some(json!({"expense_line_id": rent, "amount": 50_000}))).await;
     assert_eq!(a2.json["line_planned"], 100_000);
 
-    // Over-allocation: 409 with the spec error format.
+    // Planning more than a paycheck brings in is allowed: the month reads as
+    // over budget and refuses to lock, but the edit is saved.
     let over = call(&app, "POST", &format!("/api/v1/paychecks/{p1}/allocations"), Some(&tok), Some(json!({"expense_line_id": rent, "amount": 101_500}))).await;
-    assert_eq!(over.status, StatusCode::CONFLICT);
-    assert_eq!(over.json["error"]["code"], "INVARIANT_VIOLATION");
-    assert_eq!(over.json["error"]["details"]["over_cents"], 1_500);
-    assert!(over.json["error"]["message"].as_str().unwrap().contains("1500 cents"));
+    assert_eq!(over.status, StatusCode::CREATED, "{}", over.text);
+    assert_eq!(over.json["safe_to_spend"], -1_500);
+    assert_eq!(over.json["line_planned"], 151_500);
+    let over2 = call(&app, "POST", &format!("/api/v1/paychecks/{p2}/allocations"), Some(&tok), Some(json!({"expense_line_id": rent, "amount": 100_000}))).await;
+    assert_eq!(over2.json["line_planned"], 201_500);
+    let sum_over = call(&app, "GET", &format!("/api/v1/months/{mid}/summary"), Some(&tok), None).await;
+    assert_eq!(sum_over.json["is_zero"], false);
+    assert_eq!(sum_over.json["zero_difference"], -1_500);
+    let lock_over = call(&app, "POST", &format!("/api/v1/months/{mid}/lock"), Some(&tok), None).await;
+    assert_eq!(lock_over.status, StatusCode::CONFLICT);
+    assert_eq!(lock_over.json["error"]["code"], "MONTH_NOT_ZERO");
+    assert_eq!(lock_over.json["error"]["details"]["difference_cents"], -1_500);
+    assert!(lock_over.json["error"]["message"].as_str().unwrap().contains("more than your income"));
+    // Back under: both allocations lowered again.
+    let under = call(&app, "PATCH", &format!("/api/v1/allocations/{aid}"), Some(&tok), Some(json!({"amount": 50_000}))).await;
+    assert_eq!(under.status, StatusCode::OK, "{}", under.text);
+    let aid2 = a2.json["allocation"]["id"].as_str().unwrap().to_string();
+    assert_eq!(call(&app, "PATCH", &format!("/api/v1/allocations/{aid2}"), Some(&tok), Some(json!({"amount": 50_000}))).await.status, StatusCode::OK);
 
     // Zero / negative amounts are rejected (invariant 5).
     let zero = call(&app, "POST", &format!("/api/v1/paychecks/{p1}/allocations"), Some(&tok), Some(json!({"expense_line_id": rent, "amount": 0}))).await;
     assert_eq!(zero.status, StatusCode::CONFLICT);
-    let aid = a1.json["allocation"]["id"].as_str().unwrap().to_string();
     let neg = call(&app, "PATCH", &format!("/api/v1/allocations/{aid}"), Some(&tok), Some(json!({"amount": -1}))).await;
     assert_eq!(neg.status, StatusCode::CONFLICT);
 

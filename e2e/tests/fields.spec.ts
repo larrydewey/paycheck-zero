@@ -19,11 +19,20 @@ test.describe("field behaviour", () => {
     await expect(amt).toHaveValue("$40.00");
   });
 
-  test("the browser guard understands arithmetic too", async ({ page }) => {
+  test("the browser guard rejects text that isn't an amount", async ({ page }) => {
     const input = page.getByLabel("Planned for Rent from this paycheck");
-    await input.fill("1200 + 400.01");
+    await input.fill("1200 + later");
     await input.press("Enter");
-    await expect(pz.line(page, "Rent").locator(".field-error")).toHaveText("That's $0.01 more than this paycheck has left.");
+    await expect(pz.line(page, "Rent").locator(".field-error")).toHaveText("Enter an amount like 12.50.");
+    await expect(input).toHaveAttribute("aria-invalid", "true");
+  });
+
+  test("arithmetic can plan past what the paycheck brings in", async ({ page }) => {
+    const input = page.getByLabel("Planned for Rent from this paycheck");
+    await input.fill("1200 + 412.50");
+    await input.press("Enter");
+    await expect(input).toHaveValue("$1,612.50");
+    await expect(pz.sts(page)).toHaveText("-$24.50");
   });
 
   test("inline edits save when the pointer leaves the row", async ({ page, isMobile }) => {
@@ -53,10 +62,12 @@ test.describe("field behaviour", () => {
     const sh = pz.sheet(page);
     await sh.getByLabel("Expense line").selectOption({ label: "Electric" });
     const amt = sh.getByLabel("Amount", { exact: true });
-    await page.evaluate(() => document.querySelectorAll("[data-max-cents]").forEach((e) => e.removeAttribute("data-max-cents")));
-    await amt.fill("999");
+    await amt.fill("400.01.5");
     await sh.getByRole("button", { name: "Assign", exact: true }).click();
-    await expect(pz.toast(page)).toContainText("over-allocate");
-    await expect(amt).toHaveValue("$999.00");
+    await expect(page.locator("#fund-form .field-error")).toHaveText("Enter an amount like 12.50.");
+    await expect(amt).toHaveValue("400.01.5");
+    // The assign sheet is still open with the line chosen, ready to retype.
+    await expect(sh).toBeVisible();
+    await expect(sh.getByLabel("Expense line")).toHaveValue(/.+/);
   });
 });

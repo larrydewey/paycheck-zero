@@ -19,8 +19,6 @@ pub enum DomainError {
     SplitTooFew,
     #[error("split parts must all be expenses or all be income")]
     SplitMixedSigns,
-    #[error("paycheck {paycheck} would be over-allocated by {over} cents")]
-    OverAllocated { paycheck: Id, over: Cents },
     #[error("not enough unallocated paycheck money: short by {short} cents")]
     InsufficientUnallocated { short: Cents },
     #[error("cannot move {requested} cents; only {available} cents are allocated there")]
@@ -72,7 +70,6 @@ impl DomainError {
             DomainError::InvalidTransfer => "INVALID_TRANSFER",
             DomainError::SplitTooFew => "SPLIT_TOO_FEW",
             DomainError::SplitMixedSigns => "SPLIT_MIXED_SIGNS",
-            DomainError::OverAllocated { .. } => "INVARIANT_VIOLATION",
             DomainError::InsufficientUnallocated { .. } => "INVARIANT_VIOLATION",
             DomainError::TransferExceedsAllocation { .. } => "INVARIANT_VIOLATION",
             DomainError::NotZero { .. } => "MONTH_NOT_ZERO",
@@ -100,8 +97,7 @@ impl DomainError {
     pub fn is_conflict(&self) -> bool {
         matches!(
             self,
-            DomainError::OverAllocated { .. }
-                | DomainError::InsufficientUnallocated { .. }
+            DomainError::InsufficientUnallocated { .. }
                 | DomainError::TransferExceedsAllocation { .. }
                 | DomainError::NotZero { .. }
                 | DomainError::Locked

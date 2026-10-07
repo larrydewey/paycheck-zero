@@ -95,17 +95,17 @@ fn line_row(c: &Ctx, l: &LineView, sheet_url: &str, amount: Option<Markup>, fall
     }
 }
 
-fn amount_form(c: &Ctx, url: &str, view: &View, value: Cents, label: &str, max: Option<i64>) -> Markup {
+fn amount_form(c: &Ctx, url: &str, view: &View, value: Cents, label: &str) -> Markup {
     html! {
         form data-on:submit__prevent=(post_form_guarded(url)) {
             (view_input(view))
-            (money_input(c, "amount", Some(value), label, max))
+            (money_input(c, "amount", Some(value), label))
             span class="field-error" aria-live="polite" {}
         }
     }
 }
 
-fn add_line_row(m: &Month, view: &View, cat: &CategoryView, pid: Option<&Id>, max: Option<i64>) -> Markup {
+fn add_line_row(m: &Month, view: &View, cat: &CategoryView, pid: Option<&Id>) -> Markup {
     html! {
         form class="add-line" id=(format!("add-line-{}", cat.id)) data-clear data-on:submit__prevent=(post_form_guarded(&format!("/ui/months/{}/lines", m.id))) {
             (view_input(view))
@@ -116,7 +116,7 @@ fn add_line_row(m: &Month, view: &View, cat: &CategoryView, pid: Option<&Id>, ma
             @if pid.is_some() {
                 span class="add-extra" {
                     @let debt = cat.kind == CategoryKind::Debt;
-                    input type="text" inputmode="decimal" class="money" name="amount" autocomplete="off" required data-max-cents=[max]
+                    input type="text" inputmode="decimal" class="money" name="amount" autocomplete="off" required
                         placeholder=(if debt { t("line.add_payment_placeholder") } else { "0.00".into() })
                         aria-label=(tf(if debt { "line.add_payment_label" } else { "line.add_from_this_label" }, &[("category", &cat.name)]));
                 }
@@ -151,6 +151,14 @@ fn empty_cats(m: &Month, empty: &[&CategoryView], query: &str) -> Markup {
 pub(super) fn month_alerts(c: &Ctx, m: &Month, archived: bool, view: &View, offer_lock: bool) -> Markup {
     let diff = m.zero_difference();
     let overs = overspent_lines(m);
+    // Locking needs exact zero, so the button explains what stands in the way.
+    let lock_hint = if diff.is_negative() {
+        Some(tf("status.lock_blocked_over", &[("amount", &c.money(diff.abs()))]))
+    } else if diff.is_positive() {
+        Some(tf("status.lock_blocked_left", &[("amount", &c.money(diff))]))
+    } else {
+        None
+    };
     html! {
         div class="alerts" {
             @if archived {
@@ -159,7 +167,7 @@ pub(super) fn month_alerts(c: &Ctx, m: &Month, archived: bool, view: &View, offe
             @if m.is_locked() && !m.reassigning {
                 p class="alert neutral pill locked" { (icon("lock")) " " (t("status.locked")) }
             }
-            div id="zero-status" class={ "alert " @if m.paychecks.is_empty() { "todo" } @else if diff.is_zero() && m.has_variance() { "caution" } @else if diff.is_zero() { "ok" } @else { "todo" } } aria-live="polite" {
+            div id="zero-status" class={ "alert " @if m.paychecks.is_empty() { "todo" } @else if diff.is_zero() && m.has_variance() { "caution" } @else if diff.is_zero() { "ok" } @else if diff.is_negative() { "danger" } @else { "todo" } } aria-live="polite" {
                 span class="alert-text" {
                     @if m.paychecks.is_empty() { (t("status.no_income")) }
                     @else if diff.is_zero() && m.has_variance() { (t("status.zero_with_variance")) }
@@ -170,7 +178,10 @@ pub(super) fn month_alerts(c: &Ctx, m: &Month, archived: bool, view: &View, offe
                 @if !m.is_locked() && !archived && !m.paychecks.is_empty() && (offer_lock || diff.is_zero()) {
                     form class="inline" data-on:submit__prevent=(post_form(&format!("/ui/months/{}/lock", m.id))) {
                         (view_input(view))
-                        button type="submit" class=(if diff.is_zero() { "btn small primary" } else { "btn small" }) aria-describedby="zero-status" { (icon("lock")) " " (t("status.lock")) }
+                        // Over budget is allowed to exist, but not to be sealed in.
+                        button type="submit" class=(if diff.is_zero() { "btn small primary" } else { "btn small" }) disabled[diff.is_negative()]
+                            title=[lock_hint]
+                            aria-describedby="zero-status" { (icon("lock")) " " (t("status.lock")) }
                     }
                 }
             }
@@ -282,6 +293,9 @@ pub fn render_paycheck(c: &Ctx, m: &Month, archived: bool, pid: &Id, wallet: &Wa
     // its spending and what's left of it. Budget shows the whole month.
     let shown = m.funding_views(pid);
     let has_lines = !shown.is_empty();
+    // Money assigned to this paycheck beyond what it brings in: the plan leans
+    // on money that hasn't arrived yet.
+    let overage = v.allocated - v.planned_amount;
     html! {
         h1 class="visually-hidden" { (tf("paycheck.heading", &[("date", &short_date(p.date)), ("name", &v.income_line_name)])) }
         div class="split-layout has-extras" {
@@ -298,10 +312,12 @@ pub fn render_paycheck(c: &Ctx, m: &Month, archived: bool, pid: &Id, wallet: &Wa
             p id="safe-to-spend" class=(if v.safe_to_spend.is_negative() { "hero-amount neg" } else { "hero-amount" }) aria-live="polite" {
                 (c.money(v.safe_to_spend))
             }
-            @if v.safe_to_spend.is_negative() {
+            @if overage.is_positive() {
+                p class="hero-warn" role="status" { (icon("alert")) " " (tf("paycheck.over_assigned", &[("amount", &c.money(overage))])) }
+            } @else if v.safe_to_spend.is_negative() {
                 p class="hero-warn" role="status" { (icon("alert")) " " (tf("over.sts", &[("amount", &c.money(v.safe_to_spend.abs()))])) }
             }
-            (meter(v.allocated, v.planned_amount, false, &t("paycheck.assigned_meter")))
+            (meter(v.allocated, v.planned_amount, overage.is_positive(), &t("paycheck.assigned_meter")))
             p class="hero-progress" {
                 span data-stat="assigned" { (c.money(v.allocated)) } " " (t("row.of")) " "
                 span data-stat="planned" { (c.money(v.planned_amount)) } " " (t("paycheck.assigned_word"))
@@ -317,6 +333,10 @@ pub fn render_paycheck(c: &Ctx, m: &Month, archived: bool, pid: &Id, wallet: &Wa
                             (tf("assign.button", &[("amount", &c.money(v.unallocated))]))
                         }
                     }
+                }
+            } @else if overage.is_positive() {
+                p class="hero-note" id="unassigned-nudge" role="status" {
+                    (icon("alert")) " " (tf("paycheck.over_assigned_short", &[("amount", &c.money(overage))]))
                 }
             } @else {
                 p class="hero-note ok" id="unassigned-nudge" {
@@ -364,14 +384,14 @@ pub fn render_paycheck(c: &Ctx, m: &Month, archived: bool, pid: &Id, wallet: &Wa
                         }
                         ul class="rows" {
                             @for l in &cat.lines {
-                                @let form = editable.then(|| amount_form(c,
-                                    &format!("/ui/paychecks/{}/lines/{}", pid, l.id), &view, l.this_paycheck,
-                                    &tf("line.planned_label", &[("name", &l.name)]), Some((l.this_paycheck + v.unallocated).get())));
+@let form = editable.then(|| amount_form(c,
+                                &format!("/ui/paychecks/{}/lines/{}", pid, l.id), &view, l.this_paycheck,
+                                &tf("line.planned_label", &[("name", &l.name)])));
                                 (line_row(c, l, &format!("/ui/sheet/line/{}?view={enc}&pid={pid}", l.id), form, l.this_paycheck, false, None))
                             }
                         }
                         @if structure {
-                            (add_line_row(m, &view, cat, Some(pid), Some(v.unallocated.get())))
+                            (add_line_row(m, &view, cat, Some(pid)))
                         }
                     }
                 }
@@ -417,7 +437,6 @@ pub fn render_overview(c: &Ctx, m: &Month, archived: bool, wallet: &Wallet, all:
     let structure = !m.is_locked() && !archived;
     let cats = m.category_views();
     let (shown, empty): (Vec<&CategoryView>, Vec<&CategoryView>) = cats.iter().partition(|c| !c.lines.is_empty());
-    let free: Cents = m.paychecks.iter().map(|p| m.paycheck_unallocated(&p.id)).sum();
     let income = m.total_planned_income();
     let planned = m.total_planned_expense();
     let spent: Cents = m.expense_lines.iter().map(|l| m.line_spent(&l.id)).sum();
@@ -480,11 +499,11 @@ pub fn render_overview(c: &Ctx, m: &Month, archived: bool, wallet: &Wallet, all:
                         @for l in &cat.lines {
                             @let form = alloc.then(|| amount_form(c,
                                 &format!("/ui/lines/{}/planned", l.id), &view, l.planned,
-                                &tf("line.total_planned_label", &[("name", &l.name)]), Some((l.planned + free).get())));
+                                &tf("line.total_planned_label", &[("name", &l.name)])));
                             (line_row(c, l, &format!("/ui/sheet/line/{}?view={enc}", l.id), form, l.planned, false, line_goal_pills(c, m, wallet, all, &l.name)))
                         }
                     }
-                    @if structure { (add_line_row(m, &view, cat, None, None)) }
+                    @if structure { (add_line_row(m, &view, cat, None)) }
                 }
             }
             @if structure { (empty_cats(m, &empty, &format!("view={enc}"))) }

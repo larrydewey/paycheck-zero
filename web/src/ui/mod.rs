@@ -500,11 +500,11 @@ pub fn toast(kind: ToastKind, message: &str, technical: Option<&str>) -> Markup 
 }
 
 #[must_use]
-pub fn money_input(c: &Ctx, name: &str, value: Option<Cents>, label: &str, max_cents: Option<i64>) -> Markup {
+pub fn money_input(c: &Ctx, name: &str, value: Option<Cents>, label: &str) -> Markup {
     html! {
         input type="text" inputmode="decimal" autocomplete="off" class="money" name=(name)
             value=[value.map(|v| c.money(v))] aria-label=(label)
-            data-max-cents=[max_cents] placeholder=(c.money(Cents::ZERO));
+            placeholder=(c.money(Cents::ZERO));
     }
 }
 

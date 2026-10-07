@@ -61,27 +61,33 @@ test.describe("paycheck view (primary)", () => {
     await expect(page.getByLabel("Planned for Gas from this paycheck")).toHaveValue("$60.00");
   });
 
-  test("over-allocation is blocked in the browser before sending", async ({ page }) => {
+  test("planning over what this paycheck brings in is allowed and shows as over budget", async ({ page }) => {
     const input = page.getByLabel("Planned for Rent from this paycheck");
     await input.fill("1612.50");
     await input.press("Enter");
-    await expect(pz.line(page, "Rent").locator(".field-error")).toHaveText("That's $12.50 more than this paycheck has left.");
-    await expect(input).toHaveAttribute("aria-invalid", "true");
-    await expect(pz.sts(page)).toHaveText("$388.00");
+    await expect(pz.line(page, "Rent").locator(".field-error")).toHaveText("");
+    await expect(input).toHaveValue("$1,612.50");
+    await expect(pz.sts(page)).toHaveText("-$24.50");
+    await expect(page.locator(".hero-warn")).toContainText("Over budget: $12.50 more is assigned to this paycheck than it brings in.");
+    await expect(page.locator("#unassigned-nudge")).toContainText("Over budget by $12.50.");
   });
 
-  test("over-allocation is also rejected by the server with a human message", async ({ page }) => {
-    // Remove the client guard to prove the server enforces the invariant.
-    await page.evaluate(() => document.querySelectorAll("[data-max-cents]").forEach((e) => e.removeAttribute("data-max-cents")));
-    const input = page.getByLabel("Planned for Rent from this paycheck");
-    await input.fill("1612.50");
-    await input.press("Enter");
-    const toast = pz.toast(page);
-    await expect(toast).toContainText("That would over-allocate the Sep 4 paycheck by $12.50.");
-    await toast.getByText("Technical details").click();
-    await expect(toast.locator("code")).toContainText("INVARIANT_VIOLATION");
-    await expect(input).toHaveValue("$1,200.00");
-    await expect(pz.sts(page)).toHaveText("$388.00");
+  test("assigning more than a paycheck has left is saved, not refused", async ({ page }) => {
+    await pz.openSheet(page, "Assign $400.00");
+    const sh = pz.sheet(page);
+    await sh.getByLabel("Expense line").selectOption({ label: "Gas" });
+    await sh.getByLabel("Amount", { exact: true }).fill("450");
+    await sh.getByRole("button", { name: "Assign", exact: true }).click();
+    await expect(sh).toBeHidden();
+    // Gas already had $100 from this paycheck, so $450 more is $550.
+    await expect(page.getByLabel("Planned for Gas from this paycheck")).toHaveValue("$550.00");
+    await expect(pz.sts(page)).toHaveText("-$62.00");
+    // Money left the paycheck even though it was never there: the overage rides
+    // the month until it is trimmed.
+    await page.getByRole("link", { name: "Budget" }).first().click();
+    await waitForContent(page);
+    await expect(page.locator('[data-card="left"]')).toContainText("Left to budget");
+    await expect(page.locator("#zero-status")).toContainText("left to assign this month");
   });
 
   test("create a new line on the fly and fund it from this paycheck", async ({ page }) => {
@@ -115,13 +121,16 @@ test.describe("paycheck view (primary)", () => {
     await expect(pz.sheet(page).getByLabel("Balance")).toHaveValue("$12,000.00");
   });
 
-  test("assign blocks amounts above what's left", async ({ page }) => {
+  test("assign rejects an amount that isn't money", async ({ page }) => {
     await pz.openSheet(page, "Assign $400.00");
     const sh = pz.sheet(page);
     await sh.getByLabel("Expense line").selectOption({ label: "Electric" });
-    await sh.getByLabel("Amount", { exact: true }).fill("400.01");
+    const amt = sh.getByLabel("Amount", { exact: true });
+    await amt.fill("400.01.5");
     await sh.getByRole("button", { name: "Assign", exact: true }).click();
-    await expect(page.locator("#fund-form .field-error")).toHaveText("That's $0.01 more than this paycheck has left.");
+    await expect(page.locator("#fund-form .field-error")).toHaveText("Enter an amount like 12.50.");
+    await expect(amt).toHaveAttribute("aria-invalid", "true");
+    await expect(sh).toBeVisible();
   });
 
   test("fully assigning a paycheck clears the nudge and marks the chip", async ({ page }) => {

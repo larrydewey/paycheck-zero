@@ -542,7 +542,7 @@ pub(super) fn fund_form(c: &Ctx, m: &Month, pid: &Id, view: &View, unallocated: 
                     div class="field f-amount" {
                         label for="fund-amount" { (t("fund.amount")) }
                         input id="fund-amount" type="text" inputmode="decimal" class="money" name="amount" autocomplete="off" required
-                            data-max-cents=(unallocated.get()) placeholder="0.00" aria-describedby="fund-hint";
+                            placeholder="0.00" aria-describedby="fund-hint";
                     }
                     button type="submit" class="btn primary f-btn" { (t("fund.submit")) }
                 }
@@ -1555,6 +1555,7 @@ pub fn render_months(c: &Ctx, metas: &[MonthMeta], months: &[Month], archived: b
                             @if let Some(f) = full {
                                 " · "
                                 @if f.is_zero() { (t("status.zero_short")) }
+                                @else if f.zero_difference().is_negative() { (tf("status.over_short", &[("amount", &c.money(f.zero_difference().abs()))])) }
                                 @else { (tf("status.left_short", &[("amount", &c.money(f.zero_difference()))])) }
                             }
                         }
