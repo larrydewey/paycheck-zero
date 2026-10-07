@@ -201,7 +201,8 @@ impl GoalKind {
 pub enum GoalTrack {
     /// A budget line, matched by name in every month (lines are copied from
     /// month to month). Saving: what's planned on it. Payoff: the balance on
-    /// that debt line.
+    /// that line when it tracks one (a debt line), otherwise what's planned
+    /// on it toward the amount to pay off.
     Line { name: String },
     /// An account balance. Saving: the balance. Payoff: what's owed on it.
     Account { id: Id },
@@ -780,17 +781,28 @@ impl Wallet {
         }
     }
 
+    /// Whether a line by this name records a balance owed in any month.
+    #[must_use]
+    pub fn line_tracks_balance(name: &str, months: &[Month]) -> bool {
+        months.iter().any(|m| m.expense_lines.iter().any(|l| l.name.eq_ignore_ascii_case(name) && l.current_balance.is_some()))
+    }
+
+    /// What's been planned on a line by this name from the goal's start
+    /// through `ym`.
+    fn planned_since(g: &Goal, name: &str, months: &[Month], ym: NaiveDate) -> Cents {
+        months
+            .iter()
+            .filter(|m| m.year_month >= g.start_month && m.year_month <= ym)
+            .flat_map(|m| m.expense_lines.iter().filter(|l| l.name.eq_ignore_ascii_case(name)).map(move |l| m.line_planned(&l.id)))
+            .sum()
+    }
+
     /// Progress value (saved so far, or debt paid down) at the end of `ym`.
     fn value_at(&self, g: &Goal, months: &[Month], ym: NaiveDate) -> Cents {
         match (g.kind, &g.track) {
-            (GoalKind::Save, GoalTrack::Line { name }) => {
-                g.starting_amount
-                    + months
-                        .iter()
-                        .filter(|m| m.year_month >= g.start_month && m.year_month <= ym)
-                        .flat_map(|m| m.expense_lines.iter().filter(|l| l.name.eq_ignore_ascii_case(name)).map(move |l| m.line_planned(&l.id)))
-                        .sum::<Cents>()
-            }
+            (GoalKind::Save, GoalTrack::Line { name }) => g.starting_amount + Self::planned_since(g, name, months, ym),
+            // A line without a balance: paying it off is what's planned on it.
+            (GoalKind::Payoff, GoalTrack::Line { name }) if !Self::line_tracks_balance(name, months) => Self::planned_since(g, name, months, ym),
             (GoalKind::Save, GoalTrack::Account { id }) => self.balance_on(id, months, month_end(ym)).max(Cents::ZERO),
             (GoalKind::Payoff, track) => (g.starting_amount - self.debt_at(track, months, ym)).max(Cents::ZERO),
         }

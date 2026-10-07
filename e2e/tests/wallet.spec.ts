@@ -243,7 +243,7 @@ test.describe("goals", () => {
     sh = pz.sheet(page);
     await sh.getByRole("radio", { name: "Pay off debt" }).check();
     await sh.getByLabel("Goal name").fill("Visa down");
-    const debt = sh.getByLabel("Card or debt line to pay off");
+    const debt = sh.getByLabel("Card or budget line to pay off");
     await expect(debt.locator("option").first()).toHaveText(/^Visa \(\$[\d,]+\.\d\d owed\)$/);
     await sh.getByLabel("Amount to pay off (optional)").fill("99999");
     await sh.getByRole("button", { name: "Create goal" }).click();

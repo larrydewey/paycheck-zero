@@ -320,3 +320,34 @@ fn retirement_accounts_track_contributions_and_growth() {
     assert!(f.w.delete_adjustment(&opening).is_err());
     assert_eq!(f.w.account_activity(&k401, &months).len(), 2);
 }
+
+#[test]
+fn payoff_goal_on_a_line_without_a_balance_counts_what_is_planned() {
+    let f = fixture();
+    let mut w = f.w.clone();
+    let mut oct = f.m.clone();
+    oct.id = Id::generate();
+    oct.year_month = d(2026, 10, 1);
+    oct.set_allocation(&f.p1, &f.ef, c(25_000)).unwrap();
+    // The Emergency Fund line has no balance, so planning on it pays the goal.
+    let id = w
+        .add_goal(Goal {
+            id: Id::generate(),
+            name: "Pay back mom".into(),
+            kind: GoalKind::Payoff,
+            target_amount: c(100_000),
+            target_month: None,
+            track: GoalTrack::Line { name: "Emergency Fund".into() },
+            start_month: d(2026, 9, 1),
+            starting_amount: c(100_000),
+            sort_order: 0,
+        })
+        .unwrap();
+    let months = [f.m.clone(), oct];
+    let g = w.goal(&id).unwrap().clone();
+    assert!(!Wallet::line_tracks_balance("Emergency Fund", &months));
+    let p = w.goal_progress(&g, &months, d(2026, 10, 1));
+    assert_eq!(p.current, c(65_000));
+    assert_eq!(p.this_month, c(25_000));
+    assert_eq!(p.remaining, c(35_000));
+}

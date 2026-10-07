@@ -341,7 +341,7 @@ pub fn line_goals(c: &Ctx, m: &Month, w: &Wallet, all: &[Month], line: &LineView
                     (c.money(p.current)) " " (if g.kind == GoalKind::Payoff { t("goal.paid_of") } else { t("goal.saved_of") }) " " (c.money(p.target))
                     @if let Some(need) = p.needed_this_month { " · " (tf("goal.needs_this_month", &[("amount", &c.money(need))])) }
                 }
-                (plan_more(c, g, &p, line, view, editable))
+                (plan_more(c, &p, line, view, editable))
             }
         }
     }
@@ -351,8 +351,7 @@ pub fn line_goals(c: &Ctx, m: &Month, w: &Wallet, all: &[Month], line: &LineView
 /// a new one for it. Saving goals go with spending lines, payoff goals
 /// with debt lines.
 pub fn line_goal_link(w: &Wallet, line: &LineView, view: &View) -> Markup {
-    let kind = if line.is_debt { GoalKind::Payoff } else { GoalKind::Save };
-    let others: Vec<&Goal> = w.goals_sorted().into_iter().filter(|g| g.kind == kind).collect();
+    let others: Vec<&Goal> = w.goals_sorted();
     let enc = view.encode();
     html! {
         section class="sheet-section" aria-labelledby="ls-goal" {
@@ -402,10 +401,11 @@ pub async fn link_goal(State(st): State<Shared>, Extension(user): Extension<Auth
         let mut g = w.goal(&gid).cloned().ok_or(AppError::NotFound)?;
         g.track = GoalTrack::Line { name };
         if g.kind == GoalKind::Payoff {
-            // Start from what this line owes now, keeping the aim if it fits.
+            // Start from what this line owes now, keeping the aim if it fits;
+            // a line without a balance keeps the amount to pay off.
             let debt = w.debt_now(&g.track, all, g.start_month);
-            let aim = (g.target_amount < g.starting_amount).then(|| g.target_amount.min(debt));
-            set_payoff(&mut g, debt, aim, &currency)?;
+            let aim = if planned_payoff(&g, all) { Some(g.target_amount) } else { (g.target_amount < g.starting_amount).then(|| g.target_amount.min(debt)) };
+            fill_payoff(&mut g, all, debt, aim, &currency)?;
         }
         Ok(w.update_goal(g)?)
     }, move |_, _| vec![toast(ToastKind::Success, &msg, None)])
@@ -413,11 +413,11 @@ pub async fn link_goal(State(st): State<Shared>, Extension(user): Extension<Auth
 }
 
 /// "Plan $50 more" on the goal's line, when this month is short of pace.
-fn plan_more(c: &Ctx, g: &Goal, p: &GoalProgress, line: &LineView, view: &View, editable: bool) -> Markup {
+fn plan_more(c: &Ctx, p: &GoalProgress, line: &LineView, view: &View, editable: bool) -> Markup {
     html! {
         @if let Some(need) = p.needed_this_month {
             @let short = need - p.this_month;
-            @if g.kind == GoalKind::Save && short.is_positive() && editable {
+            @if short.is_positive() && editable {
                 form class="inline plan-more" data-on:submit__prevent=(post_form(&format!("/ui/lines/{}/planned", line.id))) {
                     (view_input(view))
                     input type="hidden" name="amount" value=(crate::money::plain(line.planned + short));
@@ -942,7 +942,7 @@ fn goal_kind_fields(c: &Ctx, w: &Wallet, m: &Month, all: &[Month], g: Option<&Go
             p class="hint" { (t("goal.track_save_hint")) }
         }
         @let cards: Vec<&&Account> = accts.iter().filter(|a| a.kind.is_card()).collect();
-        @if cards.is_empty() && debt_lines.is_empty() {
+        @if cards.is_empty() && m.expense_lines.is_empty() {
             p class="hint" data-show="$_gkind == 'payoff'" data-goal-no-debts { (t("goal.no_debts")) }
         } @else {
             div class="field" data-show="$_gkind == 'payoff'" {
@@ -955,10 +955,18 @@ fn goal_kind_fields(c: &Ctx, w: &Wallet, m: &Month, all: &[Month], g: Option<&Go
                             }
                         }
                     }
-                    @if !debt_lines.is_empty() {
-                        optgroup label=(t("goal.track_debt_lines")) {
-                            @for l in &debt_lines {
-                                option value=(format!("line:{}", l.name)) selected[sel_line(&l.name)] { (owed_label(&l.name, owed(GoalTrack::Line { name: l.name.clone() }))) }
+                    // Any budget line: one with a balance (a debt line) follows
+                    // that balance; any other counts what's planned on it.
+                    @for cat in m.categories_sorted() {
+                        @let lines = m.lines_of(&cat.id);
+                        @if !lines.is_empty() {
+                            optgroup label=(cat.name) {
+                                @for l in lines {
+                                    option value=(format!("line:{}", l.name)) selected[sel_line(&l.name)] {
+                                        @if debt_lines.iter().any(|d| d.id == l.id) && l.current_balance.is_some() { (owed_label(&l.name, owed(GoalTrack::Line { name: l.name.clone() }))) }
+                                        @else { (l.name) }
+                                    }
+                                }
                             }
                         }
                     }
@@ -968,7 +976,7 @@ fn goal_kind_fields(c: &Ctx, w: &Wallet, m: &Month, all: &[Month], g: Option<&Go
             div class="field" data-show="$_gkind == 'payoff'" {
                 label for="goal-payoff" { (t("goal.payoff_amount")) }
                 // Blank means all of it.
-                (goal_money(c, "goal-payoff", "payoff_amount", g.filter(|g| g.kind == GoalKind::Payoff && g.target_amount < g.starting_amount).map(|g| g.target_amount)))
+                (goal_money(c, "goal-payoff", "payoff_amount", g.filter(|g| g.kind == GoalKind::Payoff && (g.target_amount < g.starting_amount || planned_payoff(g, all))).map(|g| g.target_amount)))
                 p class="hint" { (t("goal.payoff_amount_hint")) }
             }
         }
@@ -1035,7 +1043,7 @@ pub async fn goal_sheet(State(st): State<Shared>, Extension(user): Extension<Aut
         }
         @if let GoalTrack::Line { name } = &g.track {
             @if let Some(l) = m.category_views().into_iter().flat_map(|c| c.lines).find(|l| l.name.eq_ignore_ascii_case(name)) {
-                (plan_more(&c, &g, &p, &l, &view, m.allocations_editable()))
+                (plan_more(&c, &p, &l, &view, m.allocations_editable()))
             }
         }
         section class="sheet-section" aria-labelledby="gh-h" {
@@ -1367,6 +1375,26 @@ async fn ensure_goal_line(st: &Shared, user: &UserRecord, view: &View, goal: &Go
     Ok(added)
 }
 
+/// A payoff goal on a line without a balance: progress is what's planned
+/// on the line toward the amount to pay off.
+fn planned_payoff(g: &Goal, all: &[Month]) -> bool {
+    matches!(&g.track, GoalTrack::Line { name } if !Wallet::line_tracks_balance(name, all))
+}
+
+/// Fills in a payoff goal. With a balance to follow (a card, a debt line),
+/// it starts from `debt` (or `keep`, the debt it already started from) and
+/// aims for `amount`, or all of it when blank. On a line without a balance
+/// the amount to pay off is required, and planning on the line pays it.
+fn fill_payoff(goal: &mut Goal, all: &[Month], debt: Cents, amount: Option<Cents>, currency: &str) -> AppResult<()> {
+    if planned_payoff(goal, all) {
+        let target = amount.filter(|a| a.is_positive()).ok_or_else(|| AppError::bad(t("err.goal_payoff_amount")))?;
+        goal.starting_amount = target;
+        goal.target_amount = target;
+        return Ok(());
+    }
+    set_payoff(goal, debt, amount, currency)
+}
+
 /// Fills in a payoff goal from the debt it starts at: pay off `amount`, or
 /// all of it when blank.
 fn set_payoff(goal: &mut Goal, debt: Cents, amount: Option<Cents>, currency: &str) -> AppResult<()> {
@@ -1411,7 +1439,7 @@ pub async fn add_goal(State(st): State<Shared>, Extension(user): Extension<AuthU
         let mut goal = goal;
         if let Some(amount) = payoff {
             let debt = w.debt_now(&goal.track, all, start);
-            set_payoff(&mut goal, debt, amount, &currency)?;
+            fill_payoff(&mut goal, all, debt, amount, &currency)?;
         }
         Ok(w.add_goal(goal)?)
     }, move |_, _| {
@@ -1441,7 +1469,7 @@ pub async fn update_goal(State(st): State<Shared>, Extension(user): Extension<Au
         if let Some(amount) = payoff {
             // Keep the starting debt unless the goal now follows another debt.
             let debt = if old.kind == GoalKind::Payoff && old.track == goal.track { old.starting_amount } else { w.debt_now(&goal.track, all, old.start_month) };
-            set_payoff(&mut goal, debt, amount, &currency)?;
+            fill_payoff(&mut goal, all, debt, amount, &currency)?;
         }
         Ok(w.update_goal(goal)?)
     }, |_, _| vec![toast(ToastKind::Success, &t("goal.saved_toast"), None)])

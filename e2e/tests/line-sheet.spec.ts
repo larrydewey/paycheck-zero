@@ -101,4 +101,26 @@ test.describe("line sheet", () => {
     await page.goto("/settings");
     await expect(page.locator("[data-app-version]")).toContainText(/PaycheckZero \d+\.\d+\.\d+/);
   });
+
+  test("a payoff goal can follow any budget line", async ({ page, seed, login }) => {
+    const s = await seed("basic");
+    await login();
+    await pz.overview(page, s);
+    await pz.openSheet(page, "New goal");
+    const sh = pz.sheet(page);
+    await sh.getByRole("radio", { name: "Pay off debt" }).check();
+    await sh.getByLabel("Goal name").fill("Rent catch-up");
+    const pick = sh.getByLabel("Card or budget line to pay off");
+    await expect(pick.locator("optgroup[label=Housing] option")).toHaveText(["Rent", "Electric"]);
+    await pick.selectOption({ label: "Rent" });
+    // A line without a balance needs the amount to pay off.
+    await sh.getByRole("button", { name: "Create goal" }).click();
+    await expect(page.locator("#toasts")).toContainText("Enter how much to pay off.");
+    await sh.getByLabel("Amount to pay off (optional)").fill("2000");
+    await sh.getByRole("button", { name: "Create goal" }).click();
+    await expect(pz.toast(page)).toContainText("Goal created.");
+    // What's planned on Rent this month counts toward it.
+    await expect(page.locator('li.goal[data-goal="Rent catch-up"]')).toContainText("$1,200.00 paid off of $2,000.00");
+    await expect(pz.line(page, "Rent").locator("[data-line-goal]")).toContainText("Rent catch-up · 60%");
+  });
 });
