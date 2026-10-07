@@ -688,6 +688,17 @@ impl Store {
         Ok(v)
     }
 
+    /// Saves several months atomically, in the given order (so a row that
+    /// moves leaves its old month before it arrives in the new one).
+    pub async fn save_months(&self, user: &Id, changes: &[(&Loaded, &Month)]) -> Result<()> {
+        let mut tx = self.pool.begin().await?;
+        for (before, after) in changes {
+            self.save_in(&mut tx, user, before, after).await?;
+        }
+        tx.commit().await?;
+        Ok(())
+    }
+
     /// Saves several months and changes the user's currency atomically.
     pub async fn save_months_with_currency(&self, user: &Id, changes: &[(Loaded, Month)], wallet: &Wallet, currency: &str) -> Result<()> {
         let mut tx = self.pool.begin().await?;

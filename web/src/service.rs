@@ -142,6 +142,34 @@ impl AppState {
         Ok((out, next))
     }
 
+    /// Like [`Self::mutate`] for several months at once (e.g. moving a
+    /// transaction), saved together. Months are saved in the given order.
+    pub async fn mutate_months<T>(
+        &self,
+        user: &UserRecord,
+        months: &[Id],
+        f: impl FnOnce(&mut [Month]) -> Result<T, DomainError>,
+    ) -> AppResult<(T, Vec<Month>)> {
+        let mut loaded = Vec::with_capacity(months.len());
+        for id in months {
+            let l = self.load(user, id).await?;
+            if l.archived {
+                return Err(AppError::Archived);
+            }
+            loaded.push(l);
+        }
+        let mut next: Vec<Month> = loaded.iter().map(|l| l.month.clone()).collect();
+        let out = f(&mut next)?;
+        for m in &next {
+            m.check_invariants()?;
+        }
+        let changes: Vec<(&Loaded, &Month)> = loaded.iter().zip(&next).filter(|(l, m)| &l.month != *m).collect();
+        if !changes.is_empty() {
+            self.store.save_months(&user.id, &changes).await?;
+        }
+        Ok((out, next))
+    }
+
     pub async fn create_month(
         &self,
         user: &UserRecord,

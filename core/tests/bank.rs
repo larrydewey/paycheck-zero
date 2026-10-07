@@ -1,7 +1,7 @@
 //! Importing bank transactions.
 
 use chrono::NaiveDate;
-use paycheckzero_core::bank::{import_into_month, BankTx};
+use paycheckzero_core::bank::{import_into_month, mirror_of, pair_across, BankTx};
 use paycheckzero_core::*;
 
 fn d(y: i32, m: u32, day: u32) -> NaiveDate {
@@ -123,4 +123,77 @@ fn a_payment_seen_from_both_accounts_becomes_one_transfer() {
     assert_eq!(f.m.transactions.len(), 2);
     assert!(!transfers[0].is_spending());
     f.m.check_invariants().unwrap();
+}
+
+#[test]
+fn a_payment_split_across_two_months_still_becomes_one_transfer() {
+    let mut f = fixture();
+    let mut oct = Month::create(Id::generate(), d(2026, 10, 1), CopyMode::Blank, None);
+    let linked = [f.checking.clone(), f.card.clone()];
+    import_into_month(&mut f.m, vec![btx("out", &f.checking, d(2026, 9, 30), -25_000, "Payment to card", true)], &[], &linked);
+    import_into_month(&mut oct, vec![btx("in", &f.card, d(2026, 10, 1), 25_000, "Payment received", false)], &[], &linked);
+    assert_eq!(pair_across(&mut f.m, &mut oct, &linked), 1);
+    assert!(oct.transactions.is_empty(), "the card's side is merged away");
+    let t = f.m.transactions.iter().find(|t| t.external_id.as_deref() == Some("out")).unwrap();
+    assert_eq!(t.transfer_account_id, Some(f.card.clone()));
+    assert!(!t.is_spending());
+    // Nothing left to pair the second time.
+    assert_eq!(pair_across(&mut oct, &mut f.m, &linked), 0);
+    f.m.check_invariants().unwrap();
+    oct.check_invariants().unwrap();
+}
+
+#[test]
+fn moving_a_transaction_keeps_a_line_with_the_same_name() {
+    let mut f = fixture();
+    let mut oct = Month::create(Id::generate(), d(2026, 10, 1), CopyMode::Blank, None);
+    let food = oct.categories.iter().find(|x| x.name == "Food").unwrap().id.clone();
+    let oct_groceries = oct.add_expense_line(&food, "Groceries").unwrap();
+    let tx = Transaction {
+        id: Id::generate(),
+        date: d(2026, 9, 29),
+        amount: c(-6_000),
+        payee: Some("Market".into()),
+        notes: None,
+        expense_line_id: Some(f.groceries.clone()),
+        paycheck_id: Some(f.p1.clone()),
+        split_group: None,
+        account_id: None,
+        transfer_account_id: None,
+        external_id: None,
+    };
+    let id = f.m.add_transaction(tx).unwrap();
+    let parts = f.m.take_transaction(&id).unwrap();
+    oct.receive_transactions(&f.m, parts).unwrap();
+    assert!(f.m.transaction(&id).is_none());
+    let moved = oct.transaction(&id).unwrap();
+    assert_eq!(moved.date, d(2026, 9, 29), "the date stays");
+    assert_eq!(moved.expense_line_id, Some(oct_groceries.clone()));
+    assert_eq!(moved.paycheck_id, None);
+    assert_eq!(oct.line_spent(&oct_groceries), c(6_000));
+    oct.check_invariants().unwrap();
+}
+
+#[test]
+fn a_marked_card_payment_finds_the_cards_side() {
+    let f = fixture();
+    let mut m = f.m;
+    let out = Transaction {
+        id: Id::generate(),
+        date: d(2026, 9, 10),
+        amount: c(-12_000),
+        payee: Some("Card payment".into()),
+        notes: None,
+        expense_line_id: None,
+        paycheck_id: None,
+        split_group: None,
+        account_id: Some(f.checking.clone()),
+        transfer_account_id: None,
+        external_id: None,
+    };
+    let inn = Transaction { id: Id::generate(), date: d(2026, 9, 12), amount: c(12_000), account_id: Some(f.card.clone()), ..out.clone() };
+    m.add_transaction(out.clone()).unwrap();
+    m.add_transaction(inn.clone()).unwrap();
+    assert_eq!(mirror_of(&m, &out, &f.card), Some(inn.id));
+    assert_eq!(mirror_of(&m, &out, &f.checking), None);
 }

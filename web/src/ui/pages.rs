@@ -85,7 +85,10 @@ pub async fn render_view(st: &Shared, user: &UserRecord, headers: &HeaderMap, vi
                     super::plan::render_overview(&c, m, loaded.archived, &wallet, &all)
                 }
                 View::Income { welcome, .. } => render_income(&c, m, loaded.archived, *welcome),
-                View::Transactions { filter, .. } => super::plan::render_transactions(&c, m, loaded.archived, *filter, &wallet),
+                View::Transactions { filter, .. } => {
+                    let all = if *filter == TxFilter::AllMonths { st.store.load_all_months(&user.id).await? } else { Vec::new() };
+                    super::plan::render_transactions(&c, m, loaded.archived, *filter, &wallet, &all)
+                }
                 View::Accounts { .. } => {
                     let all = st.all_months(user).await?;
                     super::accounts::render_accounts(&c, m, loaded.archived, &wallet, &all)
@@ -777,6 +780,9 @@ fn income_form(c: &Ctx, view: &View, url: &str, prefix: &str, line: Option<&Inco
 // Transactions (spec §2.8)
 // ----------------------------------------------------------------------
 
+/// Pickers with more choices than this get a search box.
+const SEARCH_AFTER: usize = 8;
+
 pub(super) fn line_options(m: &Month, selected: Option<&Id>) -> Markup {
     html! {
         option value="" { (t("tx.no_line")) }
@@ -853,6 +859,9 @@ pub(super) fn tx_fields(c: &Ctx, m: &Month, prefix: &str, parts: &[&Transaction]
                     li class="part" data-part {
                         div class="field" {
                             label class="part-label" for=(format!("{}-line-{i}", prefix)) { (t("tx.line")) }
+                            @if m.expense_lines.len() > SEARCH_AFTER {
+                                input type="search" class="select-filter" data-select-filter autocomplete="off" placeholder=(t("tx.search_lines")) aria-label=(t("tx.search_lines"));
+                            }
                             select id=(format!("{}-line-{i}", prefix)) name=(format!("part_line_{i}"))
                                 aria-label=(if split { tf("split.part_line", &[("n", &n)]) } else { t("tx.line") }) {
                                 (line_options(m, line.as_ref()))
@@ -860,6 +869,9 @@ pub(super) fn tx_fields(c: &Ctx, m: &Month, prefix: &str, parts: &[&Transaction]
                         }
                         div class="field" {
                             label class="part-label" for=(format!("{}-pc-{i}", prefix)) { (t("tx.paycheck")) }
+                            @if m.paychecks.len() > SEARCH_AFTER {
+                                input type="search" class="select-filter" data-select-filter autocomplete="off" placeholder=(t("tx.search_paychecks")) aria-label=(t("tx.search_paychecks"));
+                            }
                             select id=(format!("{}-pc-{i}", prefix)) name=(format!("part_paycheck_{i}")) aria-describedby=(id("paycheck-hint"))
                                 aria-label=(if split { tf("split.part_paycheck", &[("n", &n)]) } else { t("tx.paycheck") }) {
                                 (paycheck_options(m, pc.as_ref()))
@@ -884,8 +896,10 @@ pub(super) fn tx_fields(c: &Ctx, m: &Month, prefix: &str, parts: &[&Transaction]
         }
         div class="field" {
             label for=(id("date")) { (t("tx.date")) }
+            // New transactions start in this month; an existing one may be
+            // counted here with a date in another month.
             input id=(id("date")) type="date" name="date" required value=(first.map_or(default_date, |x| x.date).to_string())
-                min=(m.year_month.to_string()) max=(recurrence::last_of_month(m.year_month).to_string());
+                min=[first.is_none().then(|| m.year_month.to_string())] max=[first.is_none().then(|| recurrence::last_of_month(m.year_month).to_string())];
         }
         div class="field" {
             label for=(id("notes")) { (t("tx.notes")) }

@@ -125,6 +125,8 @@ pub fn routes(state: Shared) -> Router<Shared> {
         .route("/ui/splits/{group}/delete", post(actions::delete_split))
         .route("/ui/transactions/{id}", post(actions::update_transaction))
         .route("/ui/transactions/{id}/delete", post(actions::delete_transaction))
+        .route("/ui/transactions/{id}/move", post(actions::move_transaction))
+        .route("/ui/transactions/{id}/transfer", post(actions::mark_transfer))
         .route("/sync", post(crate::sync::sync))
         .route("/live", get(crate::live::stream))
         .layer(middleware::from_fn_with_state(state.clone(), crate::live::notify))
@@ -165,12 +167,18 @@ pub enum TxFilter {
     All,
     /// Spending that still needs a line.
     NeedsLine,
+    /// Every month's transactions, newest first.
+    AllMonths,
 }
 
 impl TxFilter {
     #[must_use]
     pub fn parse(s: Option<&str>) -> Self {
-        if s == Some("needs-line") { TxFilter::NeedsLine } else { TxFilter::All }
+        match s {
+            Some("needs-line") => TxFilter::NeedsLine,
+            Some("all-months") => TxFilter::AllMonths,
+            _ => TxFilter::All,
+        }
     }
 
     #[must_use]
@@ -178,6 +186,7 @@ impl TxFilter {
         match self {
             TxFilter::All => "",
             TxFilter::NeedsLine => "?show=needs-line",
+            TxFilter::AllMonths => "?show=all-months",
         }
     }
 }
@@ -190,7 +199,11 @@ impl View {
             View::Paycheck { month, paycheck } => format!("paycheck:{month}:{paycheck}"),
             View::Overview { month } => format!("overview:{month}"),
             View::Income { month, .. } => format!("income:{month}"),
-            View::Transactions { month, filter } => format!("transactions:{month}:{}", if *filter == TxFilter::NeedsLine { "needs-line" } else { "all" }),
+            View::Transactions { month, filter } => format!("transactions:{month}:{}", match filter {
+                TxFilter::All => "all",
+                TxFilter::NeedsLine => "needs-line",
+                TxFilter::AllMonths => "all-months",
+            }),
             View::Accounts { month } => format!("accounts:{month}"),
             View::Reports { month, .. } => format!("reports:{month}"),
             View::Settings => "settings".into(),

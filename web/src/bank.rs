@@ -682,6 +682,7 @@ async fn pull(st: &Shared, user: &UserRecord, wallet: &Wallet, link: &BankLink, 
     // Plaid only sends what changed since the cursor, so a batch held for a
     // month that doesn't exist yet would never come back if the cursor moved.
     let mut held = false;
+    let mut touched: Vec<NaiveDate> = Vec::new();
     for (ym, mut batch) in per_month {
         batch.sort_by_key(|b| b.date);
         let ids: Vec<String> = batch.iter().map(|b| b.external_id.clone()).collect();
@@ -702,11 +703,13 @@ async fn pull(st: &Shared, user: &UserRecord, wallet: &Wallet, link: &BankLink, 
                 report.stats.paychecks += stats.paychecks;
                 report.needs_line += m.transactions.iter().filter(|t| t.needs_line() && t.external_id.is_some()).count();
                 st.store.mark_bank_seen(&user.id, &ids).await.map_err(|e| internal(e.into()))?;
+                touched.push(ym);
             }
             Err(AppError::Archived) => report.missing_months.push(ym),
             Err(e) => return Err(internal(e)),
         }
     }
+    report.stats.transfers += pair_neighbors(st, user, &touched, &linked).await.map_err(internal)?;
     // Transactions the bank withdrew (e.g. a reversed charge).
     if !pulled.removed.is_empty() {
         for m in &history {
@@ -734,6 +737,34 @@ async fn pull(st: &Shared, user: &UserRecord, wallet: &Wallet, link: &BankLink, 
     // Without a new cursor the old one stays, and the next sync asks again;
     // transactions already imported are skipped as seen.
     Ok((report, if held { None } else { pulled.cursor }))
+}
+
+/// Pairs transfers whose two sides landed in neighboring months, for each
+/// month that just received transactions.
+async fn pair_neighbors(st: &Shared, user: &UserRecord, touched: &[NaiveDate], linked: &[Id]) -> AppResult<usize> {
+    let mut pairs: Vec<(NaiveDate, NaiveDate)> = Vec::new();
+    for ym in touched {
+        for other in [first_of(*ym - chrono::Duration::days(1)), *ym + chrono::Months::new(1)] {
+            let key = if other < *ym { (other, *ym) } else { (*ym, other) };
+            if !pairs.contains(&key) {
+                pairs.push(key);
+            }
+        }
+    }
+    let mut merged = 0;
+    for (a, b) in pairs {
+        let (Some(a), Some(b)) = (st.store.month_id_by_year_month(&user.id, a).await?, st.store.month_id_by_year_month(&user.id, b).await?) else { continue };
+        let linked = linked.to_vec();
+        match st.mutate_months(user, &[a, b], move |ms| {
+            let (x, y) = ms.split_at_mut(1);
+            Ok(paycheckzero_core::bank::pair_across(&mut x[0], &mut y[0], &linked))
+        }).await {
+            Ok((n, _)) => merged += n,
+            Err(AppError::Archived) => {}
+            Err(e) => return Err(e),
+        }
+    }
+    Ok(merged)
 }
 
 /// Syncs `link` from the start of its history rather than from Plaid's

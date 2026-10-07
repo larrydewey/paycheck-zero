@@ -501,67 +501,84 @@ enum TxItem<'a> {
     Split(Id),
 }
 
-pub fn render_transactions(c: &Ctx, m: &Month, archived: bool, filter: TxFilter, wallet: &Wallet) -> Markup {
+/// (show a day header?, month, archived, first part, total, parts) per payment.
+type TxRow<'a> = (bool, &'a Month, bool, &'a Transaction, Cents, Vec<&'a Transaction>);
+
+/// The Transactions screen: one month's transactions, the ones still
+/// needing a line, or (`AllMonths`) every month's, each counted in its own
+/// month's budget.
+pub fn render_transactions(c: &Ctx, m: &Month, archived: bool, filter: TxFilter, wallet: &Wallet, all: &[paycheckzero_storage::Loaded]) -> Markup {
     let view = View::Transactions { month: m.id.clone(), filter };
     let enc = view.encode();
     let needing: Vec<&Transaction> = m.transactions.iter().filter(|t| t.needs_line()).collect();
-    let mut txs: Vec<&Transaction> = m.transactions.iter().filter(|t| filter == TxFilter::All || t.needs_line()).collect();
-    txs.sort_by_key(|x| std::cmp::Reverse(x.date));
-    let mut items: Vec<TxItem> = Vec::new();
-    for x in &txs {
+    // (month, archived) pairs the list draws from.
+    let sources: Vec<(&Month, bool)> = if filter == TxFilter::AllMonths { all.iter().map(|l| (&l.month, l.archived)).collect() } else { vec![(m, archived)] };
+    let mut txs: Vec<(&Month, bool, &Transaction)> = sources
+        .iter()
+        .flat_map(|(sm, ar)| sm.transactions.iter().map(move |x| (*sm, *ar, x)))
+        .filter(|(_, _, x)| filter != TxFilter::NeedsLine || x.needs_line())
+        .collect();
+    txs.sort_by_key(|(_, _, x)| std::cmp::Reverse(x.date));
+    let mut items: Vec<(&Month, bool, TxItem)> = Vec::new();
+    for (sm, ar, x) in &txs {
         match &x.split_group {
             Some(g) => {
-                if !items.iter().any(|i| matches!(i, TxItem::Split(h) if h == g)) {
-                    items.push(TxItem::Split(g.clone()));
+                if !items.iter().any(|(_, _, i)| matches!(i, TxItem::Split(h) if h == g)) {
+                    items.push((sm, *ar, TxItem::Split(g.clone())));
                 }
             }
-            None => items.push(TxItem::Single(x)),
+            None => items.push((sm, *ar, TxItem::Single(x))),
         }
     }
-    let line_name = |id: &Option<Id>| id.as_ref().and_then(|l| m.expense_line(l)).map(|l| l.name.clone());
-    let spent: Cents = m.transactions.iter().filter(|t| t.is_spending()).map(|t| t.amount.abs()).sum();
-    let received: Cents = m.transactions.iter().filter(|t| t.amount.is_positive()).map(|t| t.amount).sum();
-    // (show a day header?, first part, total, parts) per payment.
+    let line_name = |sm: &Month, id: &Option<Id>| id.as_ref().and_then(|l| sm.expense_line(l)).map(|l| l.name.clone());
+    let shown = || txs.iter().map(|(_, _, x)| *x);
+    let spent: Cents = shown().filter(|t| t.is_spending()).map(|t| t.amount.abs()).sum();
+    let received: Cents = shown().filter(|t| t.amount.is_positive()).map(|t| t.amount).sum();
     let mut last_day: Option<NaiveDate> = None;
-    let rows: Vec<(bool, &Transaction, Cents, Vec<&Transaction>)> = items
+    let rows: Vec<TxRow> = items
         .iter()
-        .map(|it| {
+        .map(|(sm, ar, it)| {
             let (first, total, parts): (&Transaction, Cents, Vec<&Transaction>) = match it {
                 TxItem::Single(x) => (*x, x.amount, vec![*x]),
                 TxItem::Split(g) => {
-                    let ps = m.split_parts(g);
+                    let ps = sm.split_parts(g);
                     (ps[0], ps.iter().map(|p| p.amount).sum(), ps)
                 }
             };
             let show = last_day != Some(first.date);
             last_day = Some(first.date);
-            (show, first, total, parts)
+            (show, *sm, *ar, first, total, parts)
         })
         .collect();
+    let chip = |f: TxFilter, label: String| html! {
+        a class=(if filter == f { "chip-toggle on" } else { "chip-toggle" }) href=(format!("/months/{}/transactions{}", m.id, f.query()))
+            data-filter=[(f == TxFilter::AllMonths).then_some("all-months")]
+            aria-current=[(filter == f).then_some("page")] { (label) }
+    };
     html! {
         div class="split-layout" {
         div class="side" {
-        h1 { (t("spend.title")) span class="visually-hidden" { " · " (month_label(m.year_month)) } }
+        h1 { (t("spend.title")) span class="visually-hidden" { " · " (if filter == TxFilter::AllMonths { t("tx.filter_all_months") } else { month_label(m.year_month) }) } }
         section class="summary card slim" {
             div class="summary-stats two" {
                 div { span class="stat-label" { (t("spend.out")) } span class="stat-value" { (c.money(spent)) } }
                 div { span class="stat-label" { (t("spend.in")) } span class="stat-value pos" { (c.money(received)) } }
             }
         }
-        @if m.is_locked() {
+        @if m.is_locked() && filter != TxFilter::AllMonths {
             p class="alert neutral" { (t("tx.locked_ok")) }
         }
         (super::pages::overspent_banner_pub(c, m, &view))
         }
         div class="main-col" {
         div class="filter-chips" role="group" aria-label=(t("tx.filter_label")) {
-            a class=(if filter == TxFilter::All { "chip-toggle on" } else { "chip-toggle" }) href=(format!("/months/{}/transactions", m.id))
-                aria-current=[(filter == TxFilter::All).then_some("page")] { (t("tx.filter_all")) }
+            (chip(TxFilter::All, t("tx.filter_all")))
             a class={ "chip-toggle" @if filter == TxFilter::NeedsLine { " on" } @if !needing.is_empty() { " attention" } }
                 href=(format!("/months/{}/transactions?show=needs-line", m.id)) data-filter="needs-line"
                 aria-current=[(filter == TxFilter::NeedsLine).then_some("page")] {
                 (t("tx.filter_needs_line")) @if !needing.is_empty() { " " span class="count" { (needing.len()) } }
             }
+            (chip(TxFilter::AllMonths, t("tx.filter_all_months")))
         }
         div class="toolbar" {
             div class="search" {
@@ -579,21 +596,23 @@ pub fn render_transactions(c: &Ctx, m: &Month, archived: bool, filter: TxFilter,
                 })))
             } @else {
                 ul class="tx-list card" id="tx-list" {
-                    @for (show_day, first, total, parts) in &rows {
-                        @let (first, total) = (*first, *total);
+                    @for (show_day, sm, ar, first, total, parts) in &rows {
+                        @let (sm, first, total) = (*sm, *first, *total);
                         @if *show_day {
-                            li class="tx-day" aria-hidden="true" { (first.date.format("%a, %b %-d").to_string()) }
+                            li class="tx-day" aria-hidden="true" { (first.date.format(if filter == TxFilter::AllMonths { "%a, %b %-d, %Y" } else { "%a, %b %-d" }).to_string()) }
                         }
                         @let payee = first.payee.clone().unwrap_or_else(|| if first.is_transfer() { t("transfer.title") } else { t("tx.no_payee") });
                         @let is_split = parts.len() > 1;
                         @let account = first.account_id.as_ref().and_then(|a| wallet.account(a)).map(|a| a.name.clone());
-                        @let base = (!is_split && !first.is_transfer()).then(|| serde_json::json!({
+                        // Counted in a month other than the one its date falls in.
+                        @let moved = (sm.year_month != recurrence::first_of_month(first.date)).then(|| month_label(sm.year_month));
+                        @let base = (!is_split && !first.is_transfer() && sm.id == m.id).then(|| serde_json::json!({
                             "date": first.date, "amount": first.amount.get(), "payee": first.payee, "notes": first.notes,
                             "expense_line_id": first.expense_line_id, "paycheck_id": first.paycheck_id, "account_id": first.account_id,
                         }).to_string());
                         li class={ "tx" @if is_split { " split" } @if first.is_transfer() { " transfer" } @if first.needs_line() { " needs-line" } } data-tx=(first.id) data-split=[first.split_group.as_ref()] data-base=[base]
-                            data-search=(format!("{} {}", payee, parts.iter().filter_map(|p| line_name(&p.expense_line_id)).collect::<Vec<_>>().join(" ")).to_lowercase()) {
-                            button type="button" class="tx-open" disabled[archived]
+                            data-search=(format!("{} {} {}", payee, parts.iter().filter_map(|p| line_name(sm, &p.expense_line_id)).collect::<Vec<_>>().join(" "), account.clone().unwrap_or_default()).to_lowercase()) {
+                            button type="button" class="tx-open" disabled[*ar]
                                 aria-label=(tf("tx.edit_label", &[("payee", &payee), ("date", &short_date(first.date))]))
                                 data-on:click=(open_sheet(&format!("/ui/sheet/tx/{}?view={enc}", first.id))) {
                                 span class="tx-main" {
@@ -601,23 +620,24 @@ pub fn render_transactions(c: &Ctx, m: &Month, archived: bool, filter: TxFilter,
                                         @if first.is_transfer() { span class="tx-icon" { (icon("transfer")) } }
                                         (payee)
                                         @if first.needs_line() { " " span class="pill warn tiny" { (t("tx.needs_line")) } }
+                                        @if let Some(ml) = &moved { " " span class="pill tiny" data-counted-in=(sm.year_month.format("%Y-%m").to_string()) { (tf("tx.counted_in", &[("month", ml)])) } }
                                     }
                                     span class="tx-meta" {
                                         @if first.is_transfer() {
                                             (super::accounts::transfer_route(wallet, first))
-                                            @if let Some(l) = line_name(&first.expense_line_id) { " · " (l) }
+                                            @if let Some(l) = line_name(sm, &first.expense_line_id) { " · " (l) }
                                             @if let Some(n) = &first.notes { " · " (n) }
                                         } @else if is_split {
                                             strong { (t("split.meta")) } " · "
                                             @for (i, p) in parts.iter().enumerate() {
                                                 @if i > 0 { " · " }
-                                                (line_name(&p.expense_line_id).unwrap_or_else(|| t("tx.uncategorized"))) " " (c.money(p.amount.abs()))
-                                                @if let Some(pc) = p.paycheck_id.as_ref().and_then(|pc| m.paycheck(pc)) { " (" (short_date(pc.date)) ")" }
+                                                (line_name(sm, &p.expense_line_id).unwrap_or_else(|| t("tx.uncategorized"))) " " (c.money(p.amount.abs()))
+                                                @if let Some(pc) = p.paycheck_id.as_ref().and_then(|pc| sm.paycheck(pc)) { " (" (short_date(pc.date)) ")" }
                                             }
                                         } @else {
-                                            @if !first.needs_line() { (line_name(&first.expense_line_id).unwrap_or_else(|| t("tx.uncategorized"))) }
+                                            @if !first.needs_line() { (line_name(sm, &first.expense_line_id).unwrap_or_else(|| t("tx.uncategorized"))) }
                                             @else { (t("tx.tap_to_add_line")) }
-                                            @if let Some(p) = first.paycheck_id.as_ref().and_then(|p| m.paycheck(p)) {
+                                            @if let Some(p) = first.paycheck_id.as_ref().and_then(|p| sm.paycheck(p)) {
                                                 " · " (tf("tx.from_paycheck", &[("date", &short_date(p.date))]))
                                             }
                                             @if let Some(n) = &first.notes { " · " (n) }

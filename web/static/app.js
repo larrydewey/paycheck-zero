@@ -266,7 +266,10 @@
       }
       var copy = rows[rows.length - 1].cloneNode(true);
       copy.querySelectorAll("input").forEach(function (i) { i.value = ""; i.defaultValue = ""; });
-      copy.querySelectorAll("select").forEach(function (sel) { sel.selectedIndex = 0; });
+      copy.querySelectorAll("select").forEach(function (sel) {
+        if (sel.dataset.allOptions) sel.innerHTML = sel.dataset.allOptions; // undo a search
+        sel.selectedIndex = 0;
+      });
       list.appendChild(copy);
       relabel(ed);
       copy.querySelector("select").focus();
@@ -277,6 +280,41 @@
     }
     updateSplit(ed);
   });
+  // Search boxes above long pickers (lines, paychecks): typing narrows the
+  // options. The full list is kept on the select so clearing restores it.
+  function filterSelect(input) {
+    var sel = input.parentElement && input.parentElement.querySelector("select");
+    if (!sel) return;
+    if (!sel.dataset.allOptions) sel.dataset.allOptions = sel.innerHTML;
+    var q = input.value.trim().toLowerCase(), current = sel.value;
+    var tpl = document.createElement("template");
+    tpl.innerHTML = sel.dataset.allOptions;
+    if (q) {
+      tpl.content.querySelectorAll("option").forEach(function (o) {
+        var group = o.parentElement && o.parentElement.tagName === "OPTGROUP" ? o.parentElement.label : "";
+        if (o.value && (o.textContent + " " + group).toLowerCase().indexOf(q) < 0) o.remove();
+      });
+      tpl.content.querySelectorAll("optgroup").forEach(function (g) { if (!g.querySelector("option")) g.remove(); });
+    }
+    tpl.content.querySelectorAll("option").forEach(function (o) { o.selected = false; });
+    sel.innerHTML = "";
+    sel.appendChild(tpl.content);
+    var keep = Array.prototype.some.call(sel.options, function (o) { return o.value === current; });
+    var firstMatch = Array.prototype.find.call(sel.options, function (o) { return o.value; });
+    sel.value = keep && (!q || current) ? current : (q && firstMatch ? firstMatch.value : "");
+    sel.dispatchEvent(new Event("change", { bubbles: true }));
+  }
+  document.addEventListener("input", function (e) {
+    if (e.target instanceof HTMLInputElement && e.target.hasAttribute("data-select-filter")) filterSelect(e.target);
+  });
+  // Enter in a picker's search box picks the match instead of saving the form.
+  document.addEventListener("keydown", function (e) {
+    if (e.key !== "Enter" || !(e.target instanceof HTMLInputElement) || !e.target.hasAttribute("data-select-filter")) return;
+    e.preventDefault();
+    var sel = e.target.parentElement.querySelector("select");
+    if (sel) sel.focus();
+  });
+
   /** Plain transactions pass; splits must add up to the Amount. */
   function checkSplit(form) {
     form.querySelectorAll("input[inputmode=decimal]").forEach(normalizeMoney);

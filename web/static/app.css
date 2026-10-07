@@ -162,6 +162,10 @@ legend { font-weight: 650; font-size: 0.875rem; margin-bottom: 6px; padding: 0; 
 form.inline { display: inline-flex; gap: 8px; align-items: center; margin: 0; }
 .inline-field { display: flex; gap: 8px; align-items: stretch; }
 .inline-field > input, .inline-field > select { flex: 1; min-width: 0; }
+.select-filter { margin-bottom: 6px; padding-top: 6px; padding-bottom: 6px; font-size: .95em; }
+.tx-more { margin-top: 16px; border-top: 1px solid var(--line); padding-top: 12px; }
+.tx-more > summary { cursor: pointer; font-weight: 600; }
+.tx-more form { margin-top: 12px; }
 .stack { display: grid; gap: 4px; margin-bottom: 16px; }
 .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 0 12px; }
 label.radio, label.check { display: flex; gap: 10px; align-items: flex-start; font-weight: 500; margin: 8px 0; }

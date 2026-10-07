@@ -170,41 +170,82 @@ pub fn import_into_month(m: &mut Month, txs: Vec<BankTx>, history: &[Month], lin
     stats
 }
 
+fn is_pair_candidate(t: &Transaction, linked: &[Id]) -> bool {
+    t.external_id.is_some() && t.split_group.is_none() && !t.is_transfer() && t.account_id.as_ref().is_some_and(|a| linked.contains(a))
+}
+
+/// An outflow in `outs` and the matching inflow in `ins` (which may be the
+/// same month): (the outflow, the inflow's id, the inflow's account).
+fn find_pair(outs: &Month, ins: &Month, linked: &[Id]) -> Option<(Transaction, Id, Option<Id>)> {
+    outs.transactions.iter().filter(|t| is_pair_candidate(t, linked) && t.amount.is_negative()).find_map(|out| {
+        ins.transactions
+            .iter()
+            .filter(|inn| {
+                is_pair_candidate(inn, linked)
+                    && inn.amount == -out.amount
+                    && inn.account_id != out.account_id
+                    && inn.paycheck_id.is_none()
+                    && inn.expense_line_id.is_none()
+                    && days_apart(inn.date, out.date) <= MATCH_DAYS
+            })
+            .min_by_key(|inn| days_apart(inn.date, out.date))
+            .map(|inn| (out.clone(), inn.id.clone(), inn.account_id.clone()))
+    })
+}
+
+/// Turns `out` into a transfer to `to`; it no longer counts as spending.
+fn make_transfer(m: &mut Month, mut out: Transaction, to: Option<Id>) -> bool {
+    out.transfer_account_id = to;
+    out.expense_line_id = None;
+    out.paycheck_id = None;
+    m.update_transaction(out).is_ok()
+}
+
 /// Merges "out of one connected account" + "into another" into a transfer.
 fn pair_transfers(m: &mut Month, linked: &[Id]) -> usize {
-    let is_candidate = |t: &Transaction| {
-        t.external_id.is_some()
-            && t.split_group.is_none()
-            && !t.is_transfer()
-            && t.account_id.as_ref().is_some_and(|a| linked.contains(a))
-    };
     let mut merged = 0;
-    loop {
-        let pair = m.transactions.iter().filter(|t| is_candidate(t) && t.amount.is_negative()).find_map(|out| {
-            m.transactions
-                .iter()
-                .filter(|inn| {
-                    is_candidate(inn)
-                        && inn.amount == -out.amount
-                        && inn.account_id != out.account_id
-                        && inn.paycheck_id.is_none()
-                        && inn.expense_line_id.is_none()
-                        && days_apart(inn.date, out.date) <= MATCH_DAYS
-                })
-                .min_by_key(|inn| days_apart(inn.date, out.date))
-                .map(|inn| (out.clone(), inn.id.clone(), inn.account_id.clone()))
-        });
-        let Some((mut out, inn_id, to)) = pair else { break };
-        if m.delete_transaction(&inn_id).is_err() {
-            break;
-        }
-        out.transfer_account_id = to;
-        out.expense_line_id = None;
-        out.paycheck_id = None;
-        if m.update_transaction(out).is_err() {
+    while let Some((out, inn, to)) = find_pair(m, m, linked) {
+        if m.delete_transaction(&inn).is_err() || !make_transfer(m, out, to) {
             break;
         }
         merged += 1;
     }
     merged
+}
+
+/// Like the pairing during import, for two sides that landed in different
+/// months (paid on the 31st, arrived on the 1st). The transfer stays in
+/// the month of the money leaving.
+pub fn pair_across(a: &mut Month, b: &mut Month, linked: &[Id]) -> usize {
+    let mut merged = 0;
+    for flip in [false, true] {
+        let (outs, ins) = if flip { (&mut *b, &mut *a) } else { (&mut *a, &mut *b) };
+        while let Some((out, inn, to)) = find_pair(outs, ins, linked) {
+            if ins.delete_transaction(&inn).is_err() || !make_transfer(outs, out, to) {
+                break;
+            }
+            merged += 1;
+        }
+    }
+    merged
+}
+
+/// The other side of a payment you marked as a transfer: money arriving in
+/// `to` for the same amount within a few days, not yet sorted anywhere.
+#[must_use]
+pub fn mirror_of(m: &Month, out: &Transaction, to: &Id) -> Option<Id> {
+    m.transactions
+        .iter()
+        .filter(|t| {
+            t.account_id.as_ref() == Some(to)
+                && t.amount == -out.amount
+                && t.id != out.id
+                && !t.is_transfer()
+                && t.split_group.is_none()
+                && t.expense_line_id.is_none()
+                && t.paycheck_id.is_none()
+                && days_apart(t.date, out.date) <= MATCH_DAYS
+        })
+        .min_by_key(|t| days_apart(t.date, out.date))
+        .map(|t| t.id.clone())
 }

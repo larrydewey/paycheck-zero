@@ -824,6 +824,93 @@ pub async fn delete_transaction(State(st): State<Shared>, Extension(user): Exten
     month_action(&st, &user, &headers, view, mid, |m| m.delete_transaction(&id), |_, _| vec![toast(ToastKind::Success, &t("tx.deleted"), None)]).await
 }
 
+/// Counts a transaction (every part of a split) in another month's budget,
+/// keeping its date: a paycheck on the 30th can fund next month.
+pub async fn move_transaction(State(st): State<Shared>, Extension(user): Extension<AuthUser>, headers: HeaderMap, Path(id): Path<Id>, Form(f): F) -> Sse {
+    let user = user.0;
+    let src = st.resolve(&user, Owner::Transaction, &id).await;
+    let view = view_of(&f, View::Transactions { month: src.as_ref().cloned().unwrap_or_default(), filter: TxFilter::All });
+    let (src, dest) = match (src, opt_id(&f, "month_id")) {
+        (Ok(s), Some(d)) => (s, d),
+        (Err(e), _) => return failed(&st, &user, &headers, &view, &e).await,
+        (_, None) => return failed(&st, &user, &headers, &view, &AppError::bad(t("tx.err_pick_month"))).await,
+    };
+    if src == dest {
+        return done(&st, &user, &headers, &view, vec![]).await;
+    }
+    let r = st.mutate_months(&user, &[src, dest], |ms| {
+        let (a, b) = ms.split_at_mut(1);
+        let parts = a[0].take_transaction(&id)?;
+        b[0].receive_transactions(&a[0], parts)
+    }).await;
+    match r {
+        Ok(((), ms)) => {
+            let msg = tf("tx.moved", &[("month", &month_label(ms[1].year_month))]);
+            done(&st, &user, &headers, &view, vec![toast(ToastKind::Success, &msg, None)]).await
+        }
+        Err(e) => failed(&st, &user, &headers, &view, &e).await,
+    }
+}
+
+/// Marks a payment as money moved to another account (e.g. paying a credit
+/// card), so it no longer counts as spending next to the card's purchases.
+/// If the other account already shows the money arriving (same or a
+/// neighboring month), that copy is merged away.
+pub async fn mark_transfer(State(st): State<Shared>, Extension(user): Extension<AuthUser>, headers: HeaderMap, Path(id): Path<Id>, Form(f): F) -> Sse {
+    let user = user.0;
+    let src = st.resolve(&user, Owner::Transaction, &id).await;
+    let view = view_of(&f, View::Transactions { month: src.as_ref().cloned().unwrap_or_default(), filter: TxFilter::All });
+    let src = match src {
+        Ok(s) => s,
+        Err(e) => return failed(&st, &user, &headers, &view, &e).await,
+    };
+    let Some(to) = opt_id(&f, "to") else { return failed(&st, &user, &headers, &view, &AppError::bad(t("transfer.err_pick_to"))).await };
+    let from = opt_id(&f, "from");
+    if let Err(e) = st.check_accounts(&user, &[Some(&to), from.as_ref()]).await {
+        return failed(&st, &user, &headers, &view, &e).await;
+    }
+    // The neighboring months the other side may have landed in.
+    let metas = match st.store.list_months(&user.id, false).await {
+        Ok(m) => m,
+        Err(e) => return failed(&st, &user, &headers, &view, &e.into()).await,
+    };
+    let mut months = vec![src.clone()];
+    if let Some(ym) = metas.iter().find(|x| x.id == src).map(|x| x.year_month) {
+        let near = [recurrence::first_of_month(ym - chrono::Duration::days(1)), ym + chrono::Months::new(1)];
+        months.extend(metas.iter().filter(|x| near.contains(&x.year_month)).map(|x| x.id.clone()));
+    }
+    let r = st.mutate_months(&user, &months, |ms| {
+        let mut x = ms[0].transaction(&id).cloned().ok_or(DomainError::NotFound { kind: "transaction", id: id.clone() })?;
+        if x.split_group.is_some() || !x.amount.is_negative() {
+            return Err(DomainError::InvalidTransfer);
+        }
+        if let Some(a) = from {
+            x.account_id = Some(a);
+        }
+        x.transfer_account_id = Some(to.clone());
+        x.expense_line_id = None;
+        x.paycheck_id = None;
+        ms[0].update_transaction(x.clone())?;
+        for m in ms.iter_mut() {
+            if let Some(mirror) = paycheckzero_core::bank::mirror_of(m, &x, &to) {
+                m.delete_transaction(&mirror)?;
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }).await;
+    match r {
+        Ok((merged, _)) => {
+            let mut msg = t("transfer.marked");
+            if merged {
+                msg = format!("{msg} {}", t("transfer.merged_other_side"));
+            }
+            done(&st, &user, &headers, &view, vec![toast(ToastKind::Success, &msg, None)]).await
+        }
+        Err(e) => failed(&st, &user, &headers, &view, &e).await,
+    }
+}
+
 // ----------------------------------------------------------------------
 // Split transactions (user request #9)
 // ----------------------------------------------------------------------

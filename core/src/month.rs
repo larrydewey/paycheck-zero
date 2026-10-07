@@ -1314,6 +1314,44 @@ impl Month {
         })
     }
 
+    /// Takes a transaction (every part, for a split payment) out of this
+    /// month, so it can be counted in another one.
+    pub fn take_transaction(&mut self, id: &Id) -> Result<Vec<Transaction>, DomainError> {
+        let x = self.transaction(id).ok_or_else(|| DomainError::not_found("transaction", id))?;
+        let parts: Vec<Transaction> = match &x.split_group {
+            Some(g) => self.split_parts(g).into_iter().cloned().collect(),
+            None => vec![x.clone()],
+        };
+        let ids: Vec<Id> = parts.iter().map(|t| t.id.clone()).collect();
+        let touched: Vec<Option<Id>> = parts.iter().map(|t| t.paycheck_id.clone()).collect();
+        self.with_reconcile(&touched, |m| {
+            m.transactions.retain(|t| !ids.contains(&t.id));
+            Ok(())
+        })?;
+        Ok(parts)
+    }
+
+    /// Adds transactions taken out of `from`. Lines carry over when this
+    /// month has one with the same category and name; paychecks don't.
+    pub fn receive_transactions(&mut self, from: &Month, parts: Vec<Transaction>) -> Result<(), DomainError> {
+        for mut t in parts {
+            t.expense_line_id = t.expense_line_id.as_ref().and_then(|l| self.same_line(from, l));
+            t.paycheck_id = None;
+            self.add_transaction(t)?;
+        }
+        Ok(())
+    }
+
+    /// This month's line matching `line` of `other` by category and name.
+    fn same_line(&self, other: &Month, line: &Id) -> Option<Id> {
+        let l = other.expense_line(line)?;
+        let cat = other.category(&l.category_id)?;
+        self.expense_lines
+            .iter()
+            .find(|x| x.name == l.name && self.category(&x.category_id).is_some_and(|c| c.name == cat.name))
+            .map(|x| x.id.clone())
+    }
+
     pub fn delete_split(&mut self, group: &Id) -> Result<(), DomainError> {
         let touched: Vec<Option<Id>> = self.split_parts(group).iter().map(|t| t.paycheck_id.clone()).collect();
         if touched.is_empty() {

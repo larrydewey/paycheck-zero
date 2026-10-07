@@ -414,6 +414,8 @@ pub async fn tx_edit(State(st): State<Shared>, Extension(user): Extension<AuthUs
     }).to_string();
     let first_id = parts[0].id.clone();
     let date = default_tx_date(&c, &m);
+    let months = st.store.list_months(&user.id, false).await.unwrap_or_default();
+    let more = tx_more(&m, x, split, &view, &months, &wallet);
     Sse::new().patch(sheet(&t(if split { "split.edit_title" } else { "tx.edit_title" }), None, html! {
         @if split {
             form class="tx-form" data-online-only
@@ -427,6 +429,7 @@ pub async fn tx_edit(State(st): State<Shared>, Extension(user): Extension<AuthUs
                 input type="hidden" name="part_of" value=(first_id);
                 button type="submit" class="btn small danger" data-confirm=(t("split.delete_confirm")) { (icon("trash")) " " (t("split.delete")) }
             }
+            (more)
         } @else {
             form class="tx-form" data-offline="update_transaction" data-month=(m.id) data-tx=(x.id) data-base=(base.clone())
                 data-on:submit__prevent=(format!("pz.checkSplit(el) && @post('/ui/transactions/{}', {{contentType: 'form'}})", x.id)) {
@@ -439,8 +442,51 @@ pub async fn tx_edit(State(st): State<Shared>, Extension(user): Extension<AuthUs
                 (view_input(&view))
                 button type="submit" class="btn small danger" data-confirm=(t("tx.delete_confirm")) { (icon("trash")) " " (t("tx.delete")) }
             }
+            (more)
         }
     }))
+}
+
+/// "More" in the edit sheet: count the transaction in another month, or
+/// mark a payment as money moved to another account (paying a card).
+fn tx_more(m: &Month, x: &Transaction, split: bool, view: &View, months: &[paycheckzero_storage::MonthMeta], wallet: &Wallet) -> Markup {
+    let can_transfer = !split && x.amount.is_negative() && wallet.accounts_sorted().len() >= 2;
+    html! {
+        details class="tx-more" {
+            summary { (t("tx.more")) }
+            form class="stack" data-online-only data-on:submit__prevent=(post_form(&format!("/ui/transactions/{}/move", x.id))) {
+                (view_input(view))
+                label for="tx-move-month" { (t("tx.count_in")) }
+                div class="inline-field" {
+                    select id="tx-move-month" name="month_id" {
+                        @for mm in months.iter().rev() {
+                            option value=(mm.id) selected[mm.id == m.id] { (month_label(mm.year_month)) }
+                        }
+                    }
+                    button type="submit" class="btn" { (t("tx.move")) }
+                }
+                p class="hint" { (t("tx.count_in_hint")) }
+            }
+            @if can_transfer {
+                form class="stack" data-online-only data-on:submit__prevent=(post_form(&format!("/ui/transactions/{}/transfer", x.id))) {
+                    (view_input(view))
+                    @if x.account_id.is_none() {
+                        label for="tx-xfer-from" { (t("transfer.from")) }
+                        select id="tx-xfer-from" name="from" required { (super::pages::account_options(wallet, None, false)) }
+                    }
+                    label for="tx-xfer-to" { (t("tx.payment_to")) }
+                    div class="inline-field" {
+                        select id="tx-xfer-to" name="to" required {
+                            option value="" { (t("tx.payment_to_pick")) }
+                            (super::pages::account_options(wallet, None, false))
+                        }
+                        button type="submit" class="btn" { (t("tx.mark_transfer")) }
+                    }
+                    p class="hint" { (t("tx.mark_transfer_hint")) }
+                }
+            }
+        }
+    }
 }
 
 // ----------------------------------------------------------------------
