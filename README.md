@@ -57,7 +57,11 @@ image — built for both amd64 and arm64 — from GitHub Container Registry.
 docker compose up -d             # then open http://127.0.0.1:8080
 ```
 
-To compile from source instead, uncomment `build: .` in `compose.yaml` and use
+To update, run `docker compose up -d` again: `pull_policy: always` in `compose.yaml` makes it
+fetch the newest image first. Settings shows the version that's running.
+
+To compile from source instead, uncomment `build: .` in `compose.yaml`, set
+`pull_policy: build`, and use
 `docker compose up --build -d`. The first build compiles every dependency and takes a
 while on a small machine; later builds reuse BuildKit's cache and recompile only what
 changed. If the build runs out of memory, limit parallel jobs:

@@ -188,7 +188,7 @@ test.describe("goals", () => {
     await pz.overview(page, s);
     await pz.openSheet(page, "New goal");
     const sh = pz.sheet(page);
-    await expect(sh.getByLabel("Counts")).toHaveValue("new");
+    await expect(sh.getByLabel("Linked budget line")).toHaveValue("new");
     await sh.getByLabel("Goal name").fill("New car");
     await sh.getByLabel("Target amount").fill("3000");
     await sh.getByRole("button", { name: "Create goal" }).click();
@@ -206,7 +206,7 @@ test.describe("goals", () => {
     let sh = pz.sheet(page);
     await sh.getByLabel("Goal name").fill("Vacation");
     await sh.getByLabel("Target amount").fill("1200");
-    await sh.getByLabel("Counts").selectOption({ label: "Savings (balance)" });
+    await sh.getByLabel("Linked budget line").selectOption({ label: "Savings (balance)" });
     await sh.getByRole("button", { name: "Create goal" }).click();
     await expect(pz.toast(page)).toContainText("Goal created.");
     const vac = page.locator('li.goal[data-goal="Vacation"]');
@@ -243,7 +243,7 @@ test.describe("goals", () => {
     sh = pz.sheet(page);
     await sh.getByRole("radio", { name: "Pay off debt" }).check();
     await sh.getByLabel("Goal name").fill("Visa down");
-    const debt = sh.getByLabel("Debt to pay off");
+    const debt = sh.getByLabel("Card or debt line to pay off");
     await expect(debt.locator("option").first()).toHaveText(/^Visa \(\$[\d,]+\.\d\d owed\)$/);
     await sh.getByLabel("Amount to pay off (optional)").fill("99999");
     await sh.getByRole("button", { name: "Create goal" }).click();

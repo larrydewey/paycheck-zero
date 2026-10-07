@@ -30,7 +30,7 @@ async fn main() {
             std::process::exit(1);
         }
     };
-    tracing::info!("PaycheckZero listening on http://{bind}");
+    tracing::info!(version = env!("CARGO_PKG_VERSION"), "PaycheckZero listening on http://{bind}");
     if let Some(p) = state.plaid_cfg() {
         tracing::info!(environment = %p.environment, "Plaid bank sync is on");
     }

@@ -1717,6 +1717,8 @@ pub fn render_settings(c: &Ctx) -> Markup {
     let view = View::Settings;
     html! {
         h1 { (t("settings.title")) }
+        // Which release is running, to check an update arrived.
+        p class="muted small" data-app-version { (tf("settings.version", &[("version", env!("CARGO_PKG_VERSION"))])) }
         section class="card" aria-labelledby="theme-h" {
             h2 id="theme-h" class="h3" { (t("theme.title")) }
             p class="muted" { (t("theme.body")) }

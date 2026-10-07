@@ -10,6 +10,9 @@ services:
     # releases, `0.1.1` to pin one, or a digest (repo@sha256:…) for an exact,
     # auditable build.
     image: ghcr.io/larrydewey/paycheck-zero:latest
+    # Check for a newer image on every `docker compose up -d`; without this a
+    # cached `latest` keeps running the old release. Use `build` with `build: .`.
+    pull_policy: always
     # build: .
     container_name: paycheckzero
     restart: unless-stopped

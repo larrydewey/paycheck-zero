@@ -920,12 +920,18 @@ fn goal_kind_fields(c: &Ctx, w: &Wallet, m: &Month, all: &[Month], g: Option<&Go
         div class="field" data-show="$_gkind == 'save'" {
             label for="goal-track-save" { (t("goal.track_save")) }
             select id="goal-track-save" name="track_save" {
-                option value=(NEW_LINE) selected[g.is_none() && pre_line.is_none()] { (t("goal.track_new")) }
-                optgroup label=(t("goal.track_lines")) {
-                    @for l in m.expense_lines.iter().filter(|l| !m.is_debt_line(&l.id)) {
-                        option value=(format!("line:{}", l.name)) selected[sel_line(&l.name)] { (l.name) }
+                // Budget lines first, by category, so linking one is the obvious choice.
+                @for cat in m.categories_sorted().into_iter().filter(|c| c.kind != CategoryKind::Debt) {
+                    @let lines = m.lines_of(&cat.id);
+                    @if !lines.is_empty() {
+                        optgroup label=(cat.name) {
+                            @for l in lines {
+                                option value=(format!("line:{}", l.name)) selected[sel_line(&l.name)] { (l.name) }
+                            }
+                        }
                     }
                 }
+                option value=(NEW_LINE) selected[g.is_none() && pre_line.is_none()] { (t("goal.track_new")) }
                 @let savings: Vec<&&Account> = accts.iter().filter(|a| !a.kind.is_card()).collect();
                 @if !savings.is_empty() {
                     optgroup label=(t("goal.track_accounts")) {

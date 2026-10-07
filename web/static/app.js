@@ -214,6 +214,24 @@
     });
   });
 
+  // Inline amounts (budget rows, paycheck plans, a line's funding) also
+  // save when focus leaves with a changed value: tapping elsewhere on a
+  // phone or pressing Tab, not only Enter or the mouse leaving the row.
+  document.addEventListener("submit", function (e) {
+    var f = e.target;
+    if (f instanceof HTMLFormElement) f.querySelectorAll("input.money").forEach(function (i) { i.dataset.sent = i.value; });
+  }, true);
+  document.addEventListener("change", function (e) {
+    var i = e.target;
+    if (!(i instanceof HTMLInputElement) || !i.classList.contains("money")) return;
+    var f = i.form;
+    if (!f || !f.closest("li.line, .funding-list, .cat-tools")) return;
+    if (f.hasAttribute("data-clear") || f.classList.contains("is-busy") || f.querySelector("[type=submit]")) return;
+    normalizeMoney(i);
+    if (i.value === i.defaultValue || i.dataset.sent === i.value) return;
+    if (f.checkValidity()) f.requestSubmit();
+  });
+
   // Unified transaction form: "Split into parts" turns the line/paycheck
   // fields into part rows; removing parts back to one makes it plain again.
   function editorOf(el) { return el && el.closest ? el.closest("[data-split-editor]") : null; }
