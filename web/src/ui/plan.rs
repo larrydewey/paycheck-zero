@@ -73,7 +73,7 @@ fn line_meta(c: &Ctx, l: &LineView) -> Markup {
 }
 
 /// A budget line: tap the name for details, edit the amount in place.
-fn line_row(c: &Ctx, l: &LineView, sheet_url: &str, amount: Option<Markup>, fallback_amount: Cents, dim: bool) -> Markup {
+fn line_row(c: &Ctx, l: &LineView, sheet_url: &str, amount: Option<Markup>, fallback_amount: Cents, dim: bool, extra: Option<Markup>) -> Markup {
     let over = l.spent > l.planned;
     html! {
         li class={ "row line" @if over { " over" } @if dim { " unfunded" } } id=(format!("line-{}", l.id)) data-line=(l.name) {
@@ -82,6 +82,7 @@ fn line_row(c: &Ctx, l: &LineView, sheet_url: &str, amount: Option<Markup>, fall
                 span class="row-name" { (l.name) (over_badge(c, l)) }
                 (line_meta(c, l))
                 @if l.is_debt { (debt_outlook(c, l, false)) }
+                @if let Some(x) = extra { (x) }
                 @if l.spent.is_positive() { (meter(l.spent, l.planned, over, &tf("row.meter", &[("name", &l.name)]))) }
             }
             div class="row-amount" {
@@ -366,7 +367,7 @@ pub fn render_paycheck(c: &Ctx, m: &Month, archived: bool, pid: &Id, wallet: &Wa
                                 @let form = editable.then(|| amount_form(c,
                                     &format!("/ui/paychecks/{}/lines/{}", pid, l.id), &view, l.this_paycheck,
                                     &tf("line.planned_label", &[("name", &l.name)]), Some((l.this_paycheck + v.unallocated).get())));
-                                (line_row(c, l, &format!("/ui/sheet/line/{}?view={enc}&pid={pid}", l.id), form, l.this_paycheck, false))
+                                (line_row(c, l, &format!("/ui/sheet/line/{}?view={enc}&pid={pid}", l.id), form, l.this_paycheck, false, None))
                             }
                         }
                         @if structure {
@@ -394,6 +395,21 @@ pub fn render_paycheck(c: &Ctx, m: &Month, archived: bool, pid: &Id, wallet: &Wa
 // Budget: the whole month
 // ----------------------------------------------------------------------
 
+/// Progress of the goals that follow a line, for its budget row.
+fn line_goal_pills(c: &Ctx, m: &Month, wallet: &Wallet, all: &[Month], line: &str) -> Option<Markup> {
+    let goals = wallet.goals_for_line(line);
+    (!goals.is_empty()).then(|| html! {
+        span class="row-goals" {
+            @for g in goals {
+                @let p = wallet.goal_progress(g, all, m.year_month);
+                span class="pill tiny goal-pill" data-line-goal=(g.name) title=(tf("goal.row_title", &[("name", &g.name), ("current", &c.money(p.current)), ("target", &c.money(p.target))])) {
+                    (icon("flag")) " " (g.name) " · " (p.percent) "%"
+                }
+            }
+        }
+    })
+}
+
 pub fn render_overview(c: &Ctx, m: &Month, archived: bool, wallet: &Wallet, all: &[Month]) -> Markup {
     let view = View::Overview { month: m.id.clone() };
     let enc = view.encode();
@@ -414,6 +430,12 @@ pub fn render_overview(c: &Ctx, m: &Month, archived: bool, wallet: &Wallet, all:
                 div data-card="income" { span class="stat-label" { (t("budget.income")) } span class="stat-value" { (c.money(income)) } }
                 div data-card="expenses" { span class="stat-label" { (t("budget.planned")) } span class="stat-value" { (c.money(planned)) } }
                 div data-card="spent" { span class="stat-label" { (t("budget.spent")) } span class="stat-value" { (c.money(spent)) } }
+                // Income not given to a line yet; negative when lines plan more than comes in.
+                @let left = m.zero_difference();
+                div data-card="left" {
+                    span class="stat-label" { (t(if left.is_negative() { "budget.over_budget" } else { "budget.left_to_budget" })) }
+                    span class={ "stat-value" @if left.is_negative() { " neg" } @else if left.is_positive() { " pos" } } { (c.money(left.abs())) }
+                }
             }
             (meter(spent, planned, spent > planned, &t("cards.spent_meter")))
             p class="summary-note" { (tf("budget.spent_of", &[("pct", &pct(spent, planned).to_string())])) }
@@ -459,7 +481,7 @@ pub fn render_overview(c: &Ctx, m: &Month, archived: bool, wallet: &Wallet, all:
                             @let form = alloc.then(|| amount_form(c,
                                 &format!("/ui/lines/{}/planned", l.id), &view, l.planned,
                                 &tf("line.total_planned_label", &[("name", &l.name)]), Some((l.planned + free).get())));
-                            (line_row(c, l, &format!("/ui/sheet/line/{}?view={enc}", l.id), form, l.planned, false))
+                            (line_row(c, l, &format!("/ui/sheet/line/{}?view={enc}", l.id), form, l.planned, false, line_goal_pills(c, m, wallet, all, &l.name)))
                         }
                     }
                     @if structure { (add_line_row(m, &view, cat, None, None)) }
@@ -532,8 +554,8 @@ pub fn render_transactions(c: &Ctx, m: &Month, archived: bool, filter: TxFilter,
     }
     let line_name = |sm: &Month, id: &Option<Id>| id.as_ref().and_then(|l| sm.expense_line(l)).map(|l| l.name.clone());
     let shown = || txs.iter().map(|(_, _, x)| *x);
-    let spent: Cents = shown().filter(|t| t.is_spending()).map(|t| t.amount.abs()).sum();
-    let received: Cents = shown().filter(|t| t.amount.is_positive()).map(|t| t.amount).sum();
+    let spent: Cents = shown().map(Transaction::spending).sum();
+    let received: Cents = shown().filter(|t| t.amount.is_positive() && !t.is_refund()).map(|t| t.amount).sum();
     let mut last_day: Option<NaiveDate> = None;
     let rows: Vec<TxRow> = items
         .iter()

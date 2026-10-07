@@ -163,6 +163,7 @@ form.inline { display: inline-flex; gap: 8px; align-items: center; margin: 0; }
 .inline-field { display: flex; gap: 8px; align-items: stretch; }
 .inline-field > input, .inline-field > select { flex: 1; min-width: 0; }
 .select-filter { margin-bottom: 6px; padding-top: 6px; padding-bottom: 6px; font-size: .95em; }
+.row-goals { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
 .tx-more { margin-top: 16px; border-top: 1px solid var(--line); padding-top: 12px; }
 .tx-more > summary { cursor: pointer; font-weight: 600; }
 .tx-more form { margin-top: 12px; }
@@ -294,6 +295,7 @@ details.category[open] > summary .cat-name::before { transform: rotate(45deg); }
 .empty-cats { margin: 4px 0 12px; }
 .empty-cats p { margin-bottom: 8px; }
 .summary .summary-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 12px; }
+.summary .summary-stats:has(> :nth-child(4)) { grid-template-columns: repeat(2, 1fr); }
 .summary .summary-stats.two { grid-template-columns: repeat(2, 1fr); margin: 0; }
 .stat-label { display: block; font-size: 0.75rem; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: 0.03em; }
 .stat-value { display: block; font-size: 1.15rem; font-weight: 800; font-variant-numeric: tabular-nums; }

@@ -139,7 +139,7 @@ When a Paycheck’s `actual_amount` ≠ `planned_amount`:
 
 
 ### 2.10 Spent (Authoritative Definition)
-- For any ExpenseLine, **Spent** = the sum of the absolute values of all Transactions linked to that ExpenseLine (`expense_line_id`).
+- For any ExpenseLine, **Spent** = money out on the Transactions linked to that ExpenseLine (`expense_line_id`), less money back linked to it: an expense adds its absolute value, an income transaction (a refund, or a credit on a card) subtracts its amount.
 - Spent is fully derived. It is never stored independently and is never manually editable.
 - Transactions not linked to an ExpenseLine do not contribute to any line’s Spent.
 

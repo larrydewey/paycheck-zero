@@ -16,6 +16,8 @@ test.describe("monthly overview", () => {
     await expect(page.locator('[data-card="expenses"]')).toContainText("$2,125.00");
     await expect(page.locator('[data-card="spent"]')).toContainText("$125.20");
     await expect(page.locator("#zero-status")).toContainText("$1,875.00 left to assign");
+    await expect(page.locator('[data-card="left"]')).toContainText("Left to budget");
+    await expect(page.locator('[data-card="left"]')).toContainText("$1,875.00");
   });
 
   test("editing Planned here updates allocations and summaries live", async ({ page }) => {
@@ -40,7 +42,10 @@ test.describe("monthly overview", () => {
     await expect(sep18).toHaveValue("$0.00");
     await sep18.fill("100");
     await sep18.press("Enter");
-    await expect(sh).toBeHidden();
+    // The sheet stays open with fresh numbers, ready for the next paycheck.
+    await expect(page.locator("#sheet[open]")).toBeVisible();
+    await expect(sh.locator("[data-col=planned]")).toHaveText("$1,300.00");
+    await expect(sep18).toHaveValue("$100.00");
     await expect(pz.category(page, "Housing").locator(":scope > summary [data-col=planned]")).toContainText("$1,450.00");
     await expect(pz.line(page, "Rent").locator("[data-col=planned]")).toHaveText("$1,300.00");
   });

@@ -51,6 +51,14 @@ impl Sse {
         self
     }
 
+    /// Adds another response's events after this one's.
+    #[must_use]
+    pub fn append(mut self, other: Sse) -> Self {
+        self.body.push_str(&other.body);
+        self.cookies.extend(other.cookies);
+        self
+    }
+
     /// Removes elements matching a selector.
     #[must_use]
     pub fn remove(mut self, selector: &str) -> Self {

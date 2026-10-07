@@ -51,12 +51,19 @@ fn stat(label: &str, value: String, class: &str, col: &str) -> Markup {
 // ----------------------------------------------------------------------
 
 pub async fn line(State(st): State<Shared>, Extension(user): Extension<AuthUser>, headers: HeaderMap, Path(lid): Path<Id>, Query(q): Query<SheetQuery>) -> Sse {
-    let user = user.0;
+    line_sse(&st, &user.0, &headers, &lid, &q.view, q.pid.as_deref()).await
+}
+
+/// The line sheet; also sent again after a funding change made in it, so
+/// it stays open with fresh numbers.
+pub(super) async fn line_sse(st: &Shared, user: &UserRecord, headers: &HeaderMap, lid: &Id, view: &Option<String>, pid: Option<&str>) -> Sse {
+    let (st, user, lid) = (st.clone(), user.clone(), lid.clone());
+    let q = SheetQuery { view: view.clone(), pid: pid.map(str::to_string), cat: None };
     let (m, archived) = match month_of(&st, &user, Owner::ExpenseLine, &lid).await {
         Ok(v) => v,
         Err(e) => return error_sheet(&e, &user.currency),
     };
-    let c = ctx(&st, &user, &headers);
+    let c = ctx(&st, &user, headers);
     let view = fallback(&q.view, View::Overview { month: m.id.clone() });
     let Some(l) = m.category_views().into_iter().flat_map(|c| c.lines).find(|l| l.id == lid) else {
         return error_sheet(&AppError::NotFound, &user.currency);
@@ -81,6 +88,7 @@ pub async fn line(State(st): State<Shared>, Extension(user): Extension<AuthUser>
         }
         @if over { p class="alert danger" { (icon("alert")) " " (tf("over.line", &[("amount", &c.money(l.spent - l.planned))])) } }
         @if !all.is_empty() { (super::accounts::line_goals(&c, &m, &wallet, &all, &l, &view, alloc)) }
+        @else { (super::accounts::line_goal_link(&wallet, &l, &view)) }
 
         section class="sheet-section" aria-labelledby="ls-funding" {
             h3 id="ls-funding" { (t("line.funding_title")) }
@@ -96,6 +104,7 @@ pub async fn line(State(st): State<Shared>, Extension(user): Extension<AuthUser>
                         @if alloc && p.status != PaycheckStatus::Skipped {
                             form data-on:submit__prevent=(post_form_guarded(&format!("/ui/paychecks/{}/lines/{}", p.id, lid))) {
                                 (view_input(&view))
+                                input type="hidden" name="sheet" value="line";
                                 (money_input(&c, "amount", Some(this), &tf("line.from_paycheck_label", &[("name", &l.name), ("date", &short_date(p.date))]), Some((this + free).get())))
                                 span class="field-error" aria-live="polite" {}
                             }
@@ -105,6 +114,42 @@ pub async fn line(State(st): State<Shared>, Extension(user): Extension<AuthUser>
                     }
                 }
                 @if m.paychecks.is_empty() { li class="muted" { (t("overview.no_income_title")) } }
+            }
+            // Moving funding between paychecks in one step: lowering one and
+            // raising the other separately can trip over the paycheck's limit.
+            @let funded: Vec<&Paycheck> = m.paychecks_by_date().into_iter().filter(|p| m.allocation_for(&p.id, &lid).is_some_and(|a| a.amount.is_positive())).collect();
+            @let targets: Vec<&Paycheck> = m.paychecks_by_date().into_iter().filter(|p| p.status != PaycheckStatus::Skipped).collect();
+            @if alloc && !funded.is_empty() && targets.len() > 1 {
+                details class="move-funding" {
+                    summary { (t("line.move_title")) }
+                    form class="stack" data-on:submit__prevent=(post_form(&format!("/ui/lines/{lid}/move-funding"))) {
+                        (view_input(&view))
+                        div class="two-col" {
+                            div class="field" {
+                                label for="mv-from" { (t("line.move_from")) }
+                                select id="mv-from" name="from" {
+                                    @for p in &funded {
+                                        option value=(p.id) { (short_date(p.date)) " (" (c.money(m.allocation_for(&p.id, &lid).map_or(Cents::ZERO, |a| a.amount))) ")" }
+                                    }
+                                }
+                            }
+                            div class="field" {
+                                label for="mv-to" { (t("line.move_to")) }
+                                select id="mv-to" name="to" {
+                                    @for (i, p) in targets.iter().enumerate() {
+                                        option value=(p.id) selected[i == targets.len() - 1] { (short_date(p.date)) " (" (tf("line.paycheck_left", &[("amount", &c.money(m.paycheck_unallocated(&p.id)))])) ")" }
+                                    }
+                                }
+                            }
+                        }
+                        label for="mv-amount" { (t("line.move_amount")) }
+                        div class="inline-field" {
+                            input id="mv-amount" type="text" inputmode="decimal" class="money" name="amount" required autocomplete="off" placeholder=(c.money(Cents::ZERO));
+                            button type="submit" class="btn" { (t("line.move")) }
+                        }
+                        p class="hint" { (t("line.move_hint")) }
+                    }
+                }
             }
         }
 

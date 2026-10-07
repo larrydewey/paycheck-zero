@@ -566,7 +566,51 @@ pub async fn set_allocation(State(st): State<Shared>, Extension(user): Extension
         Ok(a) => a.unwrap_or(Cents::ZERO),
         Err(e) => return failed(&st, &user, &headers, &view, &e).await,
     };
-    month_action(&st, &user, &headers, view, mid, |m| m.set_allocation(&pid, &lid, amount), no_toasts).await
+    if field(&f, "sheet") != "line" {
+        return month_action(&st, &user, &headers, view, mid, |m| m.set_allocation(&pid, &lid, amount), no_toasts).await;
+    }
+    let r = match mid {
+        Ok(mid) => st.mutate(&user, &mid, |m| m.set_allocation(&pid, &lid, amount)).await.map(|_| ()),
+        Err(e) => Err(e),
+    };
+    line_sheet_result(&st, &user, &headers, &view, &lid, r, Vec::new()).await
+}
+
+/// After a funding change made in a line's sheet: the screen and the sheet
+/// both show the new numbers, and the sheet stays open.
+async fn line_sheet_result(st: &Shared, user: &UserRecord, headers: &HeaderMap, view: &View, lid: &Id, r: AppResult<()>, toasts: Vec<Markup>) -> Sse {
+    let base = match r {
+        Ok(()) => {
+            let mut sse = content_sse(st, user, headers, view).await;
+            for t in toasts {
+                sse = sse.patch_into("#toasts", "append", t);
+            }
+            sse
+        }
+        Err(e) => failed(st, user, headers, view, &e).await,
+    };
+    base.append(super::sheets::line_sse(st, user, headers, lid, &Some(view.encode()), None).await)
+}
+
+/// Moves part of a line's funding from one paycheck to another in one step.
+pub async fn move_funding(State(st): State<Shared>, Extension(user): Extension<AuthUser>, headers: HeaderMap, Path(lid): Path<Id>, Form(f): F) -> Sse {
+    let user = user.0;
+    let (mid, view) = owner_view(&st, &user, &f, Owner::ExpenseLine, &lid).await;
+    let (from, to) = (Id::new(field(&f, "from")), Id::new(field(&f, "to")));
+    let amount = match money_field(&f, "amount") {
+        Ok(a) => a,
+        Err(e) => return line_sheet_result(&st, &user, &headers, &view, &lid, Err(e), Vec::new()).await,
+    };
+    let r = match mid {
+        Ok(mid) => st.mutate(&user, &mid, |m| m.transfer(&from, &to, &lid, amount)).await,
+        Err(e) => Err(e),
+    };
+    let msg = r.as_ref().ok().map(|(_, m)| {
+        let date = |p: &Id| m.paycheck(p).map(|p| short_date(p.date)).unwrap_or_default();
+        tf("line.moved", &[("amount", &crate::money::format(amount, &user.currency)), ("from", &date(&from)), ("to", &date(&to))])
+    });
+    let toasts = msg.map(|m| vec![toast(ToastKind::Success, &m, None)]).unwrap_or_default();
+    line_sheet_result(&st, &user, &headers, &view, &lid, r.map(|_| ()), toasts).await
 }
 
 /// "Assign money from this paycheck": adds to a line (creating it if asked).

@@ -51,7 +51,26 @@ test.describe("transactions across months", () => {
     await expect(page.locator("#tx-list")).not.toContainText("Payment received");
   });
 
-  test("long line pickers can be searched", async ({ page, seed, login, server }) => {
+  test("money back on a card linked to a line lowers its spending", async ({ page, seed, login }) => {
+    const s = await seed("wallet");
+    await login();
+    await pz.overview(page, s);
+    const spent = pz.category(page, "Food").locator(":scope > summary [data-col=spent]");
+    await expect(spent).toContainText("$85.20");
+    await pz.transactions(page, s);
+    const form = await pz.addTx(page);
+    await form.getByRole("radio", { name: "Income" }).check();
+    await form.getByLabel("Amount", { exact: true }).fill("20");
+    await form.getByLabel("Payee").fill("Grocery refund");
+    await form.getByLabel("Account").selectOption({ label: "Visa" });
+    await form.getByLabel("Expense line", { exact: true }).selectOption({ label: "Groceries" });
+    await form.getByRole("button", { name: "Save transaction" }).click();
+    await expect(pz.toast(page)).toContainText("Transaction saved.");
+    await pz.overview(page, s);
+    await expect(spent).toContainText("$65.20");
+  });
+
+    test("long line pickers can be searched", async ({ page, seed, login, server }) => {
     const s = await seed("basic");
     const token = await pz.apiToken(server);
     const mid = s.months["2026-09"].id;

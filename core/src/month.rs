@@ -233,14 +233,10 @@ impl Month {
         self.allocations.iter().filter(|a| &a.expense_line_id == line).map(|a| a.amount).sum()
     }
 
-    /// Spec §2.10: the sum of absolute values of all linked transactions.
+    /// Spec §2.10: money out on the line, less refunds linked to it.
     #[must_use]
     pub fn line_spent(&self, line: &Id) -> Cents {
-        self.transactions
-            .iter()
-            .filter(|t| t.expense_line_id.as_ref() == Some(line))
-            .map(|t| t.amount.abs())
-            .sum()
+        self.transactions.iter().filter(|t| t.expense_line_id.as_ref() == Some(line)).map(Transaction::spending).sum()
     }
 
     #[must_use]
@@ -275,14 +271,10 @@ impl Month {
         }
     }
 
-    /// Absolute value of expense transactions explicitly tagged to a paycheck.
+    /// Spending explicitly tagged to a paycheck, less tagged refunds.
     #[must_use]
     pub fn paycheck_tagged_expense(&self, paycheck: &Id) -> Cents {
-        self.transactions
-            .iter()
-            .filter(|t| t.paycheck_id.as_ref() == Some(paycheck) && t.is_spending())
-            .map(|t| t.amount.abs())
-            .sum()
+        self.transactions.iter().filter(|t| t.paycheck_id.as_ref() == Some(paycheck)).map(Transaction::spending).sum()
     }
 
     /// Spending on a line tagged to a paycheck.
@@ -290,18 +282,18 @@ impl Month {
     pub fn paycheck_line_spent(&self, paycheck: &Id, line: &Id) -> Cents {
         self.transactions
             .iter()
-            .filter(|t| t.paycheck_id.as_ref() == Some(paycheck) && t.expense_line_id.as_ref() == Some(line) && t.is_spending())
-            .map(|t| t.amount.abs())
+            .filter(|t| t.paycheck_id.as_ref() == Some(paycheck) && t.expense_line_id.as_ref() == Some(line))
+            .map(Transaction::spending)
             .sum()
     }
 
     /// Tagged spending per line for a paycheck: (line or None, amount spent).
     fn tagged_by_line(&self, paycheck: &Id) -> Vec<(Option<Id>, Cents)> {
         let mut out: Vec<(Option<Id>, Cents)> = Vec::new();
-        for t in self.transactions.iter().filter(|t| t.paycheck_id.as_ref() == Some(paycheck) && t.is_spending()) {
+        for t in self.transactions.iter().filter(|t| t.paycheck_id.as_ref() == Some(paycheck) && (t.is_spending() || t.is_refund())) {
             match out.iter_mut().find(|(l, _)| *l == t.expense_line_id) {
-                Some((_, v)) => *v += t.amount.abs(),
-                None => out.push((t.expense_line_id.clone(), t.amount.abs())),
+                Some((_, v)) => *v += t.spending(),
+                None => out.push((t.expense_line_id.clone(), t.spending())),
             }
         }
         out
@@ -1165,12 +1157,13 @@ impl Month {
         Ok(())
     }
 
-    /// Income transactions explicitly tagged to a paycheck (deposits).
+    /// Income transactions explicitly tagged to a paycheck (deposits). A
+    /// refund tagged to it is money back on spending, not pay.
     #[must_use]
     pub fn paycheck_deposits(&self, paycheck: &Id) -> Cents {
         self.transactions
             .iter()
-            .filter(|t| t.paycheck_id.as_ref() == Some(paycheck) && t.amount.is_positive())
+            .filter(|t| t.paycheck_id.as_ref() == Some(paycheck) && t.amount.is_positive() && !t.is_refund())
             .map(|t| t.amount)
             .sum()
     }

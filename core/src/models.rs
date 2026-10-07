@@ -237,6 +237,26 @@ impl Transaction {
         self.amount.is_negative() && (!self.is_transfer() || self.expense_line_id.is_some())
     }
 
+    /// Money back linked to a line (a refund, a credit on a card): it lowers
+    /// that line's spending instead of counting as income.
+    #[must_use]
+    pub fn is_refund(&self) -> bool {
+        self.amount.is_positive() && !self.is_transfer() && self.expense_line_id.is_some()
+    }
+
+    /// What this counts against the budget: money out as a positive amount,
+    /// a refund as a negative one, anything else zero.
+    #[must_use]
+    pub fn spending(&self) -> Cents {
+        if self.is_spending() {
+            self.amount.abs()
+        } else if self.is_refund() {
+            -self.amount
+        } else {
+            Cents::ZERO
+        }
+    }
+
     /// Spending that hasn't been given a line yet.
     #[must_use]
     pub fn needs_line(&self) -> bool {

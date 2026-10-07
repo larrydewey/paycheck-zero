@@ -361,14 +361,15 @@ fn default_paycheck_selection() {
 // ---------------------------------------------------------------- §2.10 Spent
 
 #[test]
-fn spent_is_sum_of_absolute_values_of_linked_transactions() {
+fn spent_is_money_out_less_refunds_on_the_line() {
     let mut f = fixture();
     f.m.add_transaction(tx(-4_000, Some(&f.food), None)).unwrap();
     f.m.add_transaction(tx(-1_000, Some(&f.food), None)).unwrap();
     f.m.add_transaction(tx(500, Some(&f.food), None)).unwrap();
     f.m.add_transaction(tx(-7_000, None, None)).unwrap();
-    assert_eq!(f.m.line_spent(&f.food), c(5_500));
-    assert_eq!(f.m.line_remaining(&f.food), c(-5_500));
+    // The +5.00 linked to the line is a refund: it lowers Spent.
+    assert_eq!(f.m.line_spent(&f.food), c(4_500));
+    assert_eq!(f.m.line_remaining(&f.food), c(-4_500));
     assert_eq!(f.m.add_transaction(tx(0, None, None)), Err(DomainError::ZeroTransaction));
 }
 
@@ -673,7 +674,8 @@ fn split_transactions_across_lines_and_paychecks() {
     assert_eq!(f.m.save_split(None, d(2026, 9, 1), None, None, None, vec![part(-1, &f.food, &f.p1)]), Err(DomainError::SplitTooFew));
     assert_eq!(f.m.save_split(None, d(2026, 9, 1), None, None, None, vec![part(-1, &f.food, &f.p1), part(1, &f.food, &f.p1)]), Err(DomainError::SplitMixedSigns));
     // Income splits reconcile paycheck actuals.
-    let g2 = f.m.save_split(None, d(2026, 9, 4), Some("Payroll".into()), None, None, vec![part(90_000, &f.food, &f.p1), part(10_000, &f.food, &f.p2)]).unwrap();
+    let pay = |a: i64, p: &Id| SplitPart { amount: c(a), expense_line_id: None, paycheck_id: Some(p.clone()) };
+    let g2 = f.m.save_split(None, d(2026, 9, 4), Some("Payroll".into()), None, None, vec![pay(90_000, &f.p1), pay(10_000, &f.p2)]).unwrap();
     assert_eq!(f.m.paycheck(&f.p1).unwrap().actual_amount, Some(c(90_000)));
     f.m.delete_split(&g2).unwrap();
     assert_eq!(f.m.paycheck(&f.p1).unwrap().actual_amount, None);
@@ -738,4 +740,18 @@ fn a_paycheck_on_its_own_shows_only_its_lines_and_amounts() {
     assert_eq!(v[0].this_paycheck, c(60_000));
     assert_eq!(v[0].remaining, c(57_500));
     assert!(f.m.funding_views(&f.p2).iter().flat_map(|c| &c.lines).any(|l| l.id == f.food));
+}
+
+#[test]
+fn a_refund_on_a_line_lowers_spending_and_is_not_pay() {
+    let mut f = fixture();
+    f.m.add_transaction(tx(-6_000, Some(&f.food), Some(&f.p1))).unwrap();
+    // Money back on the card for part of it, tagged to the same paycheck.
+    f.m.add_transaction(tx(2_000, Some(&f.food), Some(&f.p1))).unwrap();
+    assert_eq!(f.m.line_spent(&f.food), c(4_000));
+    assert_eq!(f.m.paycheck_tagged_expense(&f.p1), c(4_000));
+    assert_eq!(f.m.paycheck_line_spent(&f.p1, &f.food), c(4_000));
+    assert_eq!(f.m.paycheck_deposits(&f.p1), c(0));
+    assert_eq!(f.m.paycheck(&f.p1).unwrap().actual_amount, None, "a refund doesn't record pay");
+    f.m.check_invariants().unwrap();
 }

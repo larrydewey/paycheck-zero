@@ -347,6 +347,71 @@ pub fn line_goals(c: &Ctx, m: &Month, w: &Wallet, all: &[Month], line: &LineView
     }
 }
 
+/// For a line no goal follows yet: link an existing goal to it, or start
+/// a new one for it. Saving goals go with spending lines, payoff goals
+/// with debt lines.
+pub fn line_goal_link(w: &Wallet, line: &LineView, view: &View) -> Markup {
+    let kind = if line.is_debt { GoalKind::Payoff } else { GoalKind::Save };
+    let others: Vec<&Goal> = w.goals_sorted().into_iter().filter(|g| g.kind == kind).collect();
+    let enc = view.encode();
+    html! {
+        section class="sheet-section" aria-labelledby="ls-goal" {
+            h3 id="ls-goal" { (t("line.goal_title")) }
+            p class="small muted" { (t(if line.is_debt { "line.goal_hint_debt" } else { "line.goal_hint" })) }
+            @if !others.is_empty() {
+                form class="stack" data-on:submit__prevent=(post_form(&format!("/ui/lines/{}/goal", line.id))) {
+                    (view_input(view))
+                    label for="ls-goal-pick" { (t("line.goal_pick")) }
+                    div class="inline-field" {
+                        select id="ls-goal-pick" name="goal_id" required {
+                            @for g in &others { option value=(g.id) { (g.name) } }
+                        }
+                        button type="submit" class="btn" { (t("line.goal_link")) }
+                    }
+                }
+            }
+            button type="button" class="btn ghost" data-on:click=(open_sheet(&format!("/ui/sheet/goal/new?view={enc}&line={}", urlencoding(&line.name)))) {
+                (icon("flag")) " " (t("line.goal_new"))
+            }
+        }
+    }
+}
+
+fn urlencoding(s: &str) -> String {
+    s.bytes()
+        .map(|b| match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => (b as char).to_string(),
+            _ => format!("%{b:02X}"),
+        })
+        .collect()
+}
+
+/// Points a goal at a budget line, so its progress follows what's planned
+/// on it (saving) or its balance (payoff).
+pub async fn link_goal(State(st): State<Shared>, Extension(user): Extension<AuthUser>, headers: HeaderMap, Path(line): Path<Id>, Form(f): F) -> Sse {
+    let user = user.0;
+    let view = view_of(&f, fallback_view(&user));
+    let name = match st.resolve(&user, Owner::ExpenseLine, &line).await {
+        Ok(mid) => st.load(&user, &mid).await.ok().and_then(|l| l.month.expense_line(&line).map(|x| x.name.clone())),
+        Err(_) => None,
+    };
+    let (Some(name), Some(gid)) = (name, opt_id(&f, "goal_id")) else { return failed(&st, &user, &headers, &view, &AppError::NotFound).await };
+    let currency = user.currency.clone();
+    let msg = tf("line.goal_linked", &[("name", &name)]);
+    wallet_action(&st, &user, &headers, view, move |w, all| {
+        let mut g = w.goal(&gid).cloned().ok_or(AppError::NotFound)?;
+        g.track = GoalTrack::Line { name };
+        if g.kind == GoalKind::Payoff {
+            // Start from what this line owes now, keeping the aim if it fits.
+            let debt = w.debt_now(&g.track, all, g.start_month);
+            let aim = (g.target_amount < g.starting_amount).then(|| g.target_amount.min(debt));
+            set_payoff(&mut g, debt, aim, &currency)?;
+        }
+        Ok(w.update_goal(g)?)
+    }, move |_, _| vec![toast(ToastKind::Success, &msg, None)])
+    .await
+}
+
 /// "Plan $50 more" on the goal's line, when this month is short of pace.
 fn plan_more(c: &Ctx, g: &Goal, p: &GoalProgress, line: &LineView, view: &View, editable: bool) -> Markup {
     html! {
@@ -422,6 +487,9 @@ pub struct AccountQuery {
     amount: Option<i64>,
     #[serde(default)]
     kind: Option<String>,
+    /// New goal: the budget line it should follow.
+    #[serde(default)]
+    line: Option<String>,
 }
 
 fn view_or(q: &Option<String>, user: &UserRecord) -> View {
@@ -814,11 +882,24 @@ fn goal_money(c: &Ctx, id: &str, name: &str, value: Option<Cents>) -> Markup {
     }
 }
 
-fn goal_kind_fields(c: &Ctx, w: &Wallet, m: &Month, all: &[Month], g: Option<&Goal>) -> Markup {
-    let kind = g.map_or(GoalKind::Save, |g| g.kind);
+/// The goal type a new goal for `line` starts as: paying it off for a debt
+/// line, saving otherwise.
+fn kind_for_line(m: &Month, line: Option<&str>) -> GoalKind {
+    match line.and_then(|n| m.expense_lines.iter().find(|l| l.name.eq_ignore_ascii_case(n))) {
+        Some(l) if m.is_debt_line(&l.id) => GoalKind::Payoff,
+        _ => GoalKind::Save,
+    }
+}
+
+/// `pre_line`: a new goal started from a budget line follows that line.
+fn goal_kind_fields(c: &Ctx, w: &Wallet, m: &Month, all: &[Month], g: Option<&Goal>, pre_line: Option<&str>) -> Markup {
+    let kind = g.map_or_else(|| kind_for_line(m, pre_line), |g| g.kind);
     let owed = |track: GoalTrack| w.debt_now(&track, all, m.year_month);
     let owed_label = |name: &str, debt: Cents| tf("goal.owed_option", &[("name", name), ("amount", &c.money(debt))]);
-    let sel_line = |name: &str| matches!(g.map(|g| &g.track), Some(GoalTrack::Line { name: n }) if n.eq_ignore_ascii_case(name));
+    let sel_line = |name: &str| match g {
+        Some(g) => matches!(&g.track, GoalTrack::Line { name: n } if n.eq_ignore_ascii_case(name)),
+        None => pre_line.is_some_and(|p| p.eq_ignore_ascii_case(name)),
+    };
     let sel_acct = |id: &Id| matches!(g.map(|g| &g.track), Some(GoalTrack::Account { id: a }) if a == id);
     let accts = w.accounts_sorted();
     let debt_lines: Vec<&ExpenseLine> = m.expense_lines.iter().filter(|l| m.is_debt_line(&l.id)).collect();
@@ -839,7 +920,7 @@ fn goal_kind_fields(c: &Ctx, w: &Wallet, m: &Month, all: &[Month], g: Option<&Go
         div class="field" data-show="$_gkind == 'save'" {
             label for="goal-track-save" { (t("goal.track_save")) }
             select id="goal-track-save" name="track_save" {
-                option value=(NEW_LINE) selected[g.is_none()] { (t("goal.track_new")) }
+                option value=(NEW_LINE) selected[g.is_none() && pre_line.is_none()] { (t("goal.track_new")) }
                 optgroup label=(t("goal.track_lines")) {
                     @for l in m.expense_lines.iter().filter(|l| !m.is_debt_line(&l.id)) {
                         option value=(format!("line:{}", l.name)) selected[sel_line(&l.name)] { (l.name) }
@@ -908,9 +989,9 @@ pub async fn goal_new_sheet(State(st): State<Shared>, Extension(user): Extension
         (Err(e), _, _) | (_, Err(e), _) | (_, _, Err(e)) => return sheet_error(&e, &user.currency),
     };
     Sse::new().patch(sheet(&t("goal.new_title"), Some(&t("goal.new_sub")), html! {
-        form class="stack" id="goal-form" data-signals="{_gkind: 'save'}" data-on:submit__prevent=(post_form_guarded("/ui/goals")) {
+        form class="stack" id="goal-form" data-signals=(format!("{{_gkind: '{}'}}", kind_for_line(&m, q.line.as_deref()).as_str())) data-on:submit__prevent=(post_form_guarded("/ui/goals")) {
             (view_input(&view))
-            (goal_kind_fields(&c, &w, &m, &all, None))
+            (goal_kind_fields(&c, &w, &m, &all, None, q.line.as_deref()))
             span class="field-error" aria-live="polite" {}
             button type="submit" class="btn primary block" { (t("goal.create")) }
         }
@@ -966,7 +1047,7 @@ pub async fn goal_sheet(State(st): State<Shared>, Extension(user): Extension<Aut
             h3 id="ge-h" { (t("goal.edit")) }
             form class="stack" data-signals=(format!("{{_gkind: '{}'}}", g.kind.as_str())) data-on:submit__prevent=(post_form_guarded(&format!("/ui/goals/{id}"))) {
                 (view_input(&view))
-                (goal_kind_fields(&c, &w, &m, &all, Some(&g)))
+                (goal_kind_fields(&c, &w, &m, &all, Some(&g), None))
                 span class="field-error" aria-live="polite" {}
                 button type="submit" class="btn primary" { (t("common.save")) }
             }

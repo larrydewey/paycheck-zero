@@ -78,6 +78,8 @@ pub fn routes(state: Shared) -> Router<Shared> {
         .route("/ui/goals", post(accounts::add_goal))
         .route("/ui/goals/{id}", post(accounts::update_goal))
         .route("/ui/goals/{id}/delete", post(accounts::delete_goal))
+        .route("/ui/lines/{id}/goal", post(accounts::link_goal))
+        .route("/ui/lines/{id}/move-funding", post(actions::move_funding))
         .route("/settings", get(pages::settings_page))
         .route("/settings/content", get(pages::settings_content))
         .route("/settings/household", get(pages::household))
