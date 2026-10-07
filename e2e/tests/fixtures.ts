@@ -140,8 +140,8 @@ export const pz = {
     await page.goto(`/months/${s.months[ym].id}/transactions`);
     await waitForContent(page);
   },
-  /** Sets the fake banks' state (disconnected bank, extra transaction). */
-  async bank(server: { url: string }, state: { disconnected?: boolean; extra?: boolean }) {
+  /** Sets the fake banks' state (disconnected bank, extra transaction, one in a later month). */
+  async bank(server: { url: string }, state: { disconnected?: boolean; extra?: boolean; later?: boolean }) {
     await fetch(server.url + "/__test/bank/state", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(state) });
   },
   async accounts(page: Page, s: SeedResult, ym = "2026-09") {

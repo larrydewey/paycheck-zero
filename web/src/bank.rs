@@ -401,7 +401,11 @@ impl Plaid {
         });
         match access_token {
             Some(a) => body["access_token"] = a.into(),
-            None => body["products"] = serde_json::json!(["transactions"]),
+            None => {
+                body["products"] = serde_json::json!(["transactions"]);
+                // Plaid sends 90 days unless asked for more; 730 is its maximum.
+                body["transactions"] = serde_json::json!({ "days_requested": 730 });
+            }
         }
         let v: serde_json::Value = self.post("/link/token/create", body).await?;
         v["link_token"].as_str().map(str::to_string).ok_or_else(|| ProviderError::Other("no link token".into()))
@@ -675,12 +679,16 @@ async fn pull(st: &Shared, user: &UserRecord, wallet: &Wallet, link: &BankLink, 
     }
     let history = st.all_months(user).await.map_err(internal)?;
     let mut report = SyncReport::default();
+    // Plaid only sends what changed since the cursor, so a batch held for a
+    // month that doesn't exist yet would never come back if the cursor moved.
+    let mut held = false;
     for (ym, mut batch) in per_month {
         batch.sort_by_key(|b| b.date);
         let ids: Vec<String> = batch.iter().map(|b| b.external_id.clone()).collect();
         let mid = st.store.month_id_by_year_month(&user.id, ym).await.map_err(|e| internal(e.into()))?;
         let Some(mid) = mid else {
             report.missing_months.push(ym);
+            held = true;
             continue;
         };
         let linked = linked.clone();
@@ -723,7 +731,22 @@ async fn pull(st: &Shared, user: &UserRecord, wallet: &Wallet, link: &BankLink, 
     })
     .await
     .map_err(internal)?;
-    Ok((report, pulled.cursor))
+    // Without a new cursor the old one stays, and the next sync asks again;
+    // transactions already imported are skipped as seen.
+    Ok((report, if held { None } else { pulled.cursor }))
+}
+
+/// Syncs `link` from the start of its history rather than from Plaid's
+/// cursor, picking up anything an earlier sync passed over. Transactions
+/// already imported (or deleted here) are skipped as seen.
+pub async fn resync_link(st: &Shared, user: &UserRecord, link_id: &Id) -> AppResult<SyncReport> {
+    let id = link_id.clone();
+    st.mutate_wallet(user, move |w, _| {
+        w.link_mut(&id)?.cursor = None;
+        Ok(())
+    })
+    .await?;
+    sync_link(st, user, link_id).await
 }
 
 /// Syncs every active connection every `hours` (0 turns it off).

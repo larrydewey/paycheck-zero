@@ -330,8 +330,14 @@ fn report_toasts(user: &UserRecord, bank: &str, r: &SyncReport) -> Vec<Markup> {
 }
 
 async fn sync_and_finish(st: &Shared, user: &UserRecord, headers: &HeaderMap, view: &View, link: &Id) -> Sse {
+    finish_sync(st, user, headers, view, link, false).await
+}
+
+/// `full` replays the connection's history instead of only what's new.
+async fn finish_sync(st: &Shared, user: &UserRecord, headers: &HeaderMap, view: &View, link: &Id, full: bool) -> Sse {
     let bank = st.wallet(user).await.ok().and_then(|w| w.link(link).map(|l| l.institution.clone())).unwrap_or_default();
-    match sync_link(st, user, link).await {
+    let r = if full { crate::bank::resync_link(st, user, link).await } else { sync_link(st, user, link).await };
+    match r {
         Ok(r) => done(st, user, headers, view, report_toasts(user, &bank, &r)).await,
         // Close the sheet so the connection's new status shows in the list.
         Err(e) => failed(st, user, headers, view, &e).await.script("pz.closeSheet()"),
@@ -519,7 +525,9 @@ pub async fn map_accounts(State(st): State<Shared>, Extension(user): Extension<A
 pub async fn sync_now(State(st): State<Shared>, Extension(user): Extension<AuthUser>, headers: HeaderMap, Path(id): Path<Id>, Form(f): F) -> Sse {
     let user = user.0;
     let view = view_of(&f, view_or(&None, &user));
-    sync_and_finish(&st, &user, &headers, &view, &id).await
+    // A manual sync looks at everything again, so transactions that waited
+    // for a month you've since created arrive now.
+    finish_sync(&st, &user, &headers, &view, &id, true).await
 }
 
 pub async fn disconnect(State(st): State<Shared>, Extension(user): Extension<AuthUser>, headers: HeaderMap, Path(id): Path<Id>, Form(f): F) -> Sse {

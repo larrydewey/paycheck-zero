@@ -58,7 +58,25 @@ test.describe("bank sync", () => {
     await expect(acct(page, "Checking ••1234").locator("[data-col=balance]")).toHaveText("$2,395.00");
   });
 
-  test("a bank that needs you to sign in again says so and reconnects", async ({ page, seed, login, server }) => {
+  test("transactions for a month not created yet arrive once it exists", async ({ page, seed, login, server }) => {
+    const s = await seed("basic");
+    await login();
+    await pz.bank(server, { later: true });
+    await pz.accounts(page, s);
+    await connect(page);
+    await pz.sheet(page).getByRole("button", { name: "Import" }).click();
+    await expect(page.locator("#toasts")).toContainText("Transactions from October 2026 will import once you create that month.");
+    await page.goto("/months?new=2026-10");
+    await page.getByRole("button", { name: "Create month" }).click();
+    await expect(page).toHaveURL(/\/income$/);
+    await waitForContent(page);
+    await pz.accounts(page, s);
+    await pz.openSheet(page, "Test Bank connection");
+    await pz.sheet(page).getByRole("button", { name: "Sync now" }).click();
+    await expect(page.locator("#toasts")).toContainText("Synced Test Bank: 1 new transaction(s)");
+  });
+
+    test("a bank that needs you to sign in again says so and reconnects", async ({ page, seed, login, server }) => {
     const s = await seed("basic");
     await login();
     await pz.accounts(page, s);

@@ -74,7 +74,7 @@ mod fake_simplefin {
 /// A stand-in for Plaid (Link script and the endpoints the app calls).
 #[allow(clippy::result_large_err)]
 mod fake_plaid {
-    use super::fake_bank::{DISCONNECTED, EXTRA};
+    use super::fake_bank::{DISCONNECTED, EXTRA, LATER};
     use axum::http::{header, StatusCode};
     use axum::response::{IntoResponse, Response};
     use axum::Json;
@@ -144,11 +144,14 @@ mod fake_plaid {
             return r;
         }
         let page = |added: Vec<Value>, next: &str| Json(json!({ "added": added, "modified": [], "removed": [], "next_cursor": next, "has_more": false })).into_response();
+        let extra = || tx("pt_chk6", "p_chk", 15.0, "2026-09-10", "Chipotle", false);
         match b["cursor"].as_str() {
-            Some("c1") if EXTRA.load(Ordering::Relaxed) => page(vec![tx("pt_chk6", "p_chk", 15.0, "2026-09-10", "Chipotle", false)], "c2"),
+            Some("c1") if EXTRA.load(Ordering::Relaxed) => page(vec![extra()], "c2"),
             Some(c) => page(Vec::new(), c),
+            // No cursor: the whole history, including what arrived since.
             None => page(
-                vec![
+                [
+                    vec![
                     tx("pt_pend", "p_chk", 9.99, "2026-09-10", "Netflix", true),
                     tx("pt_chk4", "p_chk", 23.50, "2026-09-09", "Trader Joe's", false),
                     tx("pt_chk3", "p_chk", 120.0, "2026-09-08", "Payment to Sapphire", false),
@@ -158,8 +161,13 @@ mod fake_plaid {
                     tx("pt_card3", "p_card", 64.10, "2026-09-09", "Target", false),
                     tx("pt_card2", "p_card", -120.0, "2026-09-08", "Payment received", false),
                     tx("pt_card1", "p_card", 12.0, "2026-09-07", "Coffee", false),
-                ],
-                "c1",
+                    ],
+                    if EXTRA.load(Ordering::Relaxed) { vec![extra()] } else { Vec::new() },
+                    // A month the basic seed doesn't have yet.
+                    if LATER.load(Ordering::Relaxed) { vec![tx("pt_oct1", "p_chk", 7.25, "2026-10-02", "Bagel Shop", false)] } else { Vec::new() },
+                ]
+                .concat(),
+                if EXTRA.load(Ordering::Relaxed) { "c2" } else { "c1" },
             ),
         }
     }
@@ -175,10 +183,12 @@ mod fake_bank {
 
     pub static DISCONNECTED: AtomicBool = AtomicBool::new(false);
     pub static EXTRA: AtomicBool = AtomicBool::new(false);
+    pub static LATER: AtomicBool = AtomicBool::new(false);
 
     pub fn reset() {
         DISCONNECTED.store(false, Ordering::Relaxed);
         EXTRA.store(false, Ordering::Relaxed);
+        LATER.store(false, Ordering::Relaxed);
     }
 
     #[derive(Deserialize)]
@@ -187,11 +197,14 @@ mod fake_bank {
         disconnected: bool,
         #[serde(default)]
         extra: bool,
+        #[serde(default)]
+        later: bool,
     }
 
     pub async fn set_state(Json(r): Json<StateReq>) -> StatusCode {
         DISCONNECTED.store(r.disconnected, Ordering::Relaxed);
         EXTRA.store(r.extra, Ordering::Relaxed);
+        LATER.store(r.later, Ordering::Relaxed);
         StatusCode::NO_CONTENT
     }
 }
